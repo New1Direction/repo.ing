@@ -8,7 +8,7 @@ import bs58 from 'bs58'
 import { PublicKey, VersionedTransaction } from '@solana/web3.js'
 import { z } from 'zod'
 import { planCustomPreparation } from './hooklab-custom-preparation.mjs'
-import { planSelectedHookPreparation } from './hooklab-selected-hook-preparation.mjs'
+import { planSelectedHookPreparation, selectedAuthorityAccounts, assertSelectedAuthorityObserved, selectedHookRules, selectedHookConfigReserved } from './hooklab-selected-hook-preparation.mjs'
 import { planMaxWalletPreparation, deriveMaxWalletPreparedAccounts } from './hooklab-max-wallet-preparation.mjs'
 import { planInclusiveMaxWalletPreparation, deriveInclusiveMaxWalletPreparedAccounts } from './hooklab-inclusive-max-wallet-preparation.mjs'
 import { inspectHookLabMessage, verifyHookLabSignedMessage } from './hooklab-message-boundary.mjs'
@@ -128,10 +128,11 @@ function maxWalletAccounts(input, createdAt) {
 function selectedBytes(input, bound, createdAt) {
   if (isMaxWalletInput(input)) return raw(maxWalletAccounts(input, createdAt).accounts.selectedConfig.dataBase64, 176)
   const r = input.request
-  return encoded(bound.launch, 'LaunchConfig', { version: 1, creator: pk(r.creator), rules: noRules,
+  return encoded(bound.launch, 'LaunchConfig', { version: 1, creator: pk(r.creator), rules: isSelectedInput(input) ? selectedHookRules(r) : noRules,
     creator_fee_bps: isSelectedInput(input) ? r.creatorFeeBps : 0,
     custom_hook: pk(isSelectedInput(input) ? r.selectedHook.program : bound.profile.programs.gate), custom_hook_flags: isSelectedInput(input) ? r.hookFlags : 1,
-    label: r.label, created_at: new BN(createdAt), author_share_bps: 0, reserved: Array(30).fill(0) }, 176)
+    label: r.label, created_at: new BN(createdAt), author_share_bps: isSelectedInput(input) ? r.authorShareBps ?? 0 : 0,
+    reserved: selectedHookConfigReserved(isSelectedInput(input) ? r : {}, isSelectedInput(input) && input.selectedAuthorityEvidence?.authority.kind === 'timelocked') }, 176)
 }
 
 /** expectedProfileSha256 is independent SERVER configuration, not profile.expectedSha256 from a request.
@@ -185,12 +186,12 @@ const blockSchema = z.object({ slot: integer, blockhash: address, previousBlockh
   blockHeight: integer.nullable(), blockTime: integer.nullable(), signatures: z.array(signature).min(1).max(16384) }).strict()
 const stateAccountSchema = z.object({ role: z.enum(['policy', 'registry', 'selectedConfig']), address, owner: address,
   executable: z.boolean(), dataBase64: z.string().max(21848), lamports: safeAmount }).strict()
-const programAccountSchema = z.object({ role: z.enum(['launch', 'gate', 'launchProgramData', 'gateProgramData', 'hook', 'hookProgramData']), address, owner: address,
+const programAccountSchema = z.object({ role: z.enum(['launch', 'gate', 'launchProgramData', 'gateProgramData', 'hook', 'hookProgramData', 'timelock', 'executor', 'executorProgramData']), address, owner: address,
   executable: z.boolean(), dataBase64: z.string().max(14000000), lamports: safeAmount }).strict()
 const observationSchema = z.object({ provider: providerId, genesisHash: address.nullable(), transactionCommitment: commitment,
   transaction: transactionSchema.nullable(), blockCommitment: commitment, block: blockSchema.nullable(),
   snapshot: z.object({ slot: integer, commitment, accounts: z.array(stateAccountSchema).min(2).max(3) }).strict().nullable(),
-  programSnapshot: z.object({ slot: integer, commitment, accounts: z.array(programAccountSchema).length(4) }).strict().nullable(),
+  programSnapshot: z.object({ slot: integer, commitment, accounts: z.array(programAccountSchema).min(4).max(7) }).strict().nullable(),
   errorCode: z.enum(['READ_UNAVAILABLE', 'READ_TIMEOUT', 'INVALID_RESPONSE', 'EVIDENCE_LIMIT']).nullable(),
   rawResponseSha256: digest.nullable().optional(),
   absenceSnapshot: z.object({ slot: integer, commitment,
@@ -352,10 +353,12 @@ export function verifyCustomPreparationEvidence({ preparationInput, signedTransa
 }
 
 function programInventory(plan) {
-  return (plan.policyKind === 'selected-hook' ? ['launch', 'hook', 'launchProgramData', 'hookProgramData'] : ['launch', 'gate', 'launchProgramData', 'gateProgramData']).map(role => ({ role, address: plan.addresses[role] }))
+  return [...(plan.policyKind === 'selected-hook' ? ['launch', 'hook', 'launchProgramData', 'hookProgramData'] : ['launch', 'gate', 'launchProgramData', 'gateProgramData']).map(role => ({ role, address: plan.addresses[role] })),
+    ...selectedAuthorityAccounts(plan.selectedAuthorityEvidence).map((a,i)=>({role:['timelock','executor','executorProgramData'][i],address:a.address}))]
 }
 function checkCurrentPrograms(input, plan, snapshot, transactionSlot) {
   check(isDeepStrictEqual(snapshot.accounts.map(a => ({ role: a.role, address: a.address })), programInventory(plan)), 'SOURCE_MISMATCH')
+  assertSelectedAuthorityObserved(input.selectedAuthorityEvidence,new Map(snapshot.accounts.map(({role,...a})=>[a.address,a])),JSON.parse(input.profile.json).genesisHash)
   const profile = JSON.parse(input.profile.json), accounts = new Map(snapshot.accounts.map(a => [a.role, a])), hashes = {}
   for (const role of (isSelectedInput(input) ? ['launch', 'hook'] : ['launch', 'gate'])) {
     const program = accounts.get(role), data = accounts.get(role + 'ProgramData'), length = role === 'hook' ? input.hookPin.elfLength : input.profile.elfLengths[role]
@@ -363,7 +366,7 @@ function checkCurrentPrograms(input, plan, snapshot, transactionSlot) {
     const pb = raw(program.dataBase64, 36), db = raw(data.dataBase64, 10485760 + 45)
     check(pb.length === 36 && pb.readUInt32LE(0) === 2 && pb.subarray(4).equals(pk(data.address).toBuffer()), 'SOURCE_MISMATCH')
     check(db.length >= 45 + length && db.readUInt32LE(0) === 3 && db.readBigUInt64LE(4) < BigInt(transactionSlot), 'SOURCE_MISMATCH')
-    check(role === 'gate' || role === 'hook' ? db[12] === 0 : db[12] === 0 || db[12] === 1, 'SOURCE_MISMATCH')
+    check(role === 'gate' ? db[12] === 0 : role === 'hook' ? db[12] === (input.selectedAuthorityEvidence?.authority.kind==='timelocked'?1:0) : db[12] === 0 || db[12] === 1, 'SOURCE_MISMATCH')
     if (isSelectedInput(input)) {
       const retained = address => input.observations[0].accounts.find(a => a.address === address).account.dataBase64
       check(program.dataBase64 === retained(program.address) && data.dataBase64 === retained(data.address), 'SOURCE_MISMATCH')

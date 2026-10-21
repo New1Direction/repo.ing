@@ -38,7 +38,7 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
  const nativeBundle=stack??{config,profile,dossierJson}
  const nativeOpen=nativeTradingEnabled===true&&pinsNativeBuilds(nativeBundle.profile)
  const hookPin=selectedHookPin??nativeBundle.config.selectedHookPin??null
- const selectedNativeOpen=nativeOpen&&selectedNativeTradingEnabled===true&&hookPin!==null
+ const selectedNativeOpen=nativeOpen&&selectedNativeTradingEnabled===true&&(hookPin!==null||nativeBundle.config.selectedHookRelease?.schema==='repoing/selected-hook-release/2')
  const native=nativeTradeResolver({...nativeBundle,connections,limits,selectedHookPin:hookPin,selectedNativeTradingEnabled:selectedNativeOpen})
  const sender=nativeTransactionSender({enabled:true,connections})
  const lifecycle=nativeSigningLifecycle(pool,{enabled:true,origin,sender,custodyAdapter:null,...tradeLifecycleSettings({trade,funding,native,nativeOpen,selectedNativeOpen,connections})})
@@ -60,7 +60,7 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
  const activityFor=coin=>{const stackProfile=profileFor(coin);return stackProfile?hookActivityRpc(connections[0].connection,{programs:stackProfile.programs}):null}
  const activity=hookActivityRpc(connections[0].connection,{programs:profiles.legacy.programs})
  return Object.freeze({origin,genesisHash:profiles.legacy.genesisHash,ownerTradingApproved:true,operatorDeploymentApproved:true,economicsApproved:true,walletFunding:walletFundingEnabled===true,walletWithdraw:true,
-  nativeTrading:nativeOpen,lifecycle,market,walletBalances,coinProfile,profileFor,activity,activityFor})
+  nativeTrading:nativeOpen,nativeEstimate:native.estimate,lifecycle,market,walletBalances,coinProfile,profileFor,activity,activityFor})
 }
 // The trade lifecycle's resolvers and stages: bridged trades and funding, and native trades. The native stages are always
 // registered, so a sent native trade stays readable and settles whatever the switch says; while native trading is off

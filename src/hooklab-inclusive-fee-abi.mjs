@@ -26,11 +26,11 @@ export function readInclusiveFeePolicy(account, swapProgram, pool) {
     && bytes.subarray(9, 41).equals(kb(pool)) && bytes.readUInt16LE(73) === 2500, 'INCLUSIVE_POLICY_BYTES')
   return Object.freeze({ version: 1, pool, collector: new PublicKey(bytes.subarray(41, 73)).toBase58(), protocolShareBps: 2500 })
 }
-export function inclusiveEconomicsHash(role, v2Digest) {
+export function inclusiveEconomicsHash(role, v2Digest, feeModel = 2) {
   check(role === 'launch' || role === 'pool', 'INVALID_ECONOMICS_ROLE')
   const bytes = Buffer.from(v2Digest)
-  check(bytes.length === 32, 'INVALID_V2_DIGEST')
-  return hash(Buffer.from(`hook-lab:create-${role}-economics:v3`), bytes, modeShare)
+  check(bytes.length === 32 && [1, 2].includes(feeModel), 'INVALID_V2_DIGEST_OR_MODEL')
+  return hash(Buffer.from(`hook-lab:create-${role}-economics:v3`), bytes, Buffer.from([feeModel, 0xc4, 9]))
 }
 export function inclusiveHookAccountsHash({ program, registry, policy, launch }) {
   check(Buffer.from(registry.data).length <= 256 && Buffer.from(policy.data).length === 90, 'HOOK_ACCOUNT_LENGTH')

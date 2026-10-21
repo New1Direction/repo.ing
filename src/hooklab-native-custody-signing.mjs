@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { parseMaxWalletLaunchRequest, launchPreparationRequest } from './hooklab-max-wallet-launch.mjs'
 import { parseMaxWalletPreparationRequest } from './hooklab-inclusive-max-wallet-profile.mjs'
 import { selectedHookPreparationRequestSchema } from './hooklab-selected-hook-preparation.mjs'
+import { selectedHookSetupRequestSchema } from './hooklab-selected-hook-setup.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
 import { nativeSignerCustodyCodec,verifyNativeAdminSignerIdentity } from './hooklab-native-signer-custody.mjs'
 const fail=()=>Object.assign(Error('Native custody signing unavailable or changed'),{code:'NATIVE_CUSTODY_SIGNING_UNAVAILABLE'})
@@ -18,6 +19,15 @@ const preparation=request=>request?.policyKind==='selected-hook'?selectedHookPre
 export function nativeCustodySigningAdapter({enabled=false,keyRing,activeKeyId,adminSigner=null,openLaunches=false}={}){
  const codec=nativeSignerCustodyCodec({enabled,keyRing,activeKeyId}),locked=new WeakMap()
  function record(db,operationId,owner){const row=locked.get(db);check(enabled===true&&row?.operation_id===operationId&&row.owner_wallet===owner);return row}
+ async function setupIdentity(db,row,request,review){
+  const {rows:[bound]}=await db.query('select * from hook_lab_selected_hook_setup_intents where custody_operation_id=$1',[row.operation_id])
+  check(bound&&bound.owner_wallet===row.owner_wallet&&bound.profile_sha256===row.profile_sha256&&bound.mint===row.mint&&bound.selected_config===row.selected_config)
+  const original=selectedHookSetupRequestSchema.parse(bound.setup_request)
+  check(original.creator===row.owner_wallet&&original.mint===row.mint)
+  if(request)check(isDeepStrictEqual(original,selectedHookSetupRequestSchema.parse(request)))
+  if(review)check(review.operation==='selected-hook-setup'&&review.intentSha256===sha(JSON.stringify(original))&&review.profileSha256===row.profile_sha256&&review.wallet===row.owner_wallet&&review.payer===row.owner_wallet&&isDeepStrictEqual(review.requiredSigners,[row.owner_wallet]))
+  return original
+ }
  async function transition(db,row,stage){
   const keys=codec.open(identity(row),row.sealed_signers)
   let sealed;try{sealed=codec.seal({...identity(row),stage},keys)}finally{wipe(keys)}
@@ -32,8 +42,20 @@ export function nativeCustodySigningAdapter({enabled=false,keyRing,activeKeyId,a
   async beginStage({db,owner,custodyOperationId,stage,review,request}){
    try{
     let row=record(db,custodyOperationId,owner)
+    if(stage==='hook-setup'){
+     check(openLaunches&&['reserved','preparation-reviewed'].includes(row.stage))
+     await setupIdentity(db,row,request,review);return {mint:row.mint,selectedConfig:row.selected_config}
+    }
     check(row.profile_sha256===review.profileSha256&&row.preparation_request&&review.wallet===owner&&review.payer===owner)
-    if(stage==='preparation')check(row.stage==='preparation-reviewed'&&review.intentSha256===sha(JSON.stringify(preparation(row.preparation_request))))
+    if(stage==='preparation'){
+     check(row.stage==='preparation-reviewed'&&review.intentSha256===sha(JSON.stringify(preparation(row.preparation_request))))
+     if(row.preparation_request.policyKind==='selected-hook'){
+      const original=await setupIdentity(db,row)
+      check(isDeepStrictEqual(original.selectedHook,row.preparation_request.selectedHook))
+      const {rows:[setup]}=await db.query("select status,first_finalized,first_conflict from hook_lab_native_signing_operations where custody_operation_id=$1 and stage='hook-setup' and status<>'expired'",[custodyOperationId])
+      check(setup?.status==='finalized-success'&&setup.first_finalized?.status==='finalized-success'&&!setup.first_conflict)
+     }
+    }
     else {
      check(stage==='launch'&&row.stage==='preparation-finalized')
      const launch=parseMaxWalletLaunchRequest(request)
@@ -68,15 +90,16 @@ export function nativeCustodySigningAdapter({enabled=false,keyRing,activeKeyId,a
   },
   // Only after the lifecycle proves on chain that the stage's transaction can never land.
   async reopenStage({db,owner,custodyOperationId,stage}){
-   try{const row=record(db,custodyOperationId,owner);check([`${stage}-reviewed`,`${stage}-signed`].includes(row.stage))
+   try{const row=record(db,custodyOperationId,owner);if(stage==='hook-setup'){await setupIdentity(db,row);return}check([`${stage}-reviewed`,`${stage}-signed`].includes(row.stage))
     await transition(db,row,stage==='launch'?'preparation-finalized':'reserved')}catch{throw fail()}
   },
   async completeStage({db,owner,custodyOperationId,stage}){
-   try{const row=record(db,custodyOperationId,owner);check(row.stage===`${stage}-reviewed`);await transition(db,row,`${stage}-signed`)}catch{throw fail()}
+   try{const row=record(db,custodyOperationId,owner);if(stage==='hook-setup'){await setupIdentity(db,row);return}check(row.stage===`${stage}-reviewed`);await transition(db,row,`${stage}-signed`)}catch{throw fail()}
   },
   async settleStage({db,owner,custodyOperationId,stage,status}){
    try{
     const row=record(db,custodyOperationId,owner)
+    if(stage==='hook-setup'){await setupIdentity(db,row);check(['finalized-success','finalized-failure','review-required'].includes(status));return}
     check([`${stage}-signed`,`${stage}-finalized`,'reconcile-required'].includes(row.stage))
     const next=status==='finalized-success'?`${stage}-finalized`:'reconcile-required'
     if(row.stage!==next)await transition(db,row,next)

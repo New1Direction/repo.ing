@@ -64,8 +64,13 @@ test('commitment is domain plus Borsh tuple with exact ordered privileges and fe
   const args = { hook: p.hook, registry: f.registry, extras: p.extras }
   assert.notEqual(selectedHookAccountsHash({ ...args, extras: [...p.extras].reverse() }).toString('hex'), p.commitment)
   assert.notEqual(selectedHookAccountsHash({ ...args, extras: p.extras.map(x => ({ ...x, writable: !x.writable })) }).toString('hex'), p.commitment)
-  assert.throws(() => selectedHookAccountsHash({ ...args, feeModel: 1 }))
+  assert.notEqual(selectedHookAccountsHash({ ...args, feeModel: 1 }).toString('hex'), p.commitment)
+  assert.throws(() => selectedHookAccountsHash({ ...args, feeModel: 0 }))
   assert.throws(() => selectedHookAccountsHash({ ...args, extras: [{ ...p.extras[0], signer: true }] }))
+  // A full registry has 32 entries; a delayed hook also commits its trailing timelock.
+  const full = Array.from({ length: 33 }, (_, i) => ({ address: key(i + 30), signer: false, writable: i % 2 === 0 }))
+  assert.equal(selectedHookAccountsHash({ ...args, extras: full }).length, 32)
+  assert.throws(() => selectedHookAccountsHash({ ...args, extras: [...full, full[0]] }))
 })
 test('full known token flags accepted; unknown bits, Kit and caller approval fields refused', () => {
   for (let flags = 1; flags <= 255; flags++) assert.equal(selectedHookSchema.parse({ program: key(5), flags }).flags, flags)
@@ -111,7 +116,7 @@ test('launch registry uses canonical signer/mint and earlier extras, refusing tr
   }
   f.registry.dataBase64 = encodeHookAccountList({ version: 1, accounts: Array.from({ length: 5 }, () =>
     ({ writable: false, source: { kind: 'key', key: new PublicKey(key(7)) } })) }).toString('base64')
-  assert.throws(() => selectedHookOpenLaunchAccounts(f), /four/)
+  assert.equal(selectedHookOpenLaunchAccounts(f).extras.length, 5)
 })
 test('selected open launch builds independent fixed accounts, exact guard and commitment, never gate extras', () => {
   const f = fixture(), idl = structuredClone(loadOpenArtifacts().idls.launch)

@@ -16,10 +16,11 @@ import { loadConfig, assertExecutable, unapproved, missing, STAGE_DECISIONS } fr
 import { createContext, assertStageForStack, STAGES, STACK_STAGE_ORDER } from '../src/hooklab-owner-driver/context.mjs'
 import { parseArgs } from '../src/hooklab-owner-driver/cli.mjs'
 import { derivedAddresses, pda, kb, MAINNET_GENESIS, LOADER, SYSTEM } from '../src/hooklab-owner-driver/pins.mjs'
-import { LAUNCH_CONFIG_START } from '../src/hooklab-owner-driver/stages/stack.mjs'
+import { LAUNCH_CONFIG_START, collectNative } from '../src/hooklab-owner-driver/stages/stack.mjs'
 import { OWNER_CREATION_FEE_LAMPORTS } from '../src/hooklab-owner-driver/stages/open-creation.mjs'
 import { ownStack, OWN_STACK_SKIP, PLACEHOLDER_IDS } from './fixtures/hooklab-own-stack.mjs'
 import { independentStack, INDEPENDENT_SKIP } from './fixtures/hooklab-independent-stack.mjs'
+import { selectedNativeTradeFixture } from './fixtures/selected-native-trade.mjs'
 
 const sha = bytes => createHash('sha256').update(bytes).digest()
 const scratch = mkdtempSync(path.join(tmpdir(), 'hooklab-owner-stack-'))
@@ -42,12 +43,36 @@ test('collect_protocol_fees_native: the discriminator alone, then cranker, confi
   assert.deepEqual(ix.data, sha(Buffer.from('global:collect_protocol_fees_native')).subarray(0, 8))
   assert.deepEqual(flags(ix), [[cranker, true, false], [d.swapConfig, false, false], [pool, false, true], [collector, false, true], [d.swapEventAuthority, false, false],
     [programs.swap, false, false], [pda(programs.swap, 'inclusive-fee-policy', kb(pool)), false, false]])
+  const shared = instructionsFor(loadArtifacts).collectProtocolFeesNative(programs, PLACEHOLDER_IDS.quoteMint, { cranker, mint, collector, feeModel: 1 })
+  assert.deepEqual(flags(shared), flags(ix).slice(0, 6))
+  assert.deepEqual(shared.data, ix.data)
+  assert.throws(() => instructionsFor(loadArtifacts).collectProtocolFeesNative(programs, PLACEHOLDER_IDS.quoteMint, { cranker, mint, collector, feeModel: 0 }), /fee model/i)
   // An IDL that declares it differently is refused; one that matches is accepted.
   const legacy = loadArtifacts(), withDefinition = accounts => ({ ...legacy, idls: { ...legacy.idls, swap: { ...legacy.idls.swap, instructions: [...legacy.idls.swap.instructions,
     { name: 'collect_protocol_fees_native', discriminator: [...ix.data], accounts, args: [] }] } } })
   const good = [{ name: 'cranker', signer: true }, { name: 'config' }, { name: 'pool', writable: true }, { name: 'collector', writable: true }, { name: 'event_authority' }, { name: 'program' }]
   assert.doesNotThrow(() => instructionsFor(withDefinition(good)).collectProtocolFeesNative(programs, PLACEHOLDER_IDS.quoteMint, { cranker, mint, collector }))
   assert.throws(() => instructionsFor(withDefinition(good.map((a, i) => i === 3 ? { name: 'collector' } : a))).collectProtocolFeesNative(programs, PLACEHOLDER_IDS.quoteMint, { cranker, mint, collector }), /ABI differs/)
+})
+
+test('native collection selects the observed pool model; only inclusive pools require their policy', async () => {
+  for (const feeModel of [1, 2]) {
+    const f = selectedNativeTradeFixture('buy', { feeModel }), d = derivedAddresses(f.p.programs, f.p.quoteMint)
+    const config = f.coders.swap.accounts.decode('Config', Buffer.from(f.accounts.get(d.swapConfig).dataBase64, 'base64'))
+    const abi = { coders: f.coders, idls: Object.fromEntries(Object.entries(f.input.profile.idls).map(([role, bytes]) => [role, JSON.parse(Buffer.from(bytes, 'base64'))])) }
+    abi.idls.swap.instructions.push({ name: 'collect_protocol_fees_native', args: [], discriminator: [...sha(Buffer.from('global:collect_protocol_fees_native')).subarray(0, 8)],
+      accounts: [{ name: 'cranker', signer: true }, { name: 'config' }, { name: 'pool', writable: true }, { name: 'collector', writable: true }, { name: 'event_authority' }, { name: 'program' }] })
+    const ctx = { stack: {}, programs: f.p.programs, quoteMint: f.p.quoteMint, genesis: f.p.genesisHash, abi, ix: instructionsFor(abi),
+      options: { mint: f.request.mint }, roles: { payer: f.request.trader, treasury: config.fee_collector.toBase58() },
+      readers: [0, 1].map(() => ({ connection: { getMultipleAccountsInfoAndContext: async keys => ({ context: { slot: 100 }, value: keys.map(k => {
+        const a = f.accounts.get(k.toBase58()); return a ? { owner: new PublicKey(a.owner), executable: a.executable, lamports: Number(a.lamports), data: Buffer.from(a.dataBase64, 'base64') } : null
+      }) }) } })) }
+    assert.match((await collectNative.build(ctx)).blocked, /nothing to collect/)
+    const policy = pda(f.p.programs.swap, 'inclusive-fee-policy', kb(f.a.pool))
+    f.accounts.delete(policy)
+    if (feeModel === 2) await assert.rejects(collectNative.build(ctx), /inclusive fee policy/)
+    else assert.match((await collectNative.build(ctx)).blocked, /nothing to collect/)
+  }
 })
 
 test('first-time setup builders: init_config_v2, init_governance and the guardian Pause, exactly as the stack IDL encodes them', { skip: OWN_STACK_SKIP }, () => {

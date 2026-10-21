@@ -7,12 +7,14 @@
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { BorshCoder } from '@anchor-lang/core'
+import { encodeHookAccountList } from '@repo-ing/hooklab-production-candidate'
 import BN from 'bn.js'
 import { AddressLookupTableAccount, ComputeBudgetProgram, PublicKey, TransactionInstruction, TransactionMessage } from '@solana/web3.js'
 import { z } from 'zod'
 import { hookAddress as key, hookDigest as digest, hookRawAmount as u64 } from './hooklab-execution-contract.mjs'
 import { parseInclusiveMaxWalletProfile } from './hooklab-inclusive-max-wallet-profile.mjs'
 import { modelInclusiveCreatorQuote, inclusiveCreatorFee } from './hooklab-inclusive-fee-quote.mjs'
+import { shareNativeQuote } from './hooklab-share-fee-quote.mjs'
 import { readInclusiveFeePolicy } from './hooklab-inclusive-fee-abi.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
 import { approvedCreatorFees } from './hooklab-launch-menus.mjs'
@@ -24,6 +26,7 @@ import { loadArtifacts } from './hooklab-owner-driver/artifacts.mjs'
 import { createHolding, instructionsFor } from './hooklab-owner-driver/instructions.mjs'
 import { isStackProfile, kitOf, profileRolesDistinct } from './hooklab-stack.mjs'
 import { selectedHookAccountPlan, selectedHookSchema } from './hooklab-selected-hook.mjs'
+import { selectedHookAuthorityEvidenceSchema } from './hooklab-selected-hook-compatibility.mjs'
 
 const { raw, owned, decoded, programEvidence, governance, launchSideIdentity, typed, readHolding, noRules } = swapAccountEvidence
 const check = (value, message) => { if (!value) throw Error(message) }
@@ -54,7 +57,7 @@ const gateRequestSchema = z.object({ schema: z.literal('repoing/native-swap-requ
   side: z.enum(['buy', 'sell']), trader: key, mint: key, selectedConfig: key,
   amountIn: positive, minAmountOut: positive, maxInput: positive, maxPriceImpactBps: number.max(1000), graduate: z.boolean(),
 }).strict()
-export const selectedNativeSwapRequestSchema = gateRequestSchema.extend({ policyKind: z.literal('selected-hook'), capBps: z.literal(0), selectedHook: selectedHookSchema }).strict()
+export const selectedNativeSwapRequestSchema = gateRequestSchema.extend({ policyKind: z.literal('selected-hook'), capBps: z.literal(0), selectedHook: selectedHookSchema, feeModel: z.union([z.literal(1), z.literal(2)]) }).strict()
 export const nativeSwapRequestSchema = z.union([gateRequestSchema, selectedNativeSwapRequestSchema]).refine(r => !r.graduate || r.side === 'buy', 'Only a buy graduates a coin')
 // Same strict, independent server pin as selected preparation. Not a request field.
 export const selectedNativeHookPinSchema = z.object({ program: key, elfSha256: digest, elfLength: number.min(4).max(10485760) }).strict()
@@ -78,7 +81,9 @@ const inputSchema = z.object({ profile: z.object({ json: z.string().max(16384), 
   // holding's state now. Absent on a fresh review, which decides from the observed holding.
   holdingCreation: z.object({ maxRentLamports: u64 }).strict().optional(),
   selectedHookPin: selectedNativeHookPinSchema.optional(),
+  selectedAuthorityEvidence: selectedHookAuthorityEvidenceSchema.optional(),
   selectedTokenDeltas: z.record(key, z.string().regex(/^-?(0|[1-9][0-9]*)$/)).optional(),
+  selectedQuoteCutBps: number.max(1000).optional(),
 }).strict()
 
 // The coin's accounts as the bridged compiler derives them, plus the trader's coin holding and graduate's own signers.
@@ -93,7 +98,8 @@ export function nativeSwapInventory(profileInput, requestInput, selectedEvidence
   const { launch, swap, gate, token } = profile.programs
   const selected = r.policyKind === 'selected-hook' ? selectedTradeAccounts(profile, r, selectedEvidence) : null
   return [...new Set([launch, swap, gate, token, r.trader, r.mint, profile.quoteMint, r.selectedConfig, RENT_SYSVAR, ...Object.values(a),
-    ...(selected ? [selected.hook, selected.programData, selected.registry, selected.tokenSigner, ...selected.extras.map(x => x.address)] : [])])].sort()
+    ...(selected ? [selected.hook, selected.programData, selected.registry, selected.tokenSigner, ...selected.extras.map(x => x.address), ...selected.authorityAccounts.map(x => x.address),
+      ...(r.feeModel === 1 ? [pda(selected.hook, 'state', kb(r.mint)), pda(launch, 'quote-cut', kb(selected.hook))] : [])] : [])])].sort()
 }
 
 function selectedTradeAccounts(profile, r, evidence) {
@@ -115,10 +121,32 @@ export function selectedNativeHookEvidence(profile, request, accounts, pin) {
 
 // Only the curve and native inclusive fees are arithmetic. Token delivery is measured from
 // the exact message, never an invented deterministic fee schedule for the selected hook.
-export function selectedNativeMeasuredQuote(r, pool, tokenDeltas, a) {
+export function selectedNativeMeasuredQuote(r, pool, tokenDeltas, a, economics = {}) {
   const buy = r.side === 'buy', amount = BigInt(r.amountIn)
-  const received = buy ? amount : tokenDeltas ? BigInt(tokenDeltas[a.baseVault]) : amount
+  let received = buy ? amount : tokenDeltas ? BigInt(tokenDeltas[a.baseVault]) : amount
   check(received > 0n && received <= amount, 'Selected input credit exceeds debit')
+  if (r.feeModel === 1) {
+    const burn = (basis, bps) => { const cut = basis * BigInt(bps ?? 0) / 10000n; return cut < basis ? cut : 0n }
+    const burnIn = economics.burnIn ?? (buy ? 0n : burn(amount, economics.burnSellBps))
+    if (!buy && !tokenDeltas) received = amount - burnIn
+    check(amount <= BigInt(r.maxInput), 'Selected max debit differs')
+    const parameters = { side: r.side, amountIn: amount, minAmountOut: tokenDeltas ? BigInt(r.minAmountOut) : 0n,
+      creatorFeeBps: BigInt(r.creatorFeeBps), lpFeeBps: BigInt(economics.lpFeeBps ?? 0), quoteCutBps: BigInt(economics.quoteCutBps ?? 0),
+      pool: { ...pool, protocolShareBps: BigInt(r.protocolShareBps) }, burnIn, burnOut: 0n,
+      tokenInputTax: buy ? 0n : amount - burnIn - received, tokenOutputTax: 0n, allowPartialFill: economics.allowPartialFill ?? false }
+    check(parameters.tokenInputTax >= 0n, 'Selected input tax or burn deduction differs')
+    const initial = shareNativeQuote({ ...parameters, minAmountOut: 0n })
+    const burnOut = economics.burnOut ?? (buy ? burn(initial.grossOutput, economics.burnBuyBps) : 0n)
+    const debit = buy ? initial.amountIn : tokenDeltas ? -BigInt(tokenDeltas[a.traderBase]) : amount
+    check(debit === initial.amountIn, 'Selected max debit differs')
+    const tokenOutputTax = buy && tokenDeltas ? initial.grossOutput - burnOut - BigInt(tokenDeltas[a.traderBase]) : 0n
+    check(tokenOutputTax >= 0n, 'Selected output tax or burn deduction differs')
+    const q = shareNativeQuote({ ...parameters, burnOut, tokenOutputTax })
+    if (buy && tokenDeltas && !r.graduate) check(-BigInt(tokenDeltas[a.baseVault]) === q.grossOutput, 'Selected vault debit differs')
+    const x = buy ? pool.quoteReserve + pool.virtualQuote : pool.baseReserve + pool.virtualBase
+    return { ...q, traderDebit: debit, fees: { ...q.fees, grossQuote: q.fees.creatorQuote,
+      platformQuote: q.fees.protocolQuote }, priceImpactBps: (q.curveInput * 10000n + x + q.curveInput - 1n) / (x + q.curveInput) }
+  }
   let fees = inclusiveCreatorFee(buy ? amount : 0n, r.creatorFeeBps)
   const curveInput = received - (buy ? fees.grossQuote : 0n)
   const x = buy ? pool.quoteReserve + pool.virtualQuote : pool.baseReserve + pool.virtualBase
@@ -141,19 +169,19 @@ export function selectedNativeMeasuredQuote(r, pool, tokenDeltas, a) {
 // trader on both sides here (a buy pays from the wallet, a sell pays the wallet). Remaining: the base mint's gate slice,
 // the launch's pool-hook extras, the InclusiveFeePolicy last (as native_launch.rs builds it).
 // swapIdl: the profile's own swap IDL (the compiler passes it); the vendored native IDL otherwise (same layout).
-export function nativeSwapV2Instruction(profile, { side, trader, mint, amountIn, minAmountOut }, swapIdl = null, selectedHookEvidence = null) {
+export function nativeSwapV2Instruction(profile, { side, trader, mint, amountIn, minAmountOut, feeModel = 2, burns = false, quoteCut = false }, swapIdl = null, selectedHookEvidence = null) {
   const { programs, quoteMint } = profile, { launch: L, swap: S, gate: G, token: T } = programs, a = hookCoinAddresses(profile, mint), buy = side === 'buy'
   const idl = swapIdl ?? loadNativeArtifacts().idls.swap, coder = swapIdl ? new BorshCoder(swapIdl) : loadNativeArtifacts().coders.swap
   check(idl.address === S, 'swap_v2 IDL identity differs')
   const abi = idl.instructions.find(ix => ix.name === 'swap_v2')
   const meta = (address, writable = false, signer = false) => ({ pubkey: pk(address), isWritable: writable, isSigner: signer })
-  const fixed = [meta(trader, true, true), meta(a.swapConfig), meta(a.pool, true), meta(mint), meta(quoteMint), meta(a.baseVault, true),
+  const fixed = [meta(trader, true, true), meta(a.swapConfig), meta(a.pool, true), meta(mint, burns), meta(quoteMint), meta(a.baseVault, true),
     meta(pda(T, 'holding', kb(mint), kb(trader)), true), meta(trader, true), meta(L), meta(a.swapHookSigner), meta(T), meta(a.tokenEventAuthority),
     meta(zero), meta(a.swapEventAuthority), meta(S)]
   const names = ['trader', 'config', 'pool', 'base_mint', 'quote_mint', 'base_vault', 'trader_base', 'trader_quote', 'hook_program', 'hook_signer',
     'token_program', 'token_event_authority', 'system_program', 'event_authority', 'program']
   check(abi && isDeepStrictEqual(abi.accounts.map(x => x.name), names) && Buffer.from(abi.discriminator).equals(hash('global:swap_v2').subarray(0, 8))
-    && abi.accounts.every((x, i) => !!x.signer === fixed[i].isSigner && !!x.writable === fixed[i].isWritable && (!x.address || x.address === str(fixed[i].pubkey))), 'swap_v2 ABI differs')
+    && abi.accounts.every((x, i) => !!x.signer === fixed[i].isSigner && (!!x.writable || i === 3 && burns) === fixed[i].isWritable && (!x.address || x.address === str(fixed[i].pubkey))), 'swap_v2 ABI differs')
   // The selected compiler measures token fees with exact-message simulation.
   // Resolve from registry bytes, never accept caller-invented remaining metas or use SDK default IDs.
   const selected = selectedHookEvidence && selectedHookAccountPlan({ ...selectedHookEvidence, programs, mint, mintStable: false,
@@ -162,7 +190,10 @@ export function nativeSwapV2Instruction(profile, { side, trader, mint, amountIn,
     sourceOwner: buy ? a.pool : trader, destinationOwner: buy ? trader : a.pool })
   const baseSlice = selected ? selected.transferSlice.map(x => meta(x.address, x.writable))
     : [meta(G), meta(a.gateHookSigner), meta(a.policy), meta(a.launch)]
-  const remaining = [...baseSlice, meta(a.launch, true), meta(a.launchQuote, true), meta(a.holderVault, true), meta(a.kitConfig), meta(a.inclusiveFeePolicy)]
+  const remaining = [...baseSlice, meta(a.launch, true), meta(a.launchQuote, true), meta(a.holderVault, true), meta(a.kitConfig),
+    ...(quoteCut ? [meta(selectedHookEvidence.selectedHook.program), meta(str(fixed[6].pubkey)),
+      meta(pda(selectedHookEvidence.selectedHook.program, 'state', kb(mint)), true), meta(pda(L, 'quote-cut', kb(selectedHookEvidence.selectedHook.program)))] : []),
+    ...(feeModel === 2 ? [meta(a.inclusiveFeePolicy)] : [])]
   const data = coder.instruction.encode('swap_v2', { args: { direction: buy ? 1 : 0, amount_in: bn(amountIn), min_amount_out: bn(minAmountOut),
     in_hook_accounts: buy ? 0 : baseSlice.length, out_hook_accounts: buy ? baseSlice.length : 0, hook_data: Buffer.alloc(0) } })
   return new TransactionInstruction({ programId: pk(S), keys: [...fixed, ...remaining], data })
@@ -195,7 +226,7 @@ function rentFrom(account) {
 const lamportsOf = (accounts, address) => BigInt(accounts.get(address).lamports)
 
 export function compileNativeSwapReview(input) {
-  const { profile: envelope, request: r, provenance, observations: obs, recentBlockhash: bh, lookupTable, limits: l, holdingCreation, selectedHookPin, selectedTokenDeltas } = inputSchema.parse(input)
+  const { profile: envelope, request: r, provenance, observations: obs, recentBlockhash: bh, lookupTable, limits: l, holdingCreation, selectedHookPin, selectedTokenDeltas, selectedAuthorityEvidence, selectedQuoteCutBps } = inputSchema.parse(input)
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = parseInclusiveMaxWalletProfile(JSON.parse(envelope.json)), { launch: L, swap: S, gate: G, token: T } = profile.programs
   check(profileRolesDistinct(profile), 'Profile program roles alias')
@@ -221,10 +252,15 @@ export function compileNativeSwapReview(input) {
       && callback.args[0].type?.defined?.name === 'PoolHookArgsInclusiveV1', 'Versioned inclusive callback ABI differs')
   }
   const nongate = r.policyKind === 'selected-hook', H = nongate ? r.selectedHook.program : G, flags = nongate ? r.selectedHook.flags : 1
-  check(nongate || (!selectedHookPin && !selectedTokenDeltas), 'Gate must not use selected evidence')
+  check(nongate || (!selectedHookPin && !selectedTokenDeltas && !selectedAuthorityEvidence && selectedQuoteCutBps === undefined), 'Gate must not use selected evidence')
   const evidenceMap = new Map(obs[0].accounts.map(x => [x.address, x.account]))
-  const hookEvidence = nongate ? selectedNativeHookEvidence(profile, r, evidenceMap, selectedHookPin) : null
+  if (selectedAuthorityEvidence && selectedHookPin) check(isDeepStrictEqual(selectedHookPin, selectedAuthorityEvidence.hookPin), 'Selected pin differs from retained authority')
+  const hookEvidence = nongate ? { ...selectedNativeHookEvidence(profile, r, evidenceMap, selectedAuthorityEvidence?.hookPin ?? selectedHookPin), ...(selectedAuthorityEvidence ? { selectedAuthorityEvidence } : {}) } : null
   const hookPlan = nongate ? selectedTradeAccounts(profile, r, hookEvidence) : null
+  if (selectedAuthorityEvidence?.authority.kind === 'timelocked') for (const retained of [selectedAuthorityEvidence.authority.timelock, selectedAuthorityEvidence.authority.executor, selectedAuthorityEvidence.authority.executorProgramData]) {
+    const observed = evidenceMap.get(retained.address)
+    check(observed && observed.owner === retained.owner && observed.executable === retained.executable && observed.dataBase64 === retained.dataBase64, 'Retained authority account changed')
+  }
   const a = nativeAddresses(profile, r), inventory = nativeSwapInventory(profile, r, hookEvidence), buy = r.side === 'buy'
   check(new Set(obs.map(o => o.provider)).size === 2 && obs.every(o => envelope.providers.includes(o.provider)), 'Provider binding differs')
   check(Math.abs(obs[0].slot - obs[1].slot) <= l.maxSlotLag && isDeepStrictEqual(obs[0].accounts, obs[1].accounts), 'Swap state observations disagree')
@@ -269,25 +305,39 @@ export function compileNativeSwapReview(input) {
     check(hookPlan.extras.every(x => !roles.includes(x.address) && x.address !== r.trader && x.address !== a.traderBase), 'Selected extra aliases a principal')
   }
   const selected = decoded(launch, 'LaunchConfig', owned(accounts, r.selectedConfig, L, 176))
+  const configReserved = Buffer.from(selected.reserved), caps = { buy: configReserved.readUInt16LE(1), sell: configReserved.readUInt16LE(3) }
+  const quoteCut = caps.buy !== 0 || caps.sell !== 0
+  check(!quoteCut || nongate && r.feeModel === 1 && caps.buy > 0 && caps.buy <= 1000 && caps.sell <= 1000, 'Quote-cut caps differ')
+  const selectedRules = nongate && r.feeModel === 1 ? { ...noRules, burn_buy_bps: selected.rules.burn_buy_bps, burn_sell_bps: selected.rules.burn_sell_bps } : noRules
+  check([selectedRules.burn_buy_bps, selectedRules.burn_sell_bps].every(v => Number.isInteger(v) && v >= 0 && v <= 10000), 'Burn rate differs')
   check(selected.version === 1 && selected.custom_hook && str(selected.custom_hook) === H && selected.creator_fee_bps === r.creatorFeeBps
-    && selected.author_share_bps === 0 && Buffer.byteLength(selected.label) <= 32 && selected.custom_hook_flags === flags && selected.reserved.every(v => v === 0) && isDeepStrictEqual(selected.rules, noRules), 'Selected no-rules policy differs')
+    && selected.author_share_bps <= (nongate && r.feeModel === 1 ? 5000 : 0) && Buffer.byteLength(selected.label) <= 32 && selected.custom_hook_flags === flags
+    && selected.reserved.every((v, i) => v === 0 || i >= 1 && i < 5 && quoteCut || i === 0 && v === 1 && selectedAuthorityEvidence?.authority.kind === 'timelocked')
+    && isDeepStrictEqual(selected.rules, selectedRules), 'Selected rules or author policy differs')
   const launchBytes = owned(accounts, a.launch, L, LAUNCH_LEN), poolBytes = owned(accounts, a.pool, S, POOL_LEN)
   const state = decoded(launch, 'Launch', launchBytes), pool = decoded(swap, 'Pool', poolBytes), graduated = state.status === STATUS_GRADUATED
   // Both native flags, read from the bytes the programs read (pool 351, launch 560: both carry a custom hook).
   check(poolBytes[NATIVE_FLAGS.pool] === 1 && pool.reserved[0] === 1 && pool.reserved.slice(1).every(v => v === 0)
-    && launchBytes[NATIVE_FLAGS.launch] === 1 && state.reserved[17] === 1 && state.reserved.every((v, i) => i === 17 || v === 0), 'Coin is not a native-SOL coin')
+    && launchBytes[NATIVE_FLAGS.launch] === 1 && state.reserved[17] === 1 && state.reserved.every((v, i) => i === 17 || quoteCut && i < 14 || v === 0), 'Coin is not a native-SOL coin')
+  if (quoteCut) {
+    const reserved = Buffer.from(state.reserved)
+    check(reserved.subarray(0, 4).equals(configReserved.subarray(1, 5))
+      && reserved[12] === bump(H, 'state', kb(r.mint)) && reserved[13] === bump(L, 'quote-cut', kb(H)), 'Quote-cut launch caps or bumps differ')
+  }
+  const cutCap = quoteCut && str(state.creator) !== r.trader ? caps[r.side] : 0
+  check(selectedQuoteCutBps === undefined || selectedQuoteCutBps <= cutCap, 'Measured quote cut exceeds launch cap or creator exemption')
   check(state.version === 1 && state.bump === bump(L, 'launch', kb(r.mint)) && str(state.mint) === r.mint && str(state.pool) === a.pool
-    && str(state.quote_mint) === profile.quoteMint && str(state.config) === r.selectedConfig && str(state.creator) === str(selected.creator)
+    && str(state.quote_mint) === profile.quoteMint && str(state.config) === r.selectedConfig && PublicKey.isOnCurve(kb(str(state.creator)))
     && [0, STATUS_GRADUATED].includes(state.status) && state.graduated_at.isZero() === !graduated && state.custom_hook && str(state.custom_hook) === H && state.custom_hook_flags === flags
-    && state.modules === 0 && state.creator_fee_bps === r.creatorFeeBps && state.author_share_bps === 0 && state.lp_fee_bps === 0 && state.sniper_window_secs.isZero() && state.sniper_start_bps === 0
-    && isDeepStrictEqual(state.rules, noRules) && str(state.kit_config) === a.kitConfig && str(state.holder_vault) === a.holderVault
+    && state.modules === 0 && state.creator_fee_bps === r.creatorFeeBps && state.author_share_bps === (str(state.creator) === str(selected.creator) ? 0 : selected.author_share_bps) && state.lp_fee_bps === 0 && state.sniper_window_secs.isZero() && state.sniper_start_bps === 0
+    && isDeepStrictEqual(state.rules, selectedRules) && str(state.kit_config) === a.kitConfig && str(state.holder_vault) === a.holderVault
     && str(state.reserve_holding) === a.launchReserve && str(state.quote_holding) === a.launchQuote && str(state.lp_holding) === a.launchLp && state.kit_caller_bump === 0
-    && ['creator_unlock_at', 'early_window_end', 'early_unlock_at', 'holder_fees_accrued', 'burned_on_trades', 'author_fees_paid'].every(k => state[k].isZero()), 'Launch is not a canonical native max-wallet coin')
+    && ['creator_unlock_at', 'early_window_end', 'early_unlock_at', 'holder_fees_accrued', ...(!nongate || r.feeModel === 2 ? ['burned_on_trades', 'author_fees_paid'] : [])].every(k => state[k].isZero()), 'Launch rules or native coin binding differs')
   check(pool.version === 1 && pool.bump === bump(S, 'pool', kb(r.mint), kb(profile.quoteMint), Buffer.alloc(2), kb(L)) && pool.lp_mint_bump === bump(S, 'lp', kb(a.pool))
     && str(pool.base_mint) === r.mint && str(pool.quote_mint) === profile.quoteMint && str(pool.lp_mint) === a.lpMint && str(pool.base_vault) === a.baseVault
     && str(pool.quote_vault) === a.quoteVault && pool.hook_program && str(pool.hook_program) === L && pool.hook_flags === 1985
     && pool.hook_signer_bump === bump(S, 'hook-authority', kb(L)) && str(pool.creator) === a.launch
-    && pool.lp_fee_bps === 0 && pool.protocol_fee_bps === 0 && pool.protocol_share_bps === 2500 && pool.fee_model === 2, 'Pool binding or inclusive-fee policy differs')
+    && pool.lp_fee_bps === 0 && pool.protocol_fee_bps === 0 && pool.protocol_share_bps === 2500 && pool.fee_model === r.feeModel, 'Pool binding or fee model differs')
   // finalize_curve counts 1000 LP units that are never minted (the pool's minimum liquidity), so a graduated pool's
   // lp_supply is the minted supply plus 1000, all of it in the launch's LP holding.
   const lpMint = typed(gate, 'Mint', owned(accounts, a.lpMint, T, 519))
@@ -311,10 +361,20 @@ export function compileNativeSwapReview(input) {
     && n(mint.supply) <= n(mint.max_supply) && mint.reserved.every(v => v === 0), 'Base mint immutable hook binding differs')
   check(quoteMint.version === 1 && !quoteMint.hook_program && quoteMint.hook_flags === 0 && !quoteMint.freeze_authority && !quoteMint.hook_authority
     && quoteMint.hook_signer_bump === 0 && quoteMint.reserved.every(v => v === 0), 'Quote mint hook or freeze differs')
-  const poolRegistry = owned(accounts, a.poolRegistry, L, 186)
-  check(poolRegistry.equals(Buffer.concat([Buffer.from('02daf6662c38c0cd01040000000101', 'hex'), kb(L), Buffer.from('0200000000060000006c61756e636801020101', 'hex'), kb(T),
-    Buffer.from('030000000007000000686f6c64696e67010301050100', 'hex'), kb(a.holderVault), Buffer.from([0, 0]), kb(a.kitConfig)])), 'Pool registry exact callback bindings differ')
-  const feePolicy = readInclusiveFeePolicy({ ...accounts.get(a.inclusiveFeePolicy), data: owned(accounts, a.inclusiveFeePolicy, S, 75), signer: false, writable: false }, S, a.pool)
+  const literal = bytes => ({ kind: 'literal', bytes: Buffer.from(bytes) }), ref = index => ({ kind: 'account', index })
+  const derived = (program, seeds, writable) => ({ writable, source: { kind: 'pda', program: pk(program), seeds } })
+  const fixed = (address, writable) => ({ writable, source: { kind: 'key', key: pk(address) } })
+  const expectedRegistry = encodeHookAccountList({ version: 1, accounts: [
+    derived(L, [literal('launch'), ref(2)], true), derived(T, [literal('holding'), ref(3), ref(5)], true),
+    fixed(a.holderVault, true), fixed(a.kitConfig, false),
+    ...(quoteCut ? [fixed(H, false), derived(T, [literal('holding'), ref(2), ref(4)], false),
+      derived(H, [literal('state'), ref(2)], true), derived(L, [literal('quote-cut'), ref(9)], false)] : []),
+  ] })
+  const poolRegistry = owned(accounts, a.poolRegistry, L, expectedRegistry.length)
+  check(poolRegistry.equals(expectedRegistry), 'Pool registry exact callback bindings differ')
+  const feePolicy = r.feeModel === 2
+    ? readInclusiveFeePolicy({ ...accounts.get(a.inclusiveFeePolicy), data: owned(accounts, a.inclusiveFeePolicy, S, 75), signer: false, writable: false }, S, a.pool)
+    : null
   // The native books: the pool's lamports cover rent and its reserve plus the platform's share (check_native).
   const poolLamports = lamportsOf(accounts, a.pool), launchLamports = lamportsOf(accounts, a.launch), walletLamports = lamportsOf(accounts, r.trader)
   check(poolLamports >= rent(POOL_LEN) + n(pool.quote_reserve) + n(pool.protocol_fees_quote) && launchLamports >= rent(LAUNCH_LEN), 'Native pool books differ from its lamports')
@@ -335,9 +395,12 @@ export function compileNativeSwapReview(input) {
   // A full curve waiting for graduate still takes sales (the swap allows them), never buys.
   refuseUnless(graduated || !buy || !isReady(p, n(state.graduation_quote)), 'This coin has finished its bonding curve and is graduating. Buying opens again once it moves to its open market.')
   // After graduation the gate reads Launch status 1 and stops capping, so the model lifts the cap only then.
+  const economics = { burnBuyBps: state.rules.burn_buy_bps, burnSellBps: state.rules.burn_sell_bps,
+    lpFeeBps: pool.lp_fee_bps, quoteCutBps: selectedQuoteCutBps ?? 0, quoteCutCapBps: cutCap,
+    allowPartialFill: nongate && r.feeModel === 1 && buy && !graduated }
   let q
   try {
-    q = nongate ? selectedNativeMeasuredQuote(r, p, selectedTokenDeltas, a) : modelInclusiveCreatorQuote({ side: r.side, amountIn: amount, minAmountOut: BigInt(r.minAmountOut),
+    q = nongate ? selectedNativeMeasuredQuote(r, p, selectedTokenDeltas, a, economics) : modelInclusiveCreatorQuote({ side: r.side, amountIn: amount, minAmountOut: BigInt(r.minAmountOut),
       maxInput: BigInt(r.maxInput), creatorFeeBps: r.creatorFeeBps, feeModel: 2, protocolShareBps: 2500,
       lpFeeBps: 0, flatProtocolFeeBps: 0, sniperWindowSecs: 0, sniperStartBps: 0, quoteHook: 'none', modules: 0,
       authorShareBps: 0, rules: 'none', rewards: false, recipientBaseBalance: traderBase, maxWalletLifted: graduated, pool: p,
@@ -345,13 +408,15 @@ export function compileNativeSwapReview(input) {
   } catch (error) { refuseUnless(!QUOTE_REFUSALS[error?.message], QUOTE_REFUSALS[error?.message]); throw error }
   refuseUnless(q.priceImpactBps <= BigInt(r.maxPriceImpactBps), `That moves the price more than ${r.maxPriceImpactBps / 100}%. Try a smaller amount.`)
   const { grossQuote: gross, platformQuote: platform, creatorQuote: creator } = q.fees
-  // Graduation: only the exact final fill finishes the curve, in the same transaction as graduate (design §4.6).
-  const fill = graduated ? null : finalFillLamports({ graduated: false, graduationQuote: String(state.graduation_quote), creatorFeeBps: r.creatorFeeBps, pool: p })
+  const shareModel = nongate && r.feeModel === 1
+  // Share-model fills consume only what reaches the real reserve; legacy model2 retains
+  // its exact inclusive final-fill amount. Both graduate only when the executed pool is ready.
+  const fill = graduated || shareModel ? null : finalFillLamports({ graduated: false, graduationQuote: String(state.graduation_quote), creatorFeeBps: r.creatorFeeBps, pool: p })
   if (graduated) refuseUnless(!r.graduate, CURVE_CHANGED)
-  else refuseUnless(r.graduate ? buy && fill !== null && amount === fill && isReady(q.after, n(state.graduation_quote)) : !buy || !isReady(q.after, n(state.graduation_quote)), CURVE_CHANGED)
+  else refuseUnless(r.graduate ? buy && (shareModel || fill !== null && amount === fill) && isReady(q.after, n(state.graduation_quote)) : !buy || !isReady(q.after, n(state.graduation_quote)), CURVE_CHANGED)
   // The client derives the minimum from one provider's quote; the two-provider state here bounds it: never further than
   // the panel's largest slippage choice below what this trade delivers now (I1).
-  refuseUnless(nongate && !selectedTokenDeltas || BigInt(r.minAmountOut) >= q.delivered * (10000n - MAX_SLIPPAGE_BPS) / 10000n, 'Your minimum received allows more than 5% slippage. Refresh the amount and try again.')
+  refuseUnless(nongate && !selectedTokenDeltas || (shareModel ? q.minAmountOut : BigInt(r.minAmountOut)) >= q.delivered * (10000n - MAX_SLIPPAGE_BPS) / 10000n, 'Your minimum received allows more than 5% slippage. Refresh the amount and try again.')
   check(n(pool.base_volume) + (buy ? q.grossOutput : amount) <= maxU128 && n(pool.quote_volume) + (buy ? amount - creator : q.grossOutput) <= maxU128
     && q.after.quoteReserve + q.after.protocolFeesQuote <= maxU64, 'Post-swap arithmetic overflow')
   const slot = Math.max(...obs.map(o => o.slot))
@@ -367,7 +432,8 @@ export function compileNativeSwapReview(input) {
   // The wallet stays rent-exempt: what it pays leaves at least an empty account's minimum, and a sale lands in a funded account.
   refuseUnless(walletLamports >= fee + debit + rent(0), 'You need a little more SOL for this trade, its network fee and your wallet’s minimum balance.')
   check(fee + debit <= BigInt(l.maxTotalDebitLamports), 'Payer debit exceeds its reviewed bound')
-  const swapIx = nativeSwapV2Instruction(profile, { side: r.side, trader: r.trader, mint: r.mint, amountIn: amount, minAmountOut: r.minAmountOut }, swap.idl, hookEvidence)
+  const swapIx = nativeSwapV2Instruction(profile, { side: r.side, trader: r.trader, mint: r.mint, amountIn: amount, minAmountOut: r.minAmountOut, feeModel: r.feeModel,
+    burns: state.rules.burn_buy_bps > 0 || state.rules.burn_sell_bps > 0, quoteCut }, swap.idl, hookEvidence)
   const graduateIx = r.graduate ? stackInstructions.graduateHookCoin(profile.programs, profile.quoteMint, { cranker: r.trader, mint: r.mint, kit: kitOf(profile) }) : null
   if (nongate && graduateIx) {
     // Graduation reuses one slice for reserve transfer AND burn. Mint-stable registries
@@ -404,15 +470,19 @@ export function compileNativeSwapReview(input) {
   const canonical = instructions.map(ix => ({ program: str(ix.programId), dataHex: ix.data.toString('hex'), accounts: ix.keys.map(m => review.accounts.find(x => x.address === str(m.pubkey))) }))
   check(isDeepStrictEqual(inspected.instructions, canonical), 'Effective swap envelope metas differ')
   // Exact lamport movement of every account the trade pays or is paid by; nothing else may change.
-  const lamportDeltas = { [r.trader]: buy ? -(fee + amount + rentNow) : q.delivered - fee, [a.launch]: creator, [a.pool]: buy ? amount - creator : -(q.delivered + creator),
+  const consumed = q.traderDebit ?? amount, launchCredit = creator + (q.fees.customQuote ?? 0n)
+  const lamportDeltas = { [r.trader]: buy ? -(fee + consumed + rentNow) : q.delivered - fee, [a.launch]: launchCredit, [a.pool]: buy ? consumed - launchCredit : -(q.delivered + launchCredit),
     ...(createsHolding ? { [a.traderBase]: rentNow } : {}) }
   return freeze({ schema: 'repoing/native-swap-review/1', status: nongate ? selectedTokenDeltas ? 'measured-review-not-authorization' : 'simulation-required-not-authorization' : 'deterministic-review-not-authorization', provenance, request: r, releaseProfileSha256: envelope.expectedSha256,
-    sourceCommit: profile.sourceCommit, addresses: a, review, instructions: inspected.instructions, graduated, graduates: r.graduate, createsHolding,
+    sourceCommit: profile.sourceCommit, addresses: a, review, instructions: inspected.instructions, graduated, graduates: r.graduate, createsHolding, economics,
     quote: { delivered: String(q.delivered), minAmountOut: r.minAmountOut, capRaw: String(cap), capLifted: graduated, priceImpactBps: String(q.priceImpactBps), lpFee: '0',
-      protocolFee: String(platform), grossCreatorFee: String(gross), netCreatorFee: String(creator), feeModel: 2, protocolShareBps: 2500, creatorFeeBps: r.creatorFeeBps,
-      platformCollector: feePolicy.collector, holdingRentLamports: String(holdingRent), networkFeeLamports: String(fee), payerDebitLamports: String(fee + debit), graduates: r.graduate,
+      protocolFee: String(platform), grossCreatorFee: String(gross), netCreatorFee: String(creator), feeModel: r.feeModel, protocolShareBps: 2500, creatorFeeBps: r.creatorFeeBps,
+      ...(r.feeModel === 1 ? { burnedToken: String(q.burnIn + q.burnOut), hookTokenFee: String(buy ? q.cutsOut : q.cutsIn),
+        hookQuoteFee: String(q.fees.customQuote), authorShareBps: state.author_share_bps, configAuthor: str(selected.creator),
+        consumedInput: String(consumed), unspentInput: String(amount - consumed), effectiveMinAmountOut: String(q.minAmountOut) } : {}),
+      platformCollector: feePolicy?.collector ?? str(d.fee_collector), holdingRentLamports: String(holdingRent), networkFeeLamports: String(fee), payerDebitLamports: String(fee + debit), graduates: r.graduate,
       after: { baseReserve: String(q.after.baseReserve), quoteReserve: String(q.after.quoteReserve), protocolFeesQuote: String(q.after.protocolFeesQuote), swapCount: String(n(pool.swap_count) + 1n),
-        traderBase: String(traderBase + (buy ? q.delivered : -(q.traderDebit ?? amount))), creatorFeesAccrued: String(n(state.creator_fees_accrued) + creator) } },
+        traderBase: String(traderBase + (buy ? q.delivered : -consumed)), creatorFeesAccrued: String(n(state.creator_fees_accrued) + launchCredit) } },
     lamportsBefore: Object.fromEntries(Object.keys(lamportDeltas).map(k => [k, String(accounts.get(k)?.lamports ?? 0)])),
     lamportDeltas: Object.fromEntries(Object.entries(lamportDeltas).map(([k, v]) => [k, String(v)])),
     onchainExactInputAndMinimumOutput: true, onchainDeadlineEnforced: false, productionReceipt: null, executionAuthorized: false, canSign: false, canSubmit: false })

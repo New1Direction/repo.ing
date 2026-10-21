@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { ComputeBudgetProgram, Keypair, PublicKey, TransactionInstruction, TransactionMessage } from '@solana/web3.js'
-import { collectSelectedHookSimulation } from '../src/hooklab-selected-hook-simulation.mjs'
+import { collectSelectedHookSimulation, simulateSelectedHookAccounts } from '../src/hooklab-selected-hook-simulation.mjs'
 
 const sha = x => createHash('sha256').update(x).digest('hex')
 const key = n => Keypair.fromSeed(Buffer.alloc(32, n)).publicKey.toBase58()
@@ -67,6 +67,50 @@ test('exact-message simulation measures net delivery after hook fees, and retain
   assert.equal(result.lamportDeltas[f.wallet], '-5000'); assert.equal(result.messageSha256, f.review.messageSha256)
   assert.equal(result.canSign, false); assert.equal(result.canSubmit, false)
   assert.deepEqual(await collectSelectedHookSimulation({ ...f, expected: JSON.parse(JSON.stringify(result)) }), result)
+})
+
+test('simulation account slices preserve the exact message, every result and one bank/execution', async () => {
+  const f = fixture(), { VersionedMessage, VersionedTransaction } = await import('@solana/web3.js')
+  const tx = new VersionedTransaction(VersionedMessage.deserialize(Buffer.from(f.review.messageBase64, 'base64')))
+  const addresses = Array.from({ length: f.review.accounts.length + 3 }, (_, i) => key(i + 20))
+  const options = { commitment: 'finalized', sigVerify: false, replaceRecentBlockhash: false, accounts: { encoding: 'base64', addresses } }
+  for (const changed of [null, 'bank', 'logs', 'units', 'error']) {
+    let calls = 0
+    const connection = { simulateTransaction: async (actual, opts) => {
+      assert.equal(actual, tx); assert.equal(opts.replaceRecentBlockhash, false)
+      assert.ok(opts.accounts.addresses.length <= f.review.accounts.length)
+      const second = calls++ > 0
+      return { context: { slot: changed === 'bank' && second ? 43 : 42 }, value: {
+        err: changed === 'error' && second ? { InstructionError: [0, 'InvalidArgument'] } : null,
+        logs: [changed === 'logs' && second ? 'changed' : 'same'], unitsConsumed: changed === 'units' && second ? 2 : 1,
+        accounts: opts.accounts.addresses.map(address => ({ address })),
+      } }
+    } }
+    if (changed) await assert.rejects(simulateSelectedHookAccounts(connection, tx, options))
+    else {
+      const result = await simulateSelectedHookAccounts(connection, tx, options)
+      assert.deepEqual(result.value.accounts.map(a => a.address), addresses)
+    }
+  }
+})
+
+test('requested simulation event bytes belong to the executing program, not nested or prefixed spoofed logs', async () => {
+  const discriminator = '0102030405060708', bytes = Buffer.from(`${discriminator}0b00`, 'hex')
+  const source = key(4), nested = key(12)
+  const f = fixture(({ response }) => { response.value.logs = [
+    `Program ${source} invoke [1]`,
+    `Program log: Program data: ${bytes.toString('base64')}`,
+    `Program ${nested} invoke [2]`, `Program data: ${bytes.toString('base64')}`, `Program ${nested} success`,
+    `Program data: ${bytes.toString('base64')}`, `Program ${source} success`,
+  ] })
+  f.conditions.events = [{ program: source, discriminator, bytes: 10 }]
+  const result = await collectSelectedHookSimulation(f)
+  assert.deepEqual(result.programEvents, [{ program: source, dataBase64: bytes.toString('base64') }])
+  const changed = fixture(({ response, index }) => { response.value.logs = [
+    `Program ${source} invoke [1]`, `Program data: ${Buffer.from(`${discriminator}${index ? '0c' : '0b'}00`, 'hex').toString('base64')}`, `Program ${source} success`,
+  ] })
+  changed.conditions.events = f.conditions.events
+  await assert.rejects(collectSelectedHookSimulation(changed))
 })
 
 test('an advancing finalized bank recollects the same message; persistent drift and changed output still refuse', async () => {

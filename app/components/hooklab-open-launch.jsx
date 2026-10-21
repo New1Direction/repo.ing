@@ -8,24 +8,36 @@ import Link from 'next/link'
 import { ArrowRight, Check, ChevronDown, Info, LoaderCircle } from 'lucide-react'
 import { useWallet } from './wallet'
 import { HookWalletSignIn, shortAddress, useHookWalletSession } from './hooklab-wallet-signin'
-import { HookCoinFields, HookCoinPreview, HookLaunchNotes } from './hooklab-coin-form'
+import { HookCoinFields, HookCoinPreview, HookLaunchNotes, HookEconomicsReview } from './hooklab-coin-form'
+import { HooksOperationError } from './hooks-ui'
 import { coinProblem } from './hooklab-launch-request'
 import { percent } from '../../src/hooklab-launch-menus.mjs'
 import { coinImageUrl, telegramHandle, websiteUrl, xHandle } from '../../src/hooklab-coin-profile.mjs'
 import { launchHookInput, reservationInput } from '../lib/hooklab-native-launch-form.mjs'
 import { signReviewedLaunch } from '../lib/hooklab-launch-wallet.mjs'
-import { OPEN_LAUNCH_NOTE, OPEN_LAUNCH_STEPS, TWO_APPROVALS, defaultOpenChoices, menuChoice, nextOpenLaunchAction, openCreationProblem, openLaunchCosts,
+import { OPEN_LAUNCH_NOTE, OPEN_LAUNCH_STEPS, TWO_APPROVALS, THREE_APPROVALS, defaultOpenChoices, menuChoice, nextOpenLaunchAction, openCreationProblem, openLaunchCosts,
   openLaunchPrice, openLaunchStatus, openMenus, solOrWallet, sameLaunchHook, SELECTED_HOOK_NOTE } from '../lib/hooklab-open-launch.mjs'
 
 const REQUESTS = '/api/hook-lab/launch-requests', LAUNCH = '/api/hook-lab/native-launch'
 // The same key the guided launcher uses, so a launch started anywhere on this device resumes here.
 const STORAGE_KEY = 'repo.ing.hooks.native-launch.ids.v1'
-const NO_IDS = Object.freeze({ operationId: '', preparationId: '', launchId: '' })
+const NO_IDS = Object.freeze({ operationId: '', setupId: '', preparationId: '', launchId: '' })
 const uuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 const EMPTY_COIN = { name: '', symbol: '', image: null, description: '', x: '', website: '', telegram: '' }
 const valid = (read, value) => { try { return read(value) } catch { return null } }
 const previewProfile = coin => ({ description: '', x: valid(xHandle, coin.x), website: valid(websiteUrl, coin.website), telegram: valid(telegramHandle, coin.telegram) })
+// Fail closed for selected setup reviews: this UI does not infer table costs from
+// estimates or an availability response. Only the exact reviewed disclosure counts.
+const setupDisclosureProblem = (stage, review, selectedHook) => {
+  if (!selectedHook || stage !== 'hook-setup') return null
+  const cost = review?.supplementalTableCost
+  if (cost?.permanentFreeze === true && typeof cost.address === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(cost.address)
+    && typeof cost.rentLamports === 'string' && /^(0|[1-9]\d*)$/.test(cost.rentLamports)
+    && typeof review.maxNativeDebitLamports === 'string' && /^(0|[1-9]\d*)$/.test(review.maxNativeDebitLamports)
+    && BigInt(cost.rentLamports) <= BigInt(review.maxNativeDebitLamports)) return null
+  return 'The address table’s exact cost and permanent-freeze warning are missing. Refresh the hook setup review before continuing. Nothing will be signed.'
+}
 
 async function post(url, body) {
   const response = await fetch(url, { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -40,7 +52,7 @@ async function available() {
   if (!response.ok) throw Error(value.error || 'Launching isn’t available right now. Try again in a minute.')
   return value
 }
-const readIds = () => { try { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)); return saved && Object.keys(NO_IDS).every(k => saved[k] === '' || uuid(saved[k])) ? saved : NO_IDS } catch { return NO_IDS } }
+const readIds = () => { try { const saved = { ...NO_IDS, ...JSON.parse(localStorage.getItem(STORAGE_KEY)) }; return Object.keys(NO_IDS).every(k => saved[k] === '' || uuid(saved[k])) ? saved : NO_IDS } catch { return NO_IDS } }
 
 export function OpenLaunchSteps({ phase }) {
   return <ol className="hooks-launch-steps" aria-label="Launch progress">{OPEN_LAUNCH_STEPS.map((label, index) =>
@@ -59,18 +71,23 @@ export function OpenLaunchReview({ coin, image, profile, openCreation, costs, pr
   return <section className="launch-panel hooks-open-review" aria-labelledby="hooks-review-title">
     <h2 id="hooks-review-title">Check your launch</h2>
     <HookCoinPreview image={image} name={coin.name} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} selectedHook={coin.selectedHook} profile={profile}/>
-    {coin.selectedHook && <div role="note"><p>{selectedReady ? 'Each approval binds this hook, its registry and the exact transaction. Changed configuration requires a new review.' : SELECTED_HOOK_NOTE}</p><p>Program: <code style={{ overflowWrap: 'anywhere' }}>{coin.selectedHook.program}</code> · Flags: {coin.selectedHook.flags}</p><p>Inclusive fee policy (model 2). No max-wallet gate.</p></div>}
+    {coin.selectedHook && <div role="note"><p>{selectedReady ? 'Each approval covers only the hook and settings you reviewed. Changed settings require a new review.' : SELECTED_HOOK_NOTE}</p><p>Creator revenue, hook fees and additional protocol charges are shown separately. Wallet limits depend on your chosen hook.</p>
+      {coin.hookPublication && <dl>{Object.entries(coin.hookPublication.configuration).map(([name,value]) => <div key={name}><dt>{coin.hookPublication.manifest?.fields?.find(f => f.name === name)?.label ?? name}</dt><dd style={{ overflowWrap: 'anywhere' }}>{String(value)}</dd></div>)}</dl>}
+      <details><summary>Technical details</summary><p>Program: <code style={{ overflowWrap: 'anywhere' }}>{coin.selectedHook.program}</code> · Flags: {coin.selectedHook.flags}</p>
+        {coin.hookPublication && <p>Publication: <code style={{ overflowWrap: 'anywhere' }}>{coin.hookPublication.digest}</code></p>}</details>
+    </div>}
+    <HookEconomicsReview coin={coin}/>
     <div className="hooks-open-review-grid">
       <div className="inner-card fee-breakdown"><h3>What you pay</h3>
         {rows.map(row => <div key={row.key} className="fee-line"><span>{row.label} <strong>{row.amount ?? (coin.selectedHook ? unknown : 'shown in your wallet')}</strong>{row.note ? <small> {row.note}</small> : null}</span></div>)}
-        <div className="hooks-cost"><span>You’ll spend about</span><strong>{total ?? unknown}</strong><small>{coin.selectedHook ? selectedReady ? 'Exact transaction debit limits appear before each approval. Registry setup is separate.' : 'Costs require a complete lifecycle review. This check requests no transaction signature.' : 'Your wallet shows the exact amount before you approve.'}</small></div>
+        <div className="hooks-cost"><span>You’ll spend about</span><strong>{total ?? unknown}</strong><small>{coin.selectedHook ? selectedReady ? 'Hook setup, coin settings and opening trading each show the most your wallet can spend before approval.' : 'Exact costs are shown at each approval. This availability check requests no transaction signature.' : 'Your wallet shows the exact amount before you approve.'}</small></div>
         {need ? <div className="hooks-cost"><span>You need at least</span><strong>{need} in your wallet</strong><small>A little more than you spend: the program checks it can cover its accounts, and the rest stays in your wallet.</small></div> : null}
       </div>
       <div className="inner-card fee-breakdown"><h3>Your coin</h3>
         <div className="fee-line"><span>Opening price<small>Its market value when trading opens</small></span><strong>{amount(values?.opening)}</strong></div>
         <div className="fee-line"><span>Graduates at<small>{values ? `Its market value once buyers put in ${values.raise}` : 'Its market value when the curve sells out'}</small></span><strong>{amount(values?.graduation)}</strong></div>
         <div className="fee-line"><span>Creator fee<small>On every buy and sell, in SOL</small></span><strong>{percent(coin.creatorFeeBps)}</strong></div>
-        <div className="fee-line"><span>{coin.selectedHook ? 'Custom hook' : 'Max per wallet'}<small>{coin.selectedHook ? 'Token fees require exact-message simulation' : 'Until the coin graduates'}</small></span><strong>{coin.selectedHook ? 'No max-wallet gate' : percent(coin.capBps)}</strong></div>
+        <div className="fee-line"><span>{coin.selectedHook ? 'Custom hook' : 'Max per wallet'}<small>{coin.selectedHook ? 'Token fees are checked on your transaction before approval' : 'Until the coin graduates'}</small></span><strong>{coin.selectedHook ? 'Wallet limits set by hook' : percent(coin.capBps)}</strong></div>
       </div>
     </div>
     <p className="hooks-open-note" role="note"><Info size={18} aria-hidden="true"/><span>{OPEN_LAUNCH_NOTE}</span></p>
@@ -79,32 +96,54 @@ export function OpenLaunchReview({ coin, image, profile, openCreation, costs, pr
       <button type="button" className="button primary" disabled={busy || !!problem} onClick={onSign}>{busy ? 'Starting…' : coin.selectedHook && !selectedReady ? 'Check hook availability' : 'Sign and launch'}</button>
       {onEdit && <button type="button" className="button outline" disabled={busy} onClick={onEdit}>{editLabel}</button>}
     </div>
-    <p className="form-fineprint">{coin.selectedHook && !selectedReady ? 'Availability check only. Nothing will be signed.' : TWO_APPROVALS}</p>
+    <p className="form-fineprint">{coin.selectedHook ? !selectedReady ? 'Availability check only. Nothing will be signed.' : THREE_APPROVALS : TWO_APPROVALS}</p>
   </section>
 }
 
 // The one guided signing step: two wallet approvals, each confirmed on Solana before the next.
 export function OpenLaunchSigning({ symbol, stage, status, busy, error, canRetry, onRetry, review, selectedHook }) {
   const second = stage === 'launch'
-  const items = [['Approve the setup', 'Creates your coin and its accounts.'], ['Approve the launch', 'Opens trading with your rules.']]
+  const disclosureProblem = setupDisclosureProblem(stage, review, selectedHook)
+  const tableCost = selectedHook && stage === 'hook-setup' && !disclosureProblem ? review?.supplementalTableCost : null
+  const items = [...(selectedHook ? [['Approve hook setup', 'Sets up your chosen hook for this coin.']] : []), [selectedHook ? 'Approve launch configuration' : 'Approve the setup', 'Saves your coin settings and creates the required accounts.'], ['Approve the launch', 'Creates your coin and opens trading with your rules.']]
+  const active = selectedHook ? stage === 'hook-setup' ? 0 : second ? 2 : 1 : second ? 1 : 0
+  const statusText = ({
+    'outcome-unknown': 'Your transaction is not yet confirmed. We are still checking; do not start another launch.',
+    'submission-claimed': 'Sending your approved transaction…', submitted: 'Waiting for confirmation on Solana…',
+    reviewed: 'Review the costs before requesting wallet approval.', partial: 'Finishing the approved transaction…',
+    signed: 'Your approval is saved. Preparing to send…', expired: 'This review expired. A fresh review is needed before approval.',
+    'signing-claimed': 'Finishing the approved transaction…', 'signing-unknown': 'We are checking your saved approval. Do not start another launch.',
+    'finalized-success': 'This step is confirmed on Solana.', 'finalized-failure': 'This step failed on Solana. Check the details before continuing.',
+    'review-required': 'This launch needs a manual check before you approve anything else.',
+  })[status] ?? (/^[a-z]+(?:[-_][a-z]+)+$/.test(status ?? '') ? 'This launch needs a check before you approve anything else.' : status)
   return <section className="launch-panel hooks-open-signing" aria-labelledby="hooks-signing-title" aria-live="polite">
     <h2 id="hooks-signing-title">Launching ${symbol}</h2>
-    <p className="launch-subtitle">{TWO_APPROVALS} Keep this page open until it says your coin is live.</p>
+    <p className="launch-subtitle">{selectedHook ? THREE_APPROVALS : TWO_APPROVALS} Keep this page open until it says your coin is live.</p>
     <ol className="hooks-sign-steps hooks-open-progress" aria-label="Wallet approvals">{items.map(([label, about], index) => {
-      const state = index < (second ? 1 : 0) ? 'done' : index === (second ? 1 : 0) ? 'current' : 'todo'
+      const state = index < active ? 'done' : index === active ? 'current' : 'todo'
       return <li key={label} data-state={state} aria-current={state === 'current' ? 'step' : undefined}>
         <span>{state === 'done' ? <Check size={14} aria-hidden="true"/> : state === 'current' && busy ? <LoaderCircle size={14} className="image-picker-spinner" aria-hidden="true"/> : index + 1}</span>
         <div><strong>{label}</strong><small>{about}</small></div></li>
     })}</ol>
     {selectedHook && review && <div className="inner-card fee-breakdown" aria-label="Exact selected-hook transaction review">
-      <p>Selected hook <code style={{ overflowWrap: 'anywhere' }}>{selectedHook.program}</code> · Flags: {selectedHook.flags}</p>
       <p>Maximum wallet debit: <strong>{review.maxNativeDebitLamports} lamports</strong> (includes network fee).</p>
-      <p>Exact message SHA-256: <code style={{ overflowWrap: 'anywhere' }}>{review.messageSha256}</code></p>
-      <p>Continue approves only this reviewed transaction. The wallet must return these same message bytes.</p>
+      {tableCost && <div role="note" aria-label="Permanent supplemental table cost">
+        <p>Address table cost (rent): <strong>{tableCost.rentLamports} lamports</strong>, separate from the network fee and included in the maximum wallet debit above.</p>
+        <p>This table lets your complete launch fit in one transaction. Your coin and its required accounts are created together.</p>
+        <p>This setup creates and permanently freezes the supplemental address lookup table. Its rent cannot be reclaimed, its addresses cannot be changed, and the table cannot be closed.</p>
+      </div>}
+      {!disclosureProblem && <p>Continue requests your wallet approval for only this reviewed transaction. Any change requires a new review.</p>}
+      <details><summary>Technical details</summary>
+        <p>Selected hook <code style={{ overflowWrap: 'anywhere' }}>{selectedHook.program}</code> · Flags: {selectedHook.flags}</p>
+        {tableCost && <p>Table address: <code style={{ overflowWrap: 'anywhere' }}>{tableCost.address}</code></p>}
+        <p>Exact message SHA-256: <code style={{ overflowWrap: 'anywhere' }}>{review.messageSha256}</code></p>
+      </details>
     </div>}
-    {status && <p className="hooks-operation-status" role="status">{status}</p>}
-    {error && <p className="inline-error" role="alert">{error}</p>}
-    {canRetry && <button type="button" className="button primary" disabled={busy} onClick={onRetry}>{busy ? 'Working…' : 'Continue'}</button>}
+    {disclosureProblem && <p className="inline-error" role="alert">{disclosureProblem}</p>}
+    {status && <p className="hooks-operation-status" role="status">{statusText}</p>}
+    {statusText !== status && <details><summary>Technical status</summary><p>{status}</p></details>}
+    <HooksOperationError error={error}/>
+    {canRetry && <button type="button" className="button primary" disabled={busy || !!disclosureProblem} onClick={onRetry}>{busy ? 'Working…' : 'Continue'}</button>}
   </section>
 }
 
@@ -151,7 +190,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   // A recorded coin that has not launched yet goes straight to its review; one mid-launch resumes its signing step.
   useEffect(() => {
     if (!request || running.current || step === 'live') return
-    if (['queued', 'launching'].includes(request.status)) setCoin(current => ({ ...current, name: request.name, symbol: request.symbol, creatorFeeBps: request.creatorFeeBps, capBps: request.capBps, selectedHook: request.selectedHook, hookKind: request.selectedHook ? 'selected' : 'max-wallet' }))
+    if (['queued', 'launching'].includes(request.status)) setCoin(current => ({ ...current, name: request.name, symbol: request.symbol, creatorFeeBps: request.creatorFeeBps, capBps: request.capBps, selectedHook: request.selectedHook, hookPublication: request.hookPublication, quoteCut: request.quoteCut, authorShareBps: request.authorShareBps, rules: request.rules, hookKind: request.selectedHook ? 'selected' : 'max-wallet' }))
     if (request.status === 'queued' || (request.selectedHook && !openCreation?.selectedHooksEnabled)) setStep('review')
     if (request.status === 'launching' && (!request.selectedHook || openCreation?.selectedHooksEnabled)) { setStep('sign'); setCanRetry(true); setStatus('Your launch is waiting for you. Continue to finish it.') }
   }, [request?.id, request?.status])
@@ -159,12 +198,12 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   const api = body => post(LAUNCH, body)
   // Every operation the server returns must be this wallet's, on this network, for this launch.
   const checked = (op, signingId) => {
-    if (!op || op.id !== signingId || !['preparation', 'launch'].includes(op.stage) || op.review?.genesisHash !== genesisHash
+    if (!op || op.id !== signingId || !['hook-setup', 'preparation', 'launch'].includes(op.stage) || op.review?.genesisHash !== genesisHash
       || op.review?.wallet !== walletRef.current || op.custodyOperationId !== idsRef.current.operationId) throw Error('This launch belongs to another wallet. Nothing was signed.')
     setOperation(op); return op
   }
   const review = async (stage, fresh = false) => {
-    const key = stage === 'preparation' ? 'preparationId' : 'launchId', ids = idsRef.current
+    const key = stage === 'hook-setup' ? 'setupId' : stage === 'preparation' ? 'preparationId' : 'launchId', ids = idsRef.current
     const next = { ...ids, [key]: !fresh && ids[key] ? ids[key] : crypto.randomUUID() }; retain(next)
     return checked((await api({ action: 'review', operationId: next.operationId, signingId: next[key], stage })).operation, next[key])
   }
@@ -181,12 +220,15 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
     const operationId = current.custodyOperationId ?? crypto.randomUUID()
     const ids = idsRef.current.operationId === operationId ? idsRef.current : { ...NO_IDS, operationId }
     retain(ids)
-    const input = reservationInput({}, { name: current.name, symbol: current.symbol, uri: current.uri, creatorFeeBps: current.creatorFeeBps, capBps: current.capBps, selectedHook: current.selectedHook })
+    const input = reservationInput({}, { name: current.name, symbol: current.symbol, uri: current.uri, creatorFeeBps: current.creatorFeeBps, capBps: current.capBps, selectedHook: current.selectedHook, hookPublication: current.hookPublication,
+      quoteCut: current.quoteCut, authorShareBps: current.authorShareBps, rules: current.rules })
     const value = await api({ action: 'reserve', operationId: ids.operationId, ...input })
     if (value.operationId !== ids.operationId || !value.mint) throw Error('The launch changed while it was starting. Nothing was signed.')
     setMint(value.mint); if (value.pricing) setPricing(value.pricing)
   }
   const signStep = async op => {
+    const problem = setupDisclosureProblem(op.stage, op.review, request?.selectedHook || coin.selectedHook)
+    if (problem) throw Error(problem)
     const walletRequest = await api({ action: 'wallet-request', signingId: op.id })
     const signedTransactionBase64 = await signReviewedLaunch({ walletRequest, reviewed: op.review, address: walletRef.current, genesisHash, currentWallet: () => walletRef.current, adapter: provider() })
     return checked((await api({ action: 'retain-wallet', signingId: op.id, signedTransactionBase64 })).operation, op.id)
@@ -194,15 +236,18 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   // Drives the launch to live: each move is what the last server answer calls for (nextOpenLaunchAction).
   async function drive(current) {
     let op = operation
-    if (!op && current.status === 'launching' && uuid(idsRef.current.launchId || idsRef.current.preparationId))
-      op = checked((await api({ action: 'get', signingId: idsRef.current.launchId || idsRef.current.preparationId })).operation, idsRef.current.launchId || idsRef.current.preparationId)
+    const resumeId = idsRef.current.launchId || idsRef.current.preparationId || idsRef.current.setupId
+    if (!op && current.status === 'launching' && uuid(resumeId))
+      op = await review(idsRef.current.launchId ? 'launch' : idsRef.current.preparationId ? 'preparation' : 'hook-setup')
     for (let moves = 0; moves < 400; moves++) {
       const action = nextOpenLaunchAction(op, { wallet: walletRef.current })
       setStatus(openLaunchStatus(op, action))
-      if (action === 'reserve') { await reserve(current); op = await review('preparation'); continue }
+      if (action === 'reserve') { await reserve(current); op = await review(current.selectedHook ? 'hook-setup' : 'preparation'); continue }
       if (action === 'sign') {
+        const problem = setupDisclosureProblem(op.stage, op.review, current.selectedHook)
+        if (problem) throw Error(problem)
         if(current.selectedHook && consentRef.current !== op.review.messageSha256){
-          setCanRetry(true); setStatus('Review the exact message and maximum debit above, then Continue to request your wallet approval.'); return
+          setCanRetry(true); setStatus('Review the costs and settings above, then Continue to request your wallet approval.'); return
         }
         consentRef.current=null; op = await signStep(op); continue
       }
@@ -210,6 +255,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
       if (action === 'close') { op = checked((await api({ action: 'expire', signingId: op.id })).operation, op.id); continue }
       if (action === 'reconcile' || action === 'wait') { await sleep(4000); op = checked((await api({ action: action === 'wait' ? 'get' : 'reconcile', signingId: op.id })).operation, op.id); continue }
       if (action === 'fresh') { op = await review(op.stage, true); continue }
+      if (action === 'preparation') { op = await review('preparation'); continue }
       if (action === 'launch') { op = await review('launch'); continue }
       if (action === 'live') { setStep('live'); setStatus(''); return }
       throw Error('This launch needs a check before anything else is signed. Keep this page and your recovery IDs; nothing more will be signed.')
@@ -262,7 +308,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   }
 
   const recorded = request && ['queued', 'launching', 'launched'].includes(request.status) ? request : null
-  const shown = recorded && step !== 'coin' ? { name: recorded.name, symbol: recorded.symbol, creatorFeeBps: recorded.creatorFeeBps, capBps: recorded.capBps, selectedHook: recorded.selectedHook } : { ...coin, name: coin.name.trim() }
+  const shown = recorded && step !== 'coin' ? recorded : { ...coin, name: coin.name.trim() }
   const image = recorded?.profile && step !== 'coin' ? coinImageUrl('', recorded.id, 128) : coin.image
   const phase = { coin: 0, review: 1, sign: 2, live: OPEN_LAUNCH_STEPS.length }[step]
   const paused = initialBlockers.length > 0 || !!openCreationProblem(openCreation)
@@ -279,7 +325,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
         </fieldset>
         <div className="launch-side"><HookLaunchNotes capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} selectedHook={coin.selectedHook} launchPrice={availability?.launchPrice} open/></div>
       </div>
-      {(error || session.error) && <p className="inline-error hooks-submit-error" role="alert">{error || session.error}</p>}
+      <HooksOperationError error={error || session.error}/>
       <button type="submit" className="button primary launch-submit" disabled={busy || imageBusy}>{imageBusy ? 'Preparing image…' : 'Review your launch'}</button>
       <p className="form-fineprint">Nothing is created or signed until you approve it in your wallet.</p>
     </form>}
@@ -287,13 +333,13 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
       {!session.signedIn && session.checked && <HookWalletSignIn genesisHash={genesisHash} session={session} title="Sign in to launch">Sign in with the wallet that will own this coin. It’s free and sends no transaction.</HookWalletSignIn>}
       <OpenLaunchReview coin={shown} image={image} profile={recorded?.profile ?? previewProfile(coin)} openCreation={openCreation} costs={availability?.costs} price={pricing ?? recorded?.pricing ?? availability?.launchPrice}
         busy={busy || session.busy} onSign={signAndLaunch} onEdit={recorded?.status === 'queued' ? startOver : () => setStep('coin')} editLabel={recorded?.status === 'queued' ? 'Start over' : 'Edit'}/>
-      {error && <p className="inline-error" role="alert">{error}</p>}
+      <HooksOperationError error={error}/>
     </>}
-    {step === 'sign' && <OpenLaunchSigning symbol={shown.symbol} stage={operation?.stage} status={status} busy={busy} error={error} canRetry={canRetry} onRetry={signAndLaunch} review={operation?.review} selectedHook={shown.selectedHook}/>}
+    {step === 'sign' && <><HookEconomicsReview coin={shown}/><OpenLaunchSigning symbol={shown.symbol} stage={operation?.stage} status={status} busy={busy} error={error} canRetry={canRetry} onRetry={signAndLaunch} review={operation?.review} selectedHook={shown.selectedHook}/></>}
     {step === 'live' && <OpenLaunchLive symbol={shown.symbol} mint={mint ?? recorded?.mint} onAnother={startOver}/>}
     {step === 'sign' && <details className="launch-customize hooks-recovery"><summary><span>Recovery IDs</span><ChevronDown size={18} aria-hidden="true"/></summary>
       <div className="launch-customize-body"><p>If the page reloads, these pick up the same launch on this device. Never start a second launch to get around an unclear result.</p>
-        <dl className="hooks-recovery-ids">{Object.entries({ operationId: 'Launch', preparationId: 'Setup approval', launchId: 'Launch approval' }).map(([key, label]) =>
+        <dl className="hooks-recovery-ids">{Object.entries({ operationId: 'Launch', ...(shown.selectedHook ? { setupId: 'Hook setup approval' } : {}), preparationId: 'Config preparation approval', launchId: 'Launch approval' }).map(([key, label]) =>
           <div key={key}><dt>{label}</dt><dd><code>{idsRef.current[key] || '—'}</code></dd></div>)}</dl></div></details>}
   </div>
 }

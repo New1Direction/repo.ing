@@ -8,7 +8,8 @@ export interface StackState {
   root: string; origin: string; genesisHash: string; validator: { url: string; faucetPort: number }
   database: { url: string; name: string }; rpc: { provider: string; origin: string }[]; control: { url: string; token: string }
   tls: { cert: string; spki: string }; roles: Record<string, string>; tradeTable: string; bundle: { sha256: string; profileSha256: string }; solUsd: string
-  mode?: 'native' | 'legacy' | 'self-serve' | 'selected-hook'; programSet?: string; programs?: { launch: string; swap: string; gate: string; token: string }; quoteMint?: string; launchTable?: string | null
+  mode?: 'native' | 'legacy' | 'self-serve' | 'selected-hook' | 'economic-hook'; programSet?: string; programs?: { launch: string; swap: string; gate: string; token: string }; quoteMint?: string; launchTable?: string | null
+  selectedHooks?: { role: string; program: string; flags: number; name: string; pin: { program: string; elfSha256: string; elfLength: number } }[] | null
   selectedHook?: { pin: { program: string; elfSha256: string; elfLength: number }; flags: number; source: string } | null
   legacyPrograms?: Record<string, string> | null; ownTradeTable?: string | null; idlDir?: string | null
 }

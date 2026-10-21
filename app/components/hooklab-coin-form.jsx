@@ -6,6 +6,7 @@ import { COIN_DESCRIPTION_MAX, coinLinks } from '../../src/hooklab-coin-profile.
 import { SOON_BLOCKS, hookBlock } from '../../src/hooklab-blocks.mjs'
 import { SELECTED_HOOK_NOTE } from '../lib/hooklab-open-launch.mjs'
 import { HookStartingPrice } from './hooklab-launch-price'
+import { HookCatalogSelector } from './hooklab-hook-catalog'
 import '../launch-pair.css'
 
 // The creator keeps 75% of the creator fee and repo.ing 25% (platform = floor(gross / 4) per trade).
@@ -24,7 +25,7 @@ export function HookCoinPreview({ image, name, symbol, capBps, creatorFeeBps, se
   return <div className="launch-token-summary hooks-coin-preview" role="group" aria-label="Coin preview">
     <div className="preview-avatar">{shown ? <img src={image} alt="" onError={() => setFailed(image)}/> : <ImageIcon size={24} aria-hidden="true"/>}</div>
     <div><strong>${symbol || 'TICKER'}</strong><span>{name || 'Coin name'}</span>
-      <small>{selectedHook ? 'Custom hook · No max-wallet gate' : capLifted ? 'No max per wallet' : `Max ${percent(capBps)} per wallet`} · {percent(creatorFeeBps)} creator fee</small>
+      <small>{selectedHook ? 'Custom hook · Wallet limits set by hook' : capLifted ? 'No max per wallet' : `Max ${percent(capBps)} per wallet`} · {percent(creatorFeeBps)} creator fee</small>
       {Object.keys(links).length > 0 && <span className="hooks-coin-links">{Object.entries(links).map(([key, href]) => {
         const Icon = LINK_ICONS[key]
         return <a key={key} href={href} target="_blank" rel="noopener noreferrer"><Icon/>{LINK_LABELS[key]}</a>
@@ -116,6 +117,55 @@ function BlockHeader({ id, state }) {
   return <header><img src={block.icon} width={40} height={40} alt="" decoding="async"/><div><strong>{block.title}</strong><span>{block.summary}</span></div>{state}</header>
 }
 
+// Blank fields stay invalid until explicitly completed; omission preserves the hook's defaults.
+export function HookSelectedEconomics({ form, set, disabled }) {
+  const number = value => value === '' ? '' : Number(value)
+  const input = (id, label, value, min, max, change) => <label className="field-label" htmlFor={id}>{label} ({min}–{max} bps)
+    <input id={id} className="field-input" type="number" step="1" min={min} max={max} value={value ?? ''} onChange={e => change(number(e.target.value))}/></label>
+  return <details className="launch-customize" open={form.quoteCut !== undefined || form.authorShareBps !== undefined || form.rules !== undefined ? true : undefined}>
+    <summary>Advanced economics (optional)</summary>
+    <fieldset className="launch-customize-body" disabled={disabled}>
+      <legend>Custom hook fees and burns</legend>
+      <p className="launch-buy-hint">All amounts use basis points (bps): 100 bps = 1%. Leave options unconfigured to keep the hook’s defaults. Choosing a different hook keeps these values, so review them again. Your creator wallet receives the author share; a separate recipient is not supported.</p>
+      <label className="field-label" htmlFor="hook-quote-cut">Custom SOL cut limits</label>
+      <select id="hook-quote-cut" className="field-input" value={form.quoteCut === undefined ? 'omit' : 'configure'} onChange={e => set({ quoteCut: e.target.value === 'omit' ? undefined : { maxBuyBps: '', maxSellBps: '' } })}>
+        <option value="omit">Unconfigured (hook defaults)</option><option value="configure">Configure limits</option>
+      </select>
+      {form.quoteCut !== undefined && <>
+        {input('hook-max-buy', 'Maximum buy SOL cut', form.quoteCut.maxBuyBps, 1, 1000, maxBuyBps => set({ quoteCut: { ...form.quoteCut, maxBuyBps } }))}
+        {input('hook-max-sell', 'Maximum sell SOL cut', form.quoteCut.maxSellBps, 0, 1000, maxSellBps => set({ quoteCut: { ...form.quoteCut, maxSellBps } }))}
+      </>}
+      <label className="field-label" htmlFor="hook-author-share">Author share of creator revenue</label>
+      <select id="hook-author-share" className="field-input" value={form.authorShareBps === undefined ? 'omit' : 'configure'} onChange={e => set({ authorShareBps: e.target.value === 'omit' ? undefined : '' })}>
+        <option value="omit">Unconfigured (hook defaults)</option><option value="configure">Configure author share</option>
+      </select>
+      {form.authorShareBps !== undefined && input('hook-author-bps', 'Author share', form.authorShareBps, 0, 5000, authorShareBps => set({ authorShareBps }))}
+      <label className="field-label" htmlFor="hook-burn-rules">Token burn rules</label>
+      <select id="hook-burn-rules" className="field-input" value={form.rules === undefined ? 'omit' : form.rules === 'none' ? 'none' : 'configure'} onChange={e => set({ rules: e.target.value === 'omit' ? undefined : e.target.value === 'none' ? 'none' : { burnBuyBps: '', burnSellBps: '' } })}>
+        <option value="omit">Unconfigured (hook defaults)</option><option value="none">Explicitly no burn rules</option><option value="configure">Configure burns</option>
+      </select>
+      {form.rules !== undefined && form.rules !== 'none' && <>
+        {input('hook-burn-buy', 'Buy token burn', form.rules.burnBuyBps, 0, 10000, burnBuyBps => set({ rules: { ...form.rules, burnBuyBps } }))}
+        {input('hook-burn-sell', 'Sell token burn', form.rules.burnSellBps, 0, 10000, burnSellBps => set({ rules: { ...form.rules, burnSellBps } }))}
+      </>}
+    </fieldset>
+  </details>
+}
+
+export function HookEconomicsReview({ coin }) {
+  if (!coin.selectedHook) return null
+  return <div className="inner-card fee-breakdown" aria-label="Configured custom hook economics">
+    <h3>Custom hook fees and burns</h3>
+    <p>Creator revenue: {percent(coin.creatorFeeBps)} before author share. Additional protocol charges are separate, not deducted from creator revenue; each trade shows checked amounts before approval.</p>
+    <p>Your creator wallet receives the author share too. It does not go to a separate recipient.</p>
+    <dl>
+      <div><dt>Custom SOL cut limits</dt><dd>{coin.quoteCut === undefined ? 'Unconfigured (hook defaults)' : `Buy maximum ${coin.quoteCut.maxBuyBps} bps · Sell maximum ${coin.quoteCut.maxSellBps} bps`}</dd></div>
+      <div><dt>Author share of creator revenue</dt><dd>{coin.authorShareBps === undefined ? 'Unconfigured (hook defaults)' : `${coin.authorShareBps} bps`}</dd></div>
+      <div><dt>Token burn rules</dt><dd>{coin.rules === undefined ? 'Unconfigured (hook defaults)' : coin.rules === 'none' ? 'Explicitly none' : `Buy ${coin.rules.burnBuyBps} bps · Sell ${coin.rules.burnSellBps} bps`}</dd></div>
+    </dl>
+  </div>
+}
+
 // What the coin does, as blocks snapped onto it. Every launch today carries the two live blocks; the rest are coming.
 export function HookBlocks({ form, set, disabled, menus = null, allowSelectedHook = false }) {
   const caps = menus?.capBps?.length ? menus.capBps : WALLET_CAP_BPS_CHOICES, fees = menus?.creatorFeeBps?.length ? menus.creatorFeeBps : CREATOR_FEE_BPS_CHOICES
@@ -126,19 +176,11 @@ export function HookBlocks({ form, set, disabled, menus = null, allowSelectedHoo
     {allowSelectedHook && <>
       <label className="field-label" htmlFor="hook-kind">Hook configuration</label>
       <select id="hook-kind" className="field-input" value={selected ? 'selected' : 'max-wallet'} disabled={disabled}
-        onChange={event => set(event.target.value === 'selected' ? { hookKind: 'selected', selectedHook: { program: '', flags: '' }, capBps: 0 } : { hookKind: 'max-wallet', selectedHook: undefined, capBps: caps[0] })}>
-        <option value="max-wallet">Max-wallet gate</option><option value="selected">Custom hook (release-gated)</option>
+        onChange={event => set(event.target.value === 'selected' ? { hookKind: 'selected', selectedHook: { program: '', flags: '' }, hookPublication: undefined, capBps: 0 } : { hookKind: 'max-wallet', selectedHook: undefined, hookPublication: undefined, quoteCut: undefined, authorShareBps: undefined, rules: undefined, capBps: caps[0] })}>
+        <option value="max-wallet">Max-wallet gate</option><option value="selected">Choose a compatible hook</option>
       </select>
-      {selected && <article className="hooks-block" aria-label="Custom hook configuration">
-        <label className="field-label" htmlFor="hook-program">Immutable hook program</label>
-        <input id="hook-program" className="field-input" value={form.selectedHook?.program ?? ''} disabled={disabled} autoComplete="off" spellCheck={false}
-          onChange={event => set({ selectedHook: { ...form.selectedHook, program: event.target.value } })}/>
-        <label className="field-label" htmlFor="hook-flags">Known token callback flags (1–255)</label>
-        <input id="hook-flags" className="field-input" inputMode="numeric" value={form.selectedHook?.flags ?? ''} disabled={disabled}
-          onChange={event => set({ selectedHook: { ...form.selectedHook, flags: event.target.value } })}/>
-        <p className="launch-buy-hint">{SELECTED_HOOK_NOTE}</p>
-        <p className="launch-buy-hint">Inclusive fee policy (model 2). Custom token fees may apply in addition to the creator fee.</p>
-      </article>}
+      {selected && <HookCatalogSelector form={form} set={set} disabled={disabled}/>}
+      {selected && <HookSelectedEconomics form={form} set={set} disabled={disabled}/>}
     </>}
     {!selected && <article className="hooks-block is-on" aria-label="Max wallet block">
       <BlockHeader id="max-wallet" state={on}/>
@@ -148,7 +190,7 @@ export function HookBlocks({ form, set, disabled, menus = null, allowSelectedHoo
     <article className="hooks-block is-on" aria-label="Creator fee block">
       <BlockHeader id="creator-fee" state={on}/>
       <Presets label="Creator fee" choices={fees} value={form.creatorFeeBps} onChange={creatorFeeBps => set({ creatorFeeBps })} disabled={disabled} format={percent}/>
-      <p className="launch-buy-hint">Every buy and sell pays {percent(form.creatorFeeBps)}. You earn {creatorCut(form.creatorFeeBps)} of each trade in SOL; repo.ing keeps {platformCut(form.creatorFeeBps)}.</p>
+      <p className="launch-buy-hint">{selected ? `Creator revenue is ${percent(form.creatorFeeBps)} before the author share. Additional protocol charges are separate, not deducted from creator revenue. Hook SOL fees and token burns are checked on each transaction before approval.` : `Every buy and sell pays ${percent(form.creatorFeeBps)}. You earn ${creatorCut(form.creatorFeeBps)} of each trade in SOL; repo.ing keeps ${platformCut(form.creatorFeeBps)}.`}</p>
     </article>
     <p className="hooks-blocks-soon-title">More blocks are on the way</p>
     <ul className="hooks-blocks-soon">{SOON_BLOCKS.map(block => <li key={block.id} className="hooks-block is-soon">
@@ -177,9 +219,9 @@ export function HookLaunchNotes({ capBps, creatorFeeBps, selectedHook = null, la
     {launchPrice !== undefined && <HookStartingPrice price={launchPrice} open={open}/>}
     <div className="inner-card fee-breakdown"><h3>Every trade</h3>
       <div className="fee-line"><span>Creator fee<small>Paid by every buy and sell</small></span><strong>{percent(creatorFeeBps)}</strong></div>
-      <div className="fee-line"><span>You earn<small>75% of the creator fee, in SOL</small></span><strong>{creatorCut(creatorFeeBps)}</strong></div>
-      <div className="fee-line"><span>repo.ing<small>25% of the creator fee</small></span><strong>{platformCut(creatorFeeBps)}</strong></div>
-      <div className="fee-line"><span>{selectedHook ? 'Custom hook' : 'Max per wallet'}<small>{selectedHook ? 'Inclusive fee policy (model 2); token fees require simulation' : 'Until the coin graduates'}</small></span><strong>{selectedHook ? 'No max-wallet gate' : percent(capBps)}</strong></div>
+      <div className="fee-line"><span>You earn<small>{selectedHook ? 'Creator revenue before configured author shares' : '75% of the creator fee, in SOL'}</small></span><strong>{selectedHook ? percent(creatorFeeBps) : creatorCut(creatorFeeBps)}</strong></div>
+      <div className="fee-line"><span>repo.ing<small>{selectedHook ? 'Additional protocol share; not deducted from creator revenue' : '25% of the creator fee'}</small></span><strong>{selectedHook ? 'Measured per trade' : platformCut(creatorFeeBps)}</strong></div>
+      <div className="fee-line"><span>{selectedHook ? 'Custom hook' : 'Max per wallet'}<small>{selectedHook ? 'Token fees, burns and custom SOL fees are checked before each trade approval' : 'Until the coin graduates'}</small></span><strong>{selectedHook ? 'Wallet limits set by hook' : percent(capBps)}</strong></div>
       <div className="fee-note"><Info size={18} aria-hidden="true"/><span>Hooks coins run on repo.ing’s Hook Lab programs, not as standard Solana tokens, so most wallets and explorers won’t list them yet. Buy and sell them on repo.ing.</span></div>
     </div>
   </>

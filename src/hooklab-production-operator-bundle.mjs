@@ -81,9 +81,9 @@ export async function collectProductionOperatorBundle({connections,trustDomains,
   idls:Object.fromEntries(Object.entries(idls).map(([role,bytes])=>[role,bytes.toString('base64')])),elfLengths}
  const programRoles=['launch','swap','gate','token'],programData=programRoles.map(role=>pda(LOADER,pk(P[role]).toBuffer()))
  const accountRoles={'launch-config':pda(P.launch,'config'),'swap-config':pda(P.swap,'config'),'creation-control':pda(P.launch,'governance'),'swap-governance':pda(P.swap,'governance'),'quote-mint':base.quoteMint}
- const selectedAddresses=selected?[selected.hookPin.program,pda(LOADER,pk(selected.hookPin.program).toBuffer())]:[]
+ const selectedAddresses=selected?.hookPin?[selected.hookPin.program,pda(LOADER,pk(selected.hookPin.program).toBuffer())]:[]
  const observed=await readBoth(connections,[...programData,...Object.values(accountRoles),...selectedAddresses,...(launchTable?[launchTable]:[]),lookupTable])
- if(selected){
+ if(selected?.hookPin){
   const [program,data]=observed.slice(programRoles.length+Object.keys(accountRoles).length),pin=selected.hookPin
   need(program.owner===LOADER&&program.executable&&program.data.length===36&&program.data.readUInt32LE()===2
    &&pk(program.data.subarray(4)).toBase58()===selectedAddresses[1],'selected hook program link differs')
@@ -137,8 +137,8 @@ export async function collectProductionOperatorBundle({connections,trustDomains,
    launchProtocolShareBps:sc.launch_protocol_share_bps,launchFeeLamports:lc.launch_fee_lamports.toString(),poolCreationFeeLamports:sc.pool_creation_fee_lamports.toString()},
   reviewer,treasury,lookupTable:{address:lookupTable,sha256:sha(table.data)},...(launch?{launchLookupTable:{address:launchTable,sha256:sha(launch.data)}}:{}),lamportsPerSignature:'5000'}
  if(selected){
-  config.selectedHookPin=selected.hookPin
-  config.selectedHookRelease={schema:'repoing/selected-hook-release/1',approvalReference,sourceCommit:base.sourceCommit,
+  if(selected.hookPin)config.selectedHookPin=selected.hookPin
+  config.selectedHookRelease={schema:selected.compatibilityPolicy?'repoing/selected-hook-release/2':'repoing/selected-hook-release/1',approvalReference,sourceCommit:base.sourceCommit,
    profileSha256:config.profileSha256,dossierSha256:config.dossierSha256,...selected}
   validateSelectedHookReleaseBindings({config,profile,dossierJson,connections})
  }

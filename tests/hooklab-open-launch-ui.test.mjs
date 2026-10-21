@@ -31,13 +31,21 @@ const coin = { name: 'Repo Cat', symbol: 'RCAT', image: 'data:image/png;base64,A
 test('custom hook configuration and review never advertise a signing-ready gate launch', () => {
   const custom = { ...coin, hookKind: 'selected', capBps: 0, selectedHook: { program: 'So11111111111111111111111111111111111111112', flags: 129 } }
   const fields = html(h(HookOpenLaunch, { genesisHash, initial: { availability, coin: custom } }), { wallet: true })
-  for (const pattern of [/Immutable hook program/, /Known token callback flags/, /value="129"/, /Inclusive fee policy \(model 2\)/, /registry must be prepared for the reserved mint/, /hook’s own interface/]) assert.match(fields, pattern)
-  assert.match(text(fields), /signing requires verified release approval/i)
+  for (const pattern of [/Published hook version/, /Callback flags/, /value="129"/, /hook setup, coin settings and opening trading/]) assert.match(fields, pattern)
+  assert.match(text(fields), /must be approved for this release before you can sign/i)
   assert.doesNotMatch(text(fields), /Production launches remain max-wallet gate only|Custom hook \(signing unavailable\)/)
   assert.doesNotMatch(fields, /aria-label="Max wallet block"|Max 0% per wallet/)
   const review = html(h(OpenLaunchReview, { coin: custom, openCreation, onSign() {} }))
-  for (const pattern of [/Check hook availability/, /Nothing will be signed/, /No max-wallet gate/, /Token fees require exact-message simulation/, /Flags: 129/]) assert.match(review, pattern)
+  for (const pattern of [/Check hook availability/, /Nothing will be signed/, /Wallet limits set by hook/, /Token fees are checked on your transaction before approval/, /Flags: 129/]) assert.match(review, pattern)
+  assert.doesNotMatch(text(review), /No wallet holding limit|no maximum holding per wallet/i)
   assert.doesNotMatch(review, /Sign and launch|Approve twice|<input/)
+  const ready=html(h(OpenLaunchReview,{coin:custom,openCreation:{...openCreation,selectedHooksEnabled:true},onSign(){}}))
+  assert.match(text(ready),/additional protocol charges/)
+  assert.match(text(ready),/approve three times/)
+  assert.doesNotMatch(text(ready),/Registry setup is separate|Inclusive fee policy \(model 2\)/)
+  const setup=html(h(OpenLaunchSigning,{symbol:'CSTM',stage:'hook-setup',selectedHook:custom.selectedHook,review:{messageSha256:'a'.repeat(64),maxNativeDebitLamports:'15000'},canRetry:true}))
+  assert.match(text(setup),/Approve hook setup.*Approve launch configuration.*Approve the launch/)
+  assert.match(text(setup),/15000 lamports/)
 })
 
 test('the review screen pays out only the essentials, every figure from the chain or server', () => {

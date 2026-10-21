@@ -65,7 +65,10 @@ test('stage native-claim exists only after the native-stages migration, and a cl
   const lifecycle = pool => nativeSigningLifecycle(pool, { enabled: true, origin: 'https://repo.ing', resolver, sender, stageOperations: { [CLAIM_STAGE]: CLAIM_OPERATION } })
   assert.throws(() => nativeSigningLifecycle(null, { enabled: true, origin: 'https://repo.ing', stageOperations: { [CLAIM_STAGE]: 'hooklab-wallet-withdraw' } }), 'the claim stage carries only the claim operation')
 
-  const before = Object.keys(MIGRATIONS).filter(m => m !== 'native-stages')
+  // Later migrations widen this same constraint too. Reproduce the historical
+  // boundary, rather than applying future migrations without their dependency.
+  const names = Object.keys(MIGRATIONS)
+  const before = names.slice(0, names.indexOf('native-stages'))
   await withDatabase(before, async pool => {
     await assert.rejects(lifecycle(pool).createReview(token, randomUUID(), { custodyOperationId: randomUUID(), stage: CLAIM_STAGE, intent: { mint } }), 'the stage list refuses native-claim before the migration')
   })

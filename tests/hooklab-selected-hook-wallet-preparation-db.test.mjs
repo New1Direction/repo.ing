@@ -15,7 +15,7 @@ const disabled = value => {
 }
 // Dedicated disposable local PostgreSQL only; never consume application DATABASE_URL.
 test('selected-hook wallet journal retains config-only settlement and exact wire without execution authority', async t => {
-  const config = { host: '127.0.0.1', port: Number(process.env.HOOKLAB_SELECTED_TEST_PGPORT ?? 55439), user: 'postgres', database: 'postgres' }
+  const config = { host: '127.0.0.1', port: 55432, user: 'postgres', password: 'launchtest', database: 'postgres' }
   const admin = new pg.Pool(config), database = `selected_wallet_${randomUUID().replaceAll('-', '')}`
   let pool
   try {

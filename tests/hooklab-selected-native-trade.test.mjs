@@ -38,7 +38,7 @@ test('selected native pin and request remain strict; invalid hook program/accoun
   const f=selectedNativeTradeFixture()
   assert.throws(()=>selectedNativeHookPinSchema.parse({...f.input.selectedHookPin,approved:true}))
   assert.throws(()=>nativeSwapRequestSchema.parse({...f.request,capBps:200}))
-  assert.throws(()=>compileNativeSwapReview({...f.input,selectedHookPin:{...f.input.selectedHookPin,elfSha256:'0'.repeat(64)}}),/immutable and ELF-pinned/)
+  assert.throws(()=>compileNativeSwapReview({...f.input,selectedHookPin:{...f.input.selectedHookPin,elfSha256:'0'.repeat(64)}}),/ELF/)
   const corrupt=structuredClone(f.input)
   for(const o of corrupt.observations)o.accounts.find(x=>x.address===f.request.selectedHook.program).account.owner=f.p.programs.token
   assert.throws(()=>compileNativeSwapReview(corrupt),/ProgramData linkage/)

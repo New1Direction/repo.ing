@@ -42,6 +42,14 @@ export const MIGRATIONS = Object.freeze({
     inspect: "select column_name from information_schema.columns where table_name='hook_lab_launch_requests' and column_name in ('source','selected_hook') order by column_name" }),
   'selected-hook-execution': Object.freeze({ files: ['hooklab-selected-hook-execution-schema.sql'], requires: ['hook_lab_launch_requests'],
     inspect: "select pg_get_constraintdef(oid) as selected_check from pg_constraint where conname='hook_lab_launch_requests_selected_execution'" }),
+  'hook-catalog': Object.freeze({ files: ['hooklab-hook-catalog-schema.sql'], requires: [] }),
+  'selected-hook-authority': Object.freeze({ files: ['hooklab-selected-hook-authority-schema.sql'], requires: ['hook_lab_native_signer_custody'],
+    inspect: "select column_name from information_schema.columns where table_name='hook_lab_native_signer_custody' and column_name='selected_authority_evidence'" }),
+  'selected-hook-setup': Object.freeze({ files: ['hooklab-selected-hook-setup-schema.sql'],
+    requires: ['hook_lab_native_signer_custody', 'hook_lab_native_signing_operations', 'hook_lab_launch_requests', 'hook_lab_native_launch_context', 'hook_lab_hook_publications'],
+    inspect: "select pg_get_constraintdef(oid) as stage_check from pg_constraint where conname='hook_lab_native_signing_operations_stage_check'" }),
+  'selected-hook-economics': Object.freeze({ files: ['hooklab-selected-hook-economics-schema.sql'], requires: ['hook_lab_launch_requests'],
+    inspect: "select column_name from information_schema.columns where table_name='hook_lab_launch_requests' and column_name='selected_economics'" }),
 })
 export function productionSchema(files = SCHEMA_FILES) {
   const parts = files.map(name => ({ name, sql: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8') }))

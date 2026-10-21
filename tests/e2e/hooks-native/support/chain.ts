@@ -2,7 +2,7 @@
 // receipts, lamport deltas from pre/post balances, events decoded with the vendored native IDLs, and the Launch and Pool
 // accounts with their native flag bytes. Independent of the site's own settlement code on purpose.
 import { readFileSync } from 'node:fs'
-import { createPublicKey, verify } from 'node:crypto'
+import { createHash, createPublicKey, verify } from 'node:crypto'
 import { BorshCoder } from '@anchor-lang/core'
 import { PublicKey, SystemProgram, TransactionInstruction, VersionedMessage, type VersionedTransactionResponse } from '@solana/web3.js'
 import bs58 from 'bs58'
@@ -49,6 +49,38 @@ export function allDeltas(tx: VersionedTransactionResponse): Record<string, stri
   return out
 }
 export interface DecodedEvent { program: string; name: string; data: any }
+/** Strict self-CPI decoding for model1 evidence; historical events() remains unchanged. */
+export function authenticatedEvents(tx: VersionedTransactionResponse): (DecodedEvent & { index: number; caller: string | null })[] {
+  const keys = accountKeys(tx), out: (DecodedEvent & { index: number; caller: string | null })[] = []
+  // Own-stack IDL directories contain launch/swap/gate only. The token ABI is
+  // unchanged and uses the same pinned vendor binding as createHoldingInstruction.
+  const bindings = { launch: coders.launch, swap: coders.swap, token: tokenCoder }
+  const groups = new Set<number>()
+  for (const group of tx.meta?.innerInstructions ?? []) {
+    if (groups.has(group.index)) throw Error('Duplicate inner instruction group')
+    groups.add(group.index)
+    const top = tx.transaction.message.compiledInstructions[group.index]
+    if (!top) throw Error('Invalid inner instruction index')
+    const ancestry: (string | null)[] = [null, keys[top.programIdIndex]]
+    for (const ix of group.instructions) {
+      const program = keys[ix.programIdIndex], height = ix.stackHeight
+      if (!program || !Number.isInteger(height) || height! < 2 || height! > ancestry.length) throw Error('Missing CPI ancestry')
+      ancestry.length = height!
+      const parent = ancestry[height! - 1]
+      ancestry[height!] = program
+      const role = program === PROGRAMS.launch ? 'launch' : program === PROGRAMS.swap ? 'swap' : program === PROGRAMS.token ? 'token' : null
+      if (!role) continue
+      const bytes = Buffer.from(bs58.decode(ix.data))
+      if (!bytes.subarray(0, 8).equals(EMIT_CPI)) continue
+      if (parent !== program || ix.accounts.length !== 1 || keys[ix.accounts[0]] !== pda(program, '__event_authority')) throw Error('Unauthenticated event CPI')
+      const coder = bindings[role], decoded = coder.events.decode(bytes.subarray(8).toString('base64'))
+      if (!decoded || !Buffer.concat([EMIT_CPI, createEventDiscriminator(decoded.name), coder.types.encode(decoded.name, decoded.data)]).equals(bytes)) throw Error('Noncanonical event CPI')
+      out.push({ program: role, name: decoded.name, data: decoded.data, index: group.index, caller: ancestry[height! - 2] })
+    }
+  }
+  return out
+}
+const createEventDiscriminator = (name: string) => createHash('sha256').update(`event:${name}`).digest().subarray(0, 8)
 /** Anchor emit_cpi events from the inner instructions of the launch and swap programs. */
 export function events(tx: VersionedTransactionResponse): DecodedEvent[] {
   const keys = accountKeys(tx), out: DecodedEvent[] = []

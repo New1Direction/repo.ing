@@ -23,7 +23,7 @@ const selectedHook = { program: 'So11111111111111111111111111111111111111112', f
 const coin = { name: 'Selected coin', symbol: 'SELECT', image: 'data:image/png;base64,AAAA', description: '', x: '', website: '', telegram: '', creatorFeeBps: 100, capBps: 0, hookKind: 'selected', selectedHook }
 const availability = { status: 'available', openCreation: { native: true, open: true, paused: false, creatorFeeBps: [50, 100, 200], capBps: [100, 200], launchFeeLamports: '20000000' } }
 
-test('creator records exact custom intent, recovers it on remount, and never signs even after successful reserve', async () => {
+test('creator records exact custom intent, recovers it on remount, and release approval blocks signing after reserve', async () => {
   await harness(async ui => {
     await ui.mount()
     await ui.click()
@@ -31,16 +31,27 @@ test('creator records exact custom intent, recovers it on remount, and never sig
     assert.deepEqual(created.selectedHook, selectedHook)
     assert.equal(created.capBps, 0)
     assert.deepEqual(ui.calls.filter(x => x.action === 'reserve').map(x => x.selectedHook), [selectedHook])
-    assert.match(document.querySelector('[role="alert"]').textContent, /not available|unavailable/i)
+    assert.match(document.querySelector('[role="alert"]').textContent, /must be approved for this release before you can sign/i)
     await ui.unmount(); await ui.mount({ coin: {} })
     assert.match(document.body.textContent, /Selected coin/)
     assert.match(document.body.textContent, /Flags: 129/)
     await ui.click()
+    assert.match(document.querySelector('[role="alert"]').textContent, /must be approved for this release before you can sign/i)
     assert.equal(ui.calls.filter(x => x.action === 'create').length, 1)
     assert.equal(ui.calls.filter(x => x.action === 'reserve').length, 2)
     assert.ok(ui.calls.every(x => ['get', 'create', 'reserve'].includes(x.action)), 'no signing action is requested')
     assert.equal(document.querySelector('.hooks-open-signing'), null)
   })
+})
+
+test('malformed reserve response fails closed before review or signing', async () => {
+  await harness(async ui => {
+    await ui.mount(); await ui.click()
+    assert.match(document.querySelector('[role="alert"]').textContent, /launch changed.*Nothing was signed/i)
+    assert.equal(ui.calls.filter(x => x.action === 'reserve').length, 1)
+    assert.ok(ui.calls.every(x => ['get', 'create', 'reserve'].includes(x.action)))
+    assert.equal(document.querySelector('.hooks-open-signing'), null)
+  }, 'reserve')
 })
 
 for (const mutation of ['removed', 'changed']) test(`creator refuses ${mutation} hook in the create response before reserve`, async () => {
@@ -69,7 +80,7 @@ async function harness(run, mutation) {
       if (mutation === 'changed') retained.selectedHook = { ...selectedHook, flags: 1 }
       return Response.json({ status: 'available', request: retained })
     }
-    if (body.action === 'reserve') return Response.json({ status: 'available', operationId: body.operationId, mint: selectedHook.program })
+    if (body.action === 'reserve') return Response.json({ status: 'available', operationId: body.operationId, ...(mutation === 'reserve' ? {} : { mint: selectedHook.program }) })
     throw Error(`Unexpected signing action: ${url} ${body.action}`)
   }
   const { createRoot } = await import('react-dom/client')

@@ -20,7 +20,7 @@ const identity=row=>nativeCustodyIdentitySchema.parse({schema:'repoing/native-si
  custodySessionId:row.custody_session_id,owner:row.owner_wallet,profileSha256:row.profile_sha256,mint:row.mint,selectedConfig:row.selected_config,stage:row.stage})
 const summary=row=>Object.freeze({operationId:row.operation_id,custodySessionId:row.custody_session_id,owner:row.owner_wallet,
  profileSha256:row.profile_sha256,mint:row.mint,selectedConfig:row.selected_config,stage:row.stage,revision:String(row.revision),keyId:row.sealed_signers.keyId,
- preparedRequest:row.preparation_request??null,encryptedSignersRetained:true,ownerCustodyApprovalVerified:false,canSign:false,canSubmit:false,executionAuthorized:false})
+ preparedRequest:row.preparation_request??null,selectedAuthorityEvidence:row.selected_authority_evidence??null,encryptedSignersRetained:true,ownerCustodyApprovalVerified:false,canSign:false,canSubmit:false,executionAuthorized:false})
 const wipe=signers=>{signers?.mint?.secretKey?.fill(0);signers?.selectedConfig?.secretKey?.fill(0)}
 const parseRequest=request=>request?.policyKind==='selected-hook'?selectedHookPreparationRequestSchema.parse(request):parseMaxWalletPreparationRequest(request)
 export function nativeSignerCustodyStore(pool,{enabled=false,origin,keyRing,activeKeyId,signerFactory=()=>({mint:Keypair.generate(),selectedConfig:Keypair.generate()})}={}){
@@ -49,7 +49,7 @@ export function nativeSignerCustodyStore(pool,{enabled=false,origin,keyRing,acti
      values($1,$2,$3,$4,$5,$6,'reserved',$7) returning *`,[operationId,bound.custodySessionId,owner,profileSha256,bound.mint,bound.selectedConfig,sealed])
     return summary(saved)
  }
- return Object.freeze({
+ const store={
   // Server-only new-mint reservation. A durable operation always reuses its pair.
   // Tests inject deterministic signers; production key generation has no route/config here.
   async reserveNewCandidate(sessionToken,operationId,profileSha256){
@@ -82,16 +82,25 @@ export function nativeSignerCustodyStore(pool,{enabled=false,origin,keyRing,acti
   },
   // Bind the chosen hook before its hook-specific registry exists. A restart must recover the
   // same mint and intent; reserving is not a successful chain review or signing authorization.
-  async retainPreparationIntent(sessionToken,operationId,{expectedRevision,request}){
+  async retainPreparationIntent(sessionToken,operationId,{expectedRevision,request,selectedAuthorityEvidence}){
    return transaction(sessionToken,operationId,async(db,row)=>{
     const parsed=selectedHookPreparationRequestSchema.parse(request)
-    check(row&&String(row.revision)===expectedRevision&&row.stage==='reserved')
+    check(row&&String(row.revision)===expectedRevision)
     check(parsed.creator===row.owner_wallet&&parsed.feePayer===row.owner_wallet&&parsed.mint===row.mint&&parsed.selectedConfig===row.selected_config)
-    if(row.preparation_request){check(isDeepStrictEqual(row.preparation_request,parsed));return summary(row)}
-    const {rows:[saved]}=await db.query(`update hook_lab_native_signer_custody set preparation_request=$2,
-     revision=revision+1,updated_at=clock_timestamp() where operation_id=$1 returning *`,[operationId,parsed])
+    if(selectedAuthorityEvidence)check(selectedAuthorityEvidence.schema==='repoing/selected-hook-authority-evidence/2'&&selectedAuthorityEvidence.hookPin.program===parsed.selectedHook.program)
+    if(row.preparation_request){check(isDeepStrictEqual(row.preparation_request,parsed)&&isDeepStrictEqual(row.selected_authority_evidence??null,selectedAuthorityEvidence??null));return summary(row)}
+    check(row.stage==='reserved'&&!row.selected_authority_evidence)
+    const {rows:[saved]}=await db.query(`update hook_lab_native_signer_custody set preparation_request=$2${selectedAuthorityEvidence?',selected_authority_evidence=$3':''},
+     revision=revision+1,updated_at=clock_timestamp() where operation_id=$1 returning *`,selectedAuthorityEvidence?[operationId,parsed,selectedAuthorityEvidence]:[operationId,parsed])
     return summary(saved)
    })
+  },
+  async getSelectedAuthorityEvidence(sessionToken,operationId){
+   return transaction(sessionToken,operationId,async(_db,row)=>{check(row?.selected_authority_evidence);return structuredClone(row.selected_authority_evidence)})
+  },
+  async retainSelectedAuthorityEvidence(sessionToken,operationId,{expectedRevision,request,selectedAuthorityEvidence}){
+   check(selectedAuthorityEvidence)
+   return store.retainPreparationIntent(sessionToken,operationId,{expectedRevision,request,selectedAuthorityEvidence})
   },
   async retainPreparationReview(sessionToken,operationId,{expectedRevision,request,evidenceSha256}){
    return transaction(sessionToken,operationId,async(db,row)=>{
@@ -115,5 +124,6 @@ export function nativeSignerCustodyStore(pool,{enabled=false,origin,keyRing,acti
     return summary(saved)
    })
   },
- })
+ }
+ return Object.freeze(store)
 }

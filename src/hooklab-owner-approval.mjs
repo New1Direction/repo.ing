@@ -11,6 +11,12 @@ import { checkLiveBounds } from './hooklab-launch-bounds.mjs'
 import { isDelistingReason,moderationState } from './hooklab-coin-moderation.mjs'
 import { coinStack } from './hooklab-stack.mjs'
 import { selectedHookSchema, refuseUnsupportedSelectedHook } from './hooklab-selected-hook.mjs'
+import { hookPublicationSelectionSchema, hookPublicationDigest } from './hooklab-hook-catalog.mjs'
+import { resolveHookPublicationSelection } from './hooklab-selected-hook-setup-resolver.mjs'
+import { selectedHookPreparationRequestSchema as preparationSchema } from './hooklab-selected-hook-preparation.mjs'
+import { isDeepStrictEqual } from 'node:util'
+const economicsSchema=z.object({quoteCut:preparationSchema.shape.quoteCut,authorShareBps:preparationSchema.shape.authorShareBps,rules:preparationSchema.shape.rules.optional()}).strict()
+const economics=value=>economicsSchema.parse(Object.fromEntries(['quoteCut','authorShareBps','rules'].filter(k=>value[k]!==undefined).map(k=>[k,value[k]])))
 const fail=(message='Owner approval unavailable or changed')=>Object.assign(Error(message),{code:'OWNER_APPROVAL_UNAVAILABLE'})
 const check=(value,message)=>{if(!value)throw fail(message)}
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
@@ -24,8 +30,8 @@ export const launchIntentSchema=z.object({name:text(32),symbol:text(10),uri:z.st
 const parseIntent=intent=>{try{return launchIntentSchema.parse(intent)}catch{throw fail('Choose a name, symbol, an approved creator fee (0.5%, 1% or 2%) and an approved wallet cap (1%, 2%, 3% or 5%)')}}
 // An open request chooses from the chain's menus, not the release code's.
 const openIntentSchema=menus=>z.object({name:text(32),symbol:text(10),uri:z.string().refine(x=>Buffer.byteLength(x)<=200),
- creatorFeeBps:z.number().int().refine(x=>menus.creatorFeeBps.includes(x)),capBps:z.number().int(),selectedHook:selectedHookSchema.optional()}).strict()
- .refine(x=>x.selectedHook?x.capBps===0:menus.capBps.includes(x.capBps)&&x.capBps>0)
+ creatorFeeBps:z.number().int().refine(x=>menus.creatorFeeBps.includes(x)),capBps:z.number().int(),selectedHook:selectedHookSchema.optional(),hookPublication:hookPublicationSelectionSchema.optional(),...economicsSchema.shape}).strict()
+ .refine(x=>x.selectedHook?x.capBps===0:menus.capBps.includes(x.capBps)&&x.capBps>0&&Object.keys(economics(x)).length===0)
 const parseOpenIntent=(intent,menus)=>{try{return openIntentSchema(menus).parse(intent)}catch{throw fail('Choose a name, a symbol, and a creator fee and max per wallet from the current list')}}
 
 export function verifyEd25519(signerAddress,message,signature){
@@ -48,6 +54,8 @@ const publicPricing=row=>row.has_pricing?Object.freeze({solUsdMicros:String(row.
 const publicRequest=row=>row&&Object.freeze({id:row.id,creator:row.creator_wallet,name:row.name,symbol:row.symbol,uri:row.uri,creatorFeeBps:row.creator_fee_bps,capBps:row.cap_bps,status:row.status,
  invitedAt:row.invited_at?.toISOString?.()??null,inviteExpiresAt:row.invite_expires_at?.toISOString?.()??null,custodyOperationId:row.custody_operation_id,createdAt:row.created_at.toISOString(),
  ...(row.selected_hook&&{selectedHook:selectedHookSchema.parse(row.selected_hook)}),
+ ...(row.hook_publication&&{hookPublication:hookPublicationSelectionSchema.parse(row.hook_publication)}),
+ ...(row.selected_economics&&economicsSchema.parse(row.selected_economics)),
  ...(row.has_profile!==undefined&&{profile:publicProfile(row)}),...(row.has_pricing!==undefined&&{pricing:publicPricing(row)}),...(row.status==='launched'&&row.mint&&{mint:row.mint})})
 const priceColumns=row=>({sol_usd_micros:row.sol_usd_micros,price_sources:row.sources,virtual_quote:row.virtual_quote,priced_at:row.priced_at,has_pricing:true})
 const requestQuery=usdPricing=>`select r.*,p.description,p.x_handle,p.website,p.telegram,(p.request_id is not null) as has_profile,
@@ -65,7 +73,7 @@ const publicSignRequest=row=>Object.freeze({id:row.id,signer:row.signer_address,
 // Off, nothing reads the price table (it may not exist yet) and every launch binds the standard 1 SOL quote.
 // openLaunches (HOOK_OPEN_LAUNCHES, after the open-launches migration): creators' own requests launch without an invite,
 // launched coins can be delisted by the owner, and discovery leaves delisted coins out.
-export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,maxInviteMs=3_600_000,usdPricing=false,openLaunches=false,selectedHooksEnabled=false}={}){
+export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,maxInviteMs=3_600_000,usdPricing=false,openLaunches=false,selectedHooksEnabled=false,publicationSelection=resolveHookPublicationSelection}={}){
  if(!openLaunches)address.parse(adminAddress)
  const withProfile=requestQuery(usdPricing)
  const expireInvites=db=>db.query("update hook_lab_launch_requests set status='invite-expired',updated_at=clock_timestamp() where status='invited' and invite_expires_at<=clock_timestamp()")
@@ -94,12 +102,15 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
    address.parse(creator);z.uuid().parse(id)
    const open=source==='open';check(open?openLaunches&&menus:source==='owner-invite','Launch requests are not open')
    const value=open?parseOpenIntent(intent,menus):parseIntent(intent)
+   check(!value.hookPublication||value.selectedHook,'Hook publication requires a selected hook')
+   const publication=value.selectedHook?await publicationSelection({pool,selection:value.hookPublication,selectedHook:value.selectedHook,creator}):null
    const coin=profile&&{...coinProfileFields(profile),image:profile.image}
    check(!coin||(typeof coin.image==='string'&&coin.image.startsWith('data:image/png;base64,')),'Add a coin image')
    try{
     return await inTransaction(pool,async db=>{
      // Gate requests remain compatible with databases predating the additive custom-hook migration.
-     const {rows:[row]}=await db.query(`insert into hook_lab_launch_requests(id,creator_wallet,name,symbol,uri,creator_fee_bps,cap_bps,status${open?',source':''}${value.selectedHook?',selected_hook':''}) values($1,$2,$3,$4,$5,$6,$7,'queued'${open?",'open'":''}${value.selectedHook?',$8':''}) returning *`,[id,creator,value.name,value.symbol,value.uri,value.creatorFeeBps,value.capBps,...(value.selectedHook?[value.selectedHook]:[])])
+     const options=economics(value),hasEconomics=Object.keys(options).length>0
+     const {rows:[row]}=await db.query(`insert into hook_lab_launch_requests(id,creator_wallet,name,symbol,uri,creator_fee_bps,cap_bps,status${open?',source':''}${value.selectedHook?',selected_hook,hook_publication':''}${hasEconomics?',selected_economics':''}) values($1,$2,$3,$4,$5,$6,$7,'queued'${open?",'open'":''}${value.selectedHook?',$8,$9':''}${hasEconomics?',$10':''}) returning *`,[id,creator,value.name,value.symbol,value.uri,value.creatorFeeBps,value.capBps,...(value.selectedHook?[value.selectedHook,publication]:[]),...(hasEconomics?[options]:[])])
      if(usdPricing)row.has_pricing=false
      if(!coin)return publicRequest({...row,has_profile:false})
      const {rows:[{n}]}=await db.query("select count(*)::int n from hook_lab_coin_profiles p join hook_lab_launch_requests r on r.id=p.request_id where r.creator_wallet=$1 and p.created_at>clock_timestamp()-interval '1 day'",[creator])
@@ -216,6 +227,10 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
    if(row.selected_hook&&!selectedHooksEnabled)refuseUnsupportedSelectedHook()
    check(row.name===value.name&&row.symbol===value.symbol&&row.uri===value.uri&&row.creator_fee_bps===value.creatorFeeBps&&row.cap_bps===value.capBps,'Launch details differ from your coin')
    check((row.selected_hook?.program??null)===(value.selectedHook?.program??null)&&(row.selected_hook?.flags??null)===(value.selectedHook?.flags??null),'Selected hook differs from your coin')
+   check(isDeepStrictEqual(economicsSchema.parse(row.selected_economics??{}),economics(value)),'Selected hook economics differ from your coin')
+   if(value.selectedHook){
+    check(row.hook_publication&&hookPublicationSelectionSchema.safeParse(value.hookPublication).success&&hookPublicationDigest(row.hook_publication)===hookPublicationDigest(value.hookPublication),'Hook configuration differs from your coin')
+   }
    if(row.status==='launching'){
     check(row.custody_operation_id===custodyOperationId,'This coin is already launching')
     const {rows:[price]}=await db.query('select * from hook_lab_launch_request_prices where request_id=$1',[row.id])

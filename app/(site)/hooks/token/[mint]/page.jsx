@@ -73,11 +73,14 @@ export default async function HooksCoinPage({ params }) {
         <h2 id="hooks-coin-blocks">Blocks on this coin</h2>
         <ul className="hooks-block-grid hooks-coin-blocks">
           {[market.policyKind === 'selected-hook'
-            ? ['selected-hook', `The selected hook remains active before and after graduation. Program ${market.selectedHook.program}; flags ${market.selectedHook.flags}. Custom-hook token deductions are checked by exact-message simulation, not a max-wallet gate.`]
+            ? ['selected-hook', 'The selected hook remains active before and after graduation. Hook fees are checked on your transaction before wallet approval. There is no maximum holding per wallet.']
             : ['max-wallet', market.graduated ? 'Lifted at graduation. Any wallet can hold any amount now.'
               : `No wallet can hold more than ${market.capBps / 100}% of the supply (${formatUnits(BigInt(market.capRaw), market.decimals, 0)} ${market.symbol}) until graduation.`],
-            ['creator-fee', `Every buy and sell pays ${market.creatorFeeBps / 100}%: 75% to the creator, 25% to repo.ing, in SOL.`]].map(([id, text]) =>
-            <li key={id} className="hooks-block is-on"><header><img src={id === 'selected-hook' ? '/hook-icons/plain.webp?v=2' : hookBlock(id).icon} width={40} height={40} alt=""/><div><strong>{id === 'selected-hook' ? 'Selected hook' : hookBlock(id).title}</strong><span style={{overflowWrap:'anywhere'}}>{text}</span></div></header></li>)}
+            ['creator-fee', market.feeModel === 1
+              ? `Creator revenue is ${market.creatorFeeBps / 100}% before configured author share. The additional protocol share is charged separately, not deducted from creator revenue. Hook deductions are measured before each exact trade approval.`
+              : `Every buy and sell pays ${market.creatorFeeBps / 100}%: 75% to the creator, 25% to repo.ing, in SOL.`]].map(([id, text]) =>
+            <li key={id} className="hooks-block is-on"><header><img src={id === 'selected-hook' ? '/hook-icons/plain.webp?v=2' : hookBlock(id).icon} width={40} height={40} alt=""/><div><strong>{id === 'selected-hook' ? 'Selected hook' : hookBlock(id).title}</strong><span style={{overflowWrap:'anywhere'}}>{text}</span></div></header>
+              {id === 'selected-hook' && <details><summary>Technical details</summary><p style={{overflowWrap:'anywhere'}}>Program: {market.selectedHook.program} · Flags: {market.selectedHook.flags}</p></details>}</li>)}
         </ul>
       </section>}
       <p className="hooks-address">Coin address <code>{mint}</code></p>

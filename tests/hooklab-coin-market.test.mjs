@@ -25,14 +25,14 @@ const holding = amount => { const b = Buffer.alloc(204); b.writeBigUInt64LE(BigI
 const bn = v => new BN(String(v))
 
 // poolFlag / launchFlag: the native-SOL flags, Pool.reserved[0] (byte 351) and Launch.reserved[17] (byte 560).
-async function chain({ pool, status = 0, graduatedAt = 0, topup = 0, burned = 0, lpSupply = 0, lockedLp = 0, poolFlag = 0, launchFlag = 0, selectedHook = null }) {
+async function chain({ pool, status = 0, graduatedAt = 0, topup = 0, burned = 0, lpSupply = 0, lockedLp = 0, poolFlag = 0, launchFlag = 0, selectedHook = null, feeModel = 2 }) {
   const reserved = (length, at, value) => Array.from({ length }, (_, i) => i === at ? value : 0)
   const launch = await encode('launch', 'Launch', { version: 1, mint: new PublicKey(mint), creator: new PublicKey(wallet), pool: new PublicKey(a.pool), quote_mint: new PublicKey(QUOTE_MINT), reserved: reserved(22, 17, launchFlag),
     status, creator_fee_bps: config.creatorFeeBps, virtual_quote: bn(config.virtualQuote), virtual_base: bn(config.curve.virtualBase), graduation_quote: bn(config.curve.graduationQuote),
     curve_tokens: bn(config.curve.curveTokens), reserve_tokens: bn(config.curve.reserveTokens), graduated_at: bn(graduatedAt), graduation_topup: bn(topup), graduation_burned: bn(burned),
     config: new PublicKey(PROGRAMS.launch), custom_hook: new PublicKey(selectedHook?.program??PROGRAMS.gate), custom_hook_flags: selectedHook?.flags??1 })
   const poolBytes = await encode('swap', 'Pool', { version: 1, base_mint: new PublicKey(mint), quote_mint: new PublicKey(QUOTE_MINT), base_reserve: bn(pool.baseReserve), quote_reserve: bn(pool.quoteReserve),
-    virtual_base: bn(pool.virtualBase), virtual_quote: bn(pool.virtualQuote), protocol_fees_quote: bn(pool.protocolFeesQuote), lp_supply: bn(lpSupply), curve: status === 0, swap_count: bn(12), fee_model: 2,
+    virtual_base: bn(pool.virtualBase), virtual_quote: bn(pool.virtualQuote), protocol_fees_quote: bn(pool.protocolFeesQuote), lp_supply: bn(lpSupply), curve: status === 0, swap_count: bn(12), fee_model: feeModel, protocol_share_bps:2500,
     hook_program: new PublicKey(PROGRAMS.launch), reserved: reserved(60, 0, poolFlag) })
   const policy = await encode('gate', 'PolicyV2', { version: 2, mint: new PublicKey(mint), initial_supply: bn(config.supply), cap_bps: 200, quote_mint: new PublicKey(QUOTE_MINT), fee_model: 2, protocol_share_bps: 2500, creator_fee_bps: config.creatorFeeBps })
   const coin = await encode('token', 'Mint', { version: 1, decimals: 6, supply: bn(BigInt(config.supply) - BigInt(burned)), max_supply: bn(config.supply), name: 'Graduate', symbol: 'GRAD', uri: '',
@@ -54,6 +54,9 @@ test('selected market derives its fees and hook identity from launch/mint withou
   assert.equal(result.market.native,true)
   assert.equal(await readHookCoinMarket({profile:LEGACY,connection,mint,wallet,selectedHook:{...selectedHook,flags:1}}),null)
   assert.equal(await readHookCoinMarket({profile:LEGACY,connection,mint,wallet}),null,'must not silently label nongate market max-wallet')
+  const share=await readHookCoinMarket({profile:LEGACY,connection:await chain({pool:at('near the end').pool,poolFlag:1,launchFlag:1,selectedHook,feeModel:1}),mint,wallet,selectedHook})
+  assert.equal(share.market.feeModel,1);assert.equal(share.market.protocolShareBps,2500)
+  assert.equal(share.market.burnBuyBps,0);assert.equal(share.market.authorShareBps,0)
 })
 
 test('on the curve: progress, and what a buy costs right now to finish it', async () => {

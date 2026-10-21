@@ -20,6 +20,11 @@ test('production settings verify the approved bundle, admin, RPCs, key ring and 
  const s=await productionSettings({env,...deps})
  assert.deepEqual(s.connections.map(c=>c.provider),['helius','publicnode']);assert.equal(s.activeKeyId,'k-2026-10');assert.equal(s.keyRing['k-2026-10'].length,32)
  const limits=await s.launchLimits();assert.equal(limits.launchLimits.computeUnitPriceMicroLamports,'0');assert.equal(limits.launchLimits.maxNetworkFeeLamports,'15000')
+ assert.equal(limits.setupLimits.computeUnitLimit,1400000)
+ assert.equal(limits.setupLimits.maxRentLamports,'20000000')
+ assert.equal(limits.setupLimits.maxTotalDebitLamports,'20015000')
+ assert.equal(limits.setupLimits.validUntilSlot,limits.preparationLimits.validUntilSlot)
+ assert.equal(limits.setupLimits.reviewExpiresAtMs,limits.preparationLimits.reviewExpiresAtMs)
  assert.equal((await productionSettings({env:{...env,HOOKLAB_PRIORITY_MICROLAMPORTS:'10000'},...deps})).tradeLimits.maxNetworkFeeLamports,'29000')
  for(const [change,message] of [
   [{HOOK_OWNER_APPROVED_LAUNCHES:'false'},/not enabled/],

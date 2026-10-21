@@ -5,6 +5,7 @@ import BN from 'bn.js'
 import { AddressLookupTableProgram, ComputeBudgetProgram, SystemProgram, TransactionInstruction } from '@solana/web3.js'
 import { loadArtifacts } from './artifacts.mjs'
 import { LOADER, SYSTEM, NATIVE_MINT, pk, kb, pda, holdingAddress, derivedAddresses, authorizationAddress } from './pins.mjs'
+import { createHolding as tokenCreateHolding } from '../hooklab-token-holding.mjs'
 
 const check = (ok, message) => { if (!ok) throw Error(message) }
 const digest = (...parts) => createHash('sha256').update(Buffer.concat(parts.map(p => Buffer.from(p)))).digest()
@@ -88,9 +89,7 @@ export function instructionsFor(abiSource) {
       keys: [{ pubkey: pk(programData), isSigner: false, isWritable: true }, { pubkey: pk(currentAuthority), isSigner: true, isWritable: false }] })
   }
   function createHolding(programs, { payer, mint, owner }) {
-    const d = derivedAddresses(programs)
-    return idlInstruction('token', 'create_holding', {}, { payer, mint, owner, holding: holdingAddress(mint, owner, programs.token),
-      system_program: SYSTEM, event_authority: d.tokenEventAuthority, program: programs.token }, { programId: programs.token, crossNetworkIdl: true })
+    return tokenCreateHolding(programs, { payer, mint, owner })
   }
   function claimCreatorFees(programs, quoteMint, { creator, launch }) {
     const d = derivedAddresses(programs)
@@ -182,10 +181,11 @@ export function instructionsFor(abiSource) {
   }
   // Our own stack's platform fee collection (hook-lab independent build; collect_protocol_fees_sol and the bridge do not
   // exist there): collect_protocol_fees_native, no arguments. Accounts: cranker (signer), config, pool (writable), collector
-  // (writable), event authority, program; remaining: the pool's InclusiveFeePolicy, read-only. Hand-encoded (the
+  // (writable), event authority, program; only model2 adds the pool's InclusiveFeePolicy, read-only. Hand-encoded (the
   // discriminator is sha256("global:collect_protocol_fees_native")[..8]) and, when the stack's swap IDL has it, checked
   // against the IDL's own definition.
-  function collectProtocolFeesNative(programs, quoteMint, { cranker, mint, collector }) {
+  function collectProtocolFeesNative(programs, quoteMint, { cranker, mint, collector, feeModel = 2 }) {
+    check(feeModel === 1 || feeModel === 2, 'Unsupported native collection fee model')
     const S = programs.swap, L = programs.launch, d = derivedAddresses(programs, quoteMint)
     const pool = pda(S, 'pool', kb(mint), kb(quoteMint), Buffer.alloc(2), kb(L)), policy = pda(S, 'inclusive-fee-policy', kb(pool))
     const data = digest(Buffer.from('global:collect_protocol_fees_native')).subarray(0, 8)
@@ -195,7 +195,7 @@ export function instructionsFor(abiSource) {
     if (definition) check(Buffer.from(definition.discriminator).equals(data) && definition.args.length === 0
       && JSON.stringify(definition.accounts.map(a => [a.name, !!a.signer, !!a.writable])) === JSON.stringify([['cranker', true, false], ['config', false, false], ['pool', false, true],
         ['collector', false, true], ['event_authority', false, false], ['program', false, false]]), 'collect_protocol_fees_native ABI differs from the stack\'s swap IDL')
-    return new TransactionInstruction({ programId: pk(S), data: Buffer.from(data), keys: [...keys, { pubkey: pk(policy), isSigner: false, isWritable: false }] })
+    return new TransactionInstruction({ programId: pk(S), data: Buffer.from(data), keys: [...keys, ...(feeModel === 2 ? [{ pubkey: pk(policy), isSigner: false, isWritable: false }] : [])] })
   }
   return Object.freeze({ transfer, lookupCreate, lookupExtend, budget, idlInstruction, governanceCommitment, economicsDigest, launchConfigArgs, swapConfigArgs, governedSetConfig, governanceSetGates, initCreatorAuthorization, setCreatorAuthorization, loaderFinalize, createHolding, claimCreatorFees, collectProtocolFeesQuote, collectProtocolFeesSol, wrapSol, unwrapSol, graduateHookCoin, initConfig, initGovernance, governancePause, collectProtocolFeesNative })
 }

@@ -7,11 +7,11 @@ import { deriveOpenLaunchPostconditions } from '../../src/hooklab-max-wallet-lau
 import { compileNativeSwapReview, nativeSwapInventory, selectedNativeHookEvidence, RENT_SYSVAR } from '../../src/hooklab-native-swap.mjs'
 import { hookCoinAddresses } from '../../src/hooklab-inclusive-max-wallet-swap.mjs'
 import { pk, pda, key } from './selected-hook-preparation.mjs'
-export function selectedNativeTradeFixture(side='buy') {
-  const f=selectedLaunchFixture(),{input:launch,p,accounts}=f,T=p.programs.token
+export function selectedNativeTradeFixture(side='buy',options={}) {
+  const f=selectedLaunchFixture(options),{input:launch,p,accounts}=f,T=p.programs.token
   const post=deriveOpenLaunchPostconditions({schema:'repoing/open-launch-settlement-context/1',compilationInput:launch},{slot:100,timestamp:1000})
   for(const a of post.accounts) accounts.set(a.address,{...a,lamports:'10000000000'})
-  const r={schema:'repoing/native-swap-request/1',policyKind:'selected-hook',policyVersion:2,creatorFeeBps:100,feeModel:2,protocolShareBps:2500,capBps:0,
+  const r={schema:'repoing/native-swap-request/1',policyKind:'selected-hook',policyVersion:2,creatorFeeBps:100,feeModel:launch.request.feeModel,protocolShareBps:2500,capBps:0,
     side,trader:launch.request.creator,mint:launch.request.mint,selectedConfig:launch.request.selectedConfig,selectedHook:launch.request.selectedHook,
     amountIn:side==='buy'?'10':'10000',minAmountOut:side==='buy'?'1':'10',maxInput:side==='buy'?'10':'10000',maxPriceImpactBps:1000,graduate:false}
   const a={...hookCoinAddresses(p,r.mint),traderBase:pda(T,'holding',pk(r.mint).toBuffer(),pk(r.trader).toBuffer())}
@@ -43,8 +43,8 @@ import { PublicKey } from '@solana/web3.js'
 const PublicBump=(program,...seeds)=>PublicKey.findProgramAddressSync(seeds.map(x=>typeof x==='string'?Buffer.from(x):x),pk(program))[1]
 
 // RPC framing only: after bytes are explicit synthetic observations, not an SBF execution.
-export function selectedNativeSimulationFixture(side='buy',mutate=()=>{}){
-  const f=selectedNativeTradeFixture(side),initial=compileNativeSwapReview(f.input),gross=BigInt(initial.quote.delivered)
+export function selectedNativeSimulationFixture(side='buy',mutate=()=>{},options={}){
+  const f=selectedNativeTradeFixture(side,options),initial=compileNativeSwapReview(f.input),gross=BigInt(initial.quote.delivered)
   const deltas=side==='buy'?{[f.a.baseVault]:String(-gross),[f.a.traderBase]:String(gross*97n/100n),[f.taxHolding]:String(gross-gross*97n/100n)}
     :{[f.a.baseVault]:'9000',[f.a.traderBase]:'-10000',[f.taxHolding]:'1000'}
   if(side==='buy')f.input.request.minAmountOut=String(BigInt(deltas[f.a.traderBase])*98n/100n)

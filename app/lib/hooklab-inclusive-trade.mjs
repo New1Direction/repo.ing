@@ -21,6 +21,7 @@ const body=z.discriminatedUnion('action',[
  z.object({action:z.literal('quote'),signingId:z.uuid(),request:intent}).strict(),
  // A native-SOL coin's trade (one approval, no Add SOL); graduate: this buy is the exact final fill and graduates the coin.
  z.object({action:z.literal('native-quote'),signingId:z.uuid(),request:z.union([nativeIntent,selectedIntent])}).strict(),
+ z.object({action:z.literal('native-estimate'),signingId:z.uuid(),request:selectedIntent}).strict(),
  // Wallet funding: add SOL to Hook Lab (creating the needed holdings), or withdraw bridged SOL back to the wallet.
  z.object({action:z.literal('fund'),signingId:z.uuid(),request:z.object({mint:mintKey.nullable(),lamports:z.string().regex(/^(0|[1-9]\d{0,19})$/)}).strict()}).strict(),
  z.object({action:z.literal('withdraw'),signingId:z.uuid(),request:z.object({lamports}).strict()}).strict(),
@@ -60,14 +61,18 @@ export function createInclusiveTradeHandler({env=process.env,configuration=walle
    if(service.origin!==config.origin)throw Error()
    const lifecycle=service.lifecycle
    // Withdrawing is never gated: anyone with SOL in Hook Lab can always take it back out.
-   if(['quote','native-quote','fund'].includes(input.action)&&!tradingOpenFor(env,owner.wallet))return reply({status:'blocked',blockers:[{code:'TRADING_NOT_OPEN',message:'Trading opens to everyone soon.'}]})
-   if(input.action==='native-quote'&&!nativeTradingOn(env,service))return reply({status:'blocked',blockers:[{code:'NATIVE_TRADING_DISABLED',message:'Trading this coin on repo.ing opens soon.'}]})
-   if(['quote','native-quote'].includes(input.action)&&input.request.side==='buy'&&(await moderation(pool,input.request.mint)).delisted)
+   if(['quote','native-quote','native-estimate','fund'].includes(input.action)&&!tradingOpenFor(env,owner.wallet))return reply({status:'blocked',blockers:[{code:'TRADING_NOT_OPEN',message:'Trading opens to everyone soon.'}]})
+   if(['native-quote','native-estimate'].includes(input.action)&&!nativeTradingOn(env,service))return reply({status:'blocked',blockers:[{code:'NATIVE_TRADING_DISABLED',message:'Trading this coin on repo.ing opens soon.'}]})
+   if(['quote','native-quote','native-estimate'].includes(input.action)&&input.request.side==='buy'&&(await moderation(pool,input.request.mint)).delisted)
     return reply({status:'blocked',blockers:[{code:'COIN_DELISTED',message:DELISTED_BUY_REFUSAL}]})
    if(input.action==='fund'&&!service.walletFunding)return reply({status:'blocked',blockers:[{code:'WALLET_FUNDING_DISABLED',message:'Adding SOL to Hook Lab is paused right now. Withdrawals still work.'}]})
    if(input.action==='withdraw'&&!service.walletWithdraw)return reply({status:'blocked',blockers:[{code:'WALLET_WITHDRAW_UNAVAILABLE',message:'Withdrawals are unavailable right now.'}]})
    let result
-   if(input.action==='wallet-request'){const issued=await lifecycle.walletRequest(token,input.signingId);result={...issued,review:customerTradeReview(issued.review)}}
+   if(input.action==='native-estimate'){
+    const measured=await service.nativeEstimate({owner:owner.wallet,stage:`native-${input.request.side}`,intent:input.request,quoteId:input.signingId})
+    result={quote:measured.quote,canSign:false,canSubmit:false}
+   }
+   else if(input.action==='wallet-request'){const issued=await lifecycle.walletRequest(token,input.signingId);result={...issued,review:customerTradeReview(issued.review)}}
    else{
     let operation
     if(input.action==='quote')operation=await lifecycle.createReview(token,input.signingId,{custodyOperationId:input.signingId,stage:`inclusive-${input.request.side}`,intent:input.request})

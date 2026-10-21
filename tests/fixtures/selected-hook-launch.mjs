@@ -9,7 +9,7 @@ import { collectOpenLaunchReview } from '../../src/hooklab-max-wallet-launch-col
 import { deriveOpenLaunchPostconditions } from '../../src/hooklab-max-wallet-launch-settlement.mjs'
 import {Keypair,VersionedMessage,VersionedTransaction} from '@solana/web3.js'
 import bs58 from 'bs58'
-export function selectedLaunchFixture({hookState=false}={}){
+export function selectedLaunchFixture({hookState=false,feeModel=2}={}){
  const f=fixture(),p=JSON.parse(f.profile.json),root=new URL('../../vendor/',import.meta.url)
  const read=file=>readFileSync(new URL(file,root)),zero=key(0),loader='BPFLoaderUpgradeab1e11111111111111111111111'
  const launch=JSON.parse(read('hooklab-native-candidate/open-36dd07e/bordrless_launch.json'))
@@ -49,7 +49,7 @@ export function selectedLaunchFixture({hookState=false}={}){
   put(registry,f.hookPin.program,Buffer.concat([Buffer.from('02daf6662c38c0cd01010000000100','hex'),pk(script).toBuffer()]))
  }
  f.profile.json=JSON.stringify(p);f.profile.expectedSha256=sha(f.profile.json)
- const request={...f.request,schema:'repoing/selected-hook-launch-request/1',name:'Selected',symbol:'SEL',uri:'',virtualQuote:'500'}
+ const request={...f.request,feeModel,schema:'repoing/selected-hook-launch-request/1',name:'Selected',symbol:'SEL',uri:'',virtualQuote:'500'}
  const configBytes=Buffer.from(accounts.get(pda(L,'config')).dataBase64,'base64'),{addresses,inventory}=selectedHookLaunchInventory(f.profile,request,configBytes,{accounts,hookPin:f.hookPin})
  const input={profile:f.profile,hookPin:f.hookPin,request,nativeLaunches:true,preparationEvidence:{schema:'repoing/max-wallet-durable-prepared-state/1',profileSha256:f.profile.expectedSha256,preparationIntentSha256:sha(JSON.stringify(launchPreparationRequest(request))),executionSlot:100,preparedAccountHashes:{selectedConfig:sha(Buffer.from(accounts.get(request.selectedConfig).dataBase64,'base64')),registry:sha(Buffer.from(accounts.get(addresses.registry).dataBase64,'base64'))}},reviewedStateHashes:Object.fromEntries(['launchConfig','swapConfig','launchGovernance','swapGovernance','quoteMint'].map(k=>[k,sha(Buffer.from(accounts.get(k==='quoteMint'?p.quoteMint:addresses[k]).dataBase64,'base64'))])),observations:f.observations.map(o=>({provider:o.provider,genesisHash:o.genesisHash,commitment:o.commitment,slot:o.slot,observedAtMs:o.observedAtMs,accounts:inventory.map(address=>({address,account:accounts.get(address)??null}))})),recentBlockhash:f.recentBlockhash,lookupTable:sharedTable(openLaunchTableAddresses(f.profile,configBytes)),limits:{...f.limits,maxLaunchFeeLamports:'0',maxPoolCreationFeeLamports:'0',maxRentLamports:'2000',maxInstructionDebitLamports:'2000'}}
  input.observations=input.observations.map(o=>structuredClone(o))

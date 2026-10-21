@@ -30,7 +30,7 @@ export async function readHookCoinMarket({ connection, mint, wallet = null, prof
   if(selectedHook){
     selectedHook=selectedHookSchema.parse(selectedHook)
     if(selectedHook.program===profile.programs.gate||launch.custom_hook?.toBase58()!==selectedHook.program||launch.custom_hook_flags!==selectedHook.flags
-      ||coin.hook_program?.toBase58()!==selectedHook.program||coin.hook_flags!==selectedHook.flags||pool.fee_model!==2)return null
+      ||coin.hook_program?.toBase58()!==selectedHook.program||coin.hook_flags!==selectedHook.flags||![1,2].includes(pool.fee_model))return null
   }
   const capBps=selectedHook?0:policy.cap_bps,creatorFeeBps=selectedHook?launch.creator_fee_bps:policy.creator_fee_bps
   const initialSupply=selectedHook?s(coin.max_supply):s(policy.initial_supply)
@@ -52,6 +52,8 @@ export async function readHookCoinMarket({ connection, mint, wallet = null, prof
     selectedConfig: launch.config.toBase58(), creator: launch.creator.toBase58(), graduated, native, quoteFormMismatch,
     // supply: the mint's current supply (graduation burns some), the figure the market cap below and the chart's use.
     capBps, creatorFeeBps, initialSupply, supply: s(coin.supply),
+    feeModel:pool.fee_model, protocolShareBps:pool.protocol_share_bps, protocolFeeBps:pool.protocol_fee_bps,
+    lpFeeBps:pool.lp_fee_bps, authorShareBps:launch.author_share_bps, burnBuyBps:launch.rules.burn_buy_bps, burnSellBps:launch.rules.burn_sell_bps,
     capRaw: selectedHook?null:s(BigInt(initialSupply) * BigInt(capBps) / 10000n),
     ...(selectedHook?{policyKind:'selected-hook',selectedHook}:{}),
     pool: { baseReserve: s(pool.base_reserve), quoteReserve: s(pool.quote_reserve), virtualBase: s(pool.virtual_base),

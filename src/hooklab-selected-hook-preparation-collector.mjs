@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { isDeepStrictEqual as equal } from 'node:util'
 import { PublicKey, VersionedMessage } from '@solana/web3.js'
 import { hookLabReviewSchema, inspectHookLabMessage } from './hooklab-message-boundary.mjs'
-import { selectedHookPreparationRequestSchema, planSelectedHookPreparation } from './hooklab-selected-hook-preparation.mjs'
+import { selectedHookPreparationRequestSchema, planSelectedHookPreparation, selectedAuthorityAccounts } from './hooklab-selected-hook-preparation.mjs'
 import { parseInclusiveMaxWalletProfile } from './hooklab-inclusive-max-wallet-profile.mjs'
 import { assertLocalExecutionEndpoint } from './hooklab-local-acceptance.mjs'
 import { provenLatestBlockhash } from './hooklab-blockhash-proof.mjs'
@@ -13,17 +13,17 @@ const integer = v => { check(Number.isSafeInteger(v) && v >= 0); return v }
 const pk = v => new PublicKey(v)
 const pda = (p, ...s) => PublicKey.findProgramAddressSync(s.map(v => typeof v === 'string' ? Buffer.from(v) : v), pk(p))[0].toBase58()
 const freeze = v => { if (v && typeof v === 'object') { Object.values(v).forEach(freeze); Object.freeze(v) } return v }
-export function selectedHookPreparationInventory(profile, request) {
+export function selectedHookPreparationInventory(profile, request, selectedAuthorityEvidence) {
   const p = parseInclusiveMaxWalletProfile(profile), r = selectedHookPreparationRequestSchema.parse(request)
   const L = p.programs.launch, H = r.selectedHook.program, loader = 'BPFLoaderUpgradeab1e11111111111111111111111'
   return [L, H, pda(loader, pk(L).toBuffer()), pda(loader, pk(H).toBuffer()), pda(L, 'config'),
-    pda(H, 'bordrless-hook-accounts', pk(r.mint).toBuffer()), r.mint, r.selectedConfig, r.creator, r.feePayer, pda(L, 'launch', pk(r.mint).toBuffer())]
+    pda(H, 'bordrless-hook-accounts', pk(r.mint).toBuffer()), r.mint, r.selectedConfig, r.creator, r.feePayer, pda(L, 'launch', pk(r.mint).toBuffer()), ...selectedAuthorityAccounts(selectedAuthorityEvidence).map(a => a.address)]
 }
 
 /** Caller supplies server-owned profile/pin/Connections and reviewed limits, not browser observations.
  * Retention revalidates the original message, fee, policy binding and lifetime without renewal.
  */
-export async function collectSelectedHookPreparationReview({ profile, hookPin, request, connections, limits, expectedReview, clock = Date.now }) {
+export async function collectSelectedHookPreparationReview({ profile, hookPin, selectedAuthorityEvidence, request, connections, limits, expectedReview, clock = Date.now }) {
   try {
     const retained = expectedReview === undefined ? null : hookLabReviewSchema.parse(expectedReview)
     if (retained) { inspectHookLabMessage(retained); check(retained.operation === 'selected-hook-preparation') }
@@ -38,7 +38,7 @@ export async function collectSelectedHookPreparationReview({ profile, hookPin, r
       const urls = endpoints.map(v => new URL(v))
       check(urls.every(v => v.protocol === 'https:' && !v.username && !v.password && !v.hash) && urls[0].origin !== urls[1].origin)
     }
-    const inventory = selectedHookPreparationInventory(p, r), keys = inventory.map(pk), start = integer(clock())
+    const inventory = selectedHookPreparationInventory(p, r, selectedAuthorityEvidence), keys = inventory.map(pk), start = integer(clock())
     const observations = await Promise.all(connections.map(async ({ provider, connection: c }) => {
       const genesisHash = await c.getGenesisHash(); check(genesisHash === p.genesisHash)
       const response = await c.getMultipleAccountsInfoAndContext(keys, { commitment: 'finalized' })
@@ -62,7 +62,7 @@ export async function collectSelectedHookPreparationReview({ profile, hookPin, r
     const recentBlockhash = { ...latest.value, genesisHash: p.genesisHash, providers: profile.providers, observedAtMs: start,
       currentBlockHeight: Math.max(...confirmations.map(c => c.height)), blockhashValid: true, observedSlot: Math.max(...confirmations.map(c => c.slot)),
       networkFeeLamports: String(10000n + priority), lamportsPerSignature: '5000' }
-    const input = { profile, hookPin, request: r, observations, recentBlockhash, limits: { ...limits, nowMs: now } }
+    const input = { profile, hookPin, ...(selectedAuthorityEvidence ? { selectedAuthorityEvidence } : {}), request: r, observations, recentBlockhash, limits: { ...limits, nowMs: now } }
     const computed = planSelectedHookPreparation(input)
     if (retained) {
       const stable = v => { const { observedSlot, observedAtMs, ...rest } = v; return rest }

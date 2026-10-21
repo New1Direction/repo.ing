@@ -35,6 +35,7 @@ export const hookLabReviewSchema = z.object({
   observedSlot: integer, validUntilSlot: integer, observedAtMs: integer, reviewExpiresAtMs: integer,
   lastValidBlockHeight: integer, baseFeeLamports: u64, maxFeeLamports: u64,
   instructionDebitLamports: u64, maxNativeDebitLamports: u64,
+  supplementalTableCost: z.object({ address: key, rentLamports: u64.refine(v => BigInt(v) > 0n), permanentFreeze: z.literal(true) }).strict().optional(),
 }).strict()
 
 /** Derive the review display from actual bytes and the retained ALT snapshots, not caller prose.

@@ -8,7 +8,8 @@ import { fixture, connections, sha } from './fixtures/selected-hook-preparation.
 test('strict selected-hook request has no setup instructions or max-wallet interpretation', () => {
   const r = fixture().request
   assert.deepEqual(selectedHookPreparationRequestSchema.parse(r), r)
-  for (const change of [{ capBps: 100 }, { hookFlags: 1 }, { rules: 'max-wallet' }, { feeModel: 1 }, { creatorFeeBps: 10000 }, { label: '😀'.repeat(9) }, { instructions: [] }, { policyVersion: 1 }]) assert.throws(() => selectedHookPreparationRequestSchema.parse({ ...r, ...change }))
+  assert.equal(selectedHookPreparationRequestSchema.parse({ ...r, feeModel: 1 }).feeModel, 1)
+  for (const change of [{ capBps: 100 }, { hookFlags: 1 }, { rules: 'max-wallet' }, { feeModel: 0 }, { creatorFeeBps: 10000 }, { label: '😀'.repeat(9) }, { instructions: [] }, { policyVersion: 1 }]) assert.throws(() => selectedHookPreparationRequestSchema.parse({ ...r, ...change }))
 })
 test('config-only candidate uses asymmetric IDs, exactly two signers and existing registry commitment', () => {
   const f = fixture(), p = planSelectedHookPreparation(f)

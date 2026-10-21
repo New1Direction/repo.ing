@@ -15,6 +15,7 @@ import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-col
 import {inspectHookLabMessage,verifyHookLabSignedMessage} from './hooklab-message-boundary.mjs'
 import {canonicalLaunchProof,canonicalObservation,canonicalStateHashes} from './hooklab-canonical-observation.mjs'
 import {launchIsNative,poolIsNative} from './hooklab-native-launch.mjs'
+import {selectedHookRules} from './hooklab-selected-hook-preparation.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x),bn=x=>new BN(String(x)),key=x=>x.toBase58()
 const check=v=>{if(!v)throw Error('Launch settlement evidence differs')}
 const read=async work=>{let timer;try{return await Promise.race([work(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Read unavailable')),5000)})])}finally{clearTimeout(timer)}}
@@ -44,6 +45,11 @@ function eventBytes(b,name,value){return Buffer.concat([tag,Buffer.from(b.idl.ev
 // OpenLaunchCreated {launch, mint, creator, launch_config: Pubkey, creator_fee_bps: u16, cap_bps: u16}, as the
 // open-creation ABI fixes it (emitted just before LaunchCreated). Encoded here until the final IDL is pinned.
 const OPEN_LAUNCH_CREATED=Buffer.from([228,69,40,108,62,242,68,231])
+const LAUNCH_QUOTE_CUT=Buffer.from(sha('event:LaunchQuoteCut'),'hex').subarray(0,8)
+function launchQuoteCutBytes(r,a,timestamp){
+ const tail=Buffer.alloc(12);tail.writeUInt16LE(r.quoteCut.maxBuyBps,0);tail.writeUInt16LE(r.quoteCut.maxSellBps,2);tail.writeBigInt64LE(BigInt(timestamp),4)
+ return Buffer.concat([tag,LAUNCH_QUOTE_CUT,pk(a.launch).toBuffer(),pk(r.mint).toBuffer(),pk(r.selectedHook.program).toBuffer(),tail])
+}
 function openLaunchCreatedBytes({launch,mint,creator,launch_config,creator_fee_bps,cap_bps}){
  const fees=Buffer.alloc(4);fees.writeUInt16LE(creator_fee_bps,0);fees.writeUInt16LE(cap_bps,2)
  return Buffer.concat([tag,OPEN_LAUNCH_CREATED,...[launch,mint,creator,launch_config].map(x=>pk(x).toBuffer()),fees])
@@ -60,6 +66,7 @@ const COMPILERS={custom:compileMaxWalletLaunchReview,canary:compileCanaryMaxWall
 function context(input,canary=false){
  const mode=canary===true?'canary':canary===false?'custom':canary
  check(Object.hasOwn(SETTLEMENT_SCHEMAS,mode)&&input?.schema===SETTLEMENT_SCHEMAS[mode])
+ check(isDeepStrictEqual(input.selectedAuthorityEvidence,input.compilationInput.selectedAuthorityEvidence))
  const stored=input.compilationInput,ci={...stored,preparationEvidence:canonicalLaunchProof(stored.preparationEvidence),reviewedStateHashes:canonicalStateHashes(stored.reviewedStateHashes),observations:stored.observations.map(canonicalObservation)},plan=(mode==='open'&&stored.request.policyKind==='selected-hook'?compileSelectedHookLaunchReview:COMPILERS[mode])(ci),p=JSON.parse(ci.profile.json)
  const bindings={launch:binding(JSON.parse(raw(ci.profile.idls.launch))),swap:binding(JSON.parse(raw(ci.profile.idls.swap))),token:binding(tokenIdl)}
  // Token IDL is used only as a frozen account-layout codec, never to choose a
@@ -86,7 +93,7 @@ function derivePostconditions(settlementContext,{slot,timestamp},canary,lpName=L
  // An open launch consumes no creator grant: it has none.
  const lc=decode(b.launch,'Config',before.get(a.launchConfig)),sc=decode(b.swap,'Config',before.get(a.swapConfig)),auth=open?null:decode(b.launch,'CreatorAuthorization',before.get(a.authorization))
  const quote=decode(b.token,'Mint',before.get(p.quoteMint)),supply=BigInt(lc.supply.toString()),curve=supply*BigInt(lc.curve_bps)/10000n,reserve=supply-curve,vbase=curve*reserve/(curve-reserve),vquote=BigInt(r.virtualQuote),graduation=vquote*(curve-reserve)/reserve
- const inclusive=r.policyVersion===2,native=plan.quoteForm===1
+ const inclusive=r.policyVersion===2&&r.feeModel!==1,native=plan.quoteForm===1
  const H=r.selectedHook?.program??G,flags=r.selectedHook?.flags??1
  // A native-SOL (v4) launch sets both flags in its one creation: Launch.reserved[17] and Pool.reserved[0].
  const flagged=(name,index)=>{const zero=zeroStruct(b[name==='Launch'?'launch':'swap'],name).reserved;if(native)zero[index]=1;return zero}
@@ -94,6 +101,16 @@ function derivePostconditions(settlementContext,{slot,timestamp},canary,lpName=L
  const launch={...zeroStruct(b.launch,'Launch'),version:1,bump:bump(L,'launch',pk(r.mint).toBuffer()),mint:pk(r.mint),creator:pk(r.creator),pool:pk(a.pool),quote_mint:pk(p.quoteMint),
   creator_fee_bps:r.creatorFeeBps,lp_fee_bps:lc.lp_fee_bps,sniper_window_secs:lc.sniper_window_secs,sniper_start_bps:lc.sniper_start_bps,virtual_quote:bn(vquote),virtual_base:bn(vbase),graduation_quote:bn(graduation),curve_tokens:bn(curve),reserve_tokens:bn(reserve),
   reserve_holding:pk(a.launchReserve),quote_holding:pk(a.launchQuote),lp_holding:pk(a.launchLp),created_at:bn(timestamp),kit_config:pk(kitConfig),holder_vault:pk(holder),config:pk(r.selectedConfig),custom_hook:pk(H),custom_hook_flags:flags,reserved:flagged('Launch',17)}
+ if(r.policyKind==='selected-hook'){
+  launch.rules=selectedHookRules(r)
+  launch.author_share_bps=(r.configAuthor??r.creator)===r.creator?0:r.authorShareBps??0
+  if(r.quoteCut){
+   const reserved=Buffer.from(launch.reserved)
+   reserved.writeUInt16LE(r.quoteCut.maxBuyBps,0);reserved.writeUInt16LE(r.quoteCut.maxSellBps,2)
+   reserved[12]=bump(H,'state',pk(r.mint).toBuffer());reserved[13]=bump(L,'quote-cut',pk(H).toBuffer())
+   launch.reserved=[...reserved]
+  }
+ }
  const pool={...zeroStruct(b.swap,'Pool'),version:1,bump:bump(S,'pool',pk(r.mint).toBuffer(),pk(p.quoteMint).toBuffer(),(()=>{const v=Buffer.alloc(2);v.writeUInt16LE(lc.lp_fee_bps);return v})(),pk(L).toBuffer()),lp_mint_bump:bump(S,'lp',pk(a.pool).toBuffer()),
   base_mint:pk(r.mint),quote_mint:pk(p.quoteMint),lp_mint:pk(a.lpMint),base_vault:pk(a.baseVault),quote_vault:pk(a.quoteVault),hook_program:pk(L),hook_flags:1985,lp_fee_bps:lc.lp_fee_bps,
   base_reserve:bn(curve),virtual_base:bn(vbase),virtual_quote:bn(vquote),curve:true,creator:pk(a.launch),created_at:bn(timestamp),hook_signer_bump:bump(S,'hook-authority',pk(L).toBuffer()),fee_model:inclusive?2:1,protocol_share_bps:sc.launch_protocol_share_bps,reserved:flagged('Pool',0)}
@@ -107,32 +124,43 @@ function derivePostconditions(settlementContext,{slot,timestamp},canary,lpName=L
  for(const [role,mint,owner,amount]of [['launchReserve',r.mint,a.launch,reserve],['launchQuote',p.quoteMint,a.launch,0n],['baseVault',r.mint,a.pool,curve],['quoteVault',p.quoteMint,a.pool,0n],['launchLp',a.lpMint,a.launch,0n]]){
   put(a[role],T,accountBytes(b.token,'Holding',{...zeroStruct(b.token,'Holding'),version:1,bump:bump(T,'holding',pk(mint).toBuffer(),pk(owner).toBuffer()),mint:pk(mint),owner:pk(owner),amount:bn(amount)}))
  }
+ for(const h of plan.postMintHoldings??[])put(h.address,T,accountBytes(b.token,'Holding',{...zeroStruct(b.token,'Holding'),version:1,bump:bump(T,'holding',pk(r.mint).toBuffer(),pk(h.owner).toBuffer()),mint:pk(r.mint),owner:pk(h.owner),amount:bn(0)}))
  put(a.poolRegistry,L,encodeHookAccountList({version:1,accounts:[
   {writable:true,source:{kind:'pda',program:pk(L),seeds:[{kind:'literal',bytes:Buffer.from('launch')},{kind:'account',index:2}]}},
   {writable:true,source:{kind:'pda',program:pk(T),seeds:[{kind:'literal',bytes:Buffer.from('holding')},{kind:'account',index:3},{kind:'account',index:5}]}},
-  {writable:true,source:{kind:'key',key:pk(holder)}},{writable:false,source:{kind:'key',key:pk(kitConfig)}}]}))
+  {writable:true,source:{kind:'key',key:pk(holder)}},{writable:false,source:{kind:'key',key:pk(kitConfig)}},
+  ...(r.quoteCut?[
+   {writable:false,source:{kind:'key',key:pk(H)}},
+   {writable:false,source:{kind:'pda',program:pk(T),seeds:[{kind:'literal',bytes:Buffer.from('holding')},{kind:'account',index:2},{kind:'account',index:4}]}},
+   {writable:true,source:{kind:'pda',program:pk(H),seeds:[{kind:'literal',bytes:Buffer.from('state')},{kind:'account',index:2}]}},
+   {writable:false,source:{kind:'pda',program:pk(L),seeds:[{kind:'literal',bytes:Buffer.from('quote-cut')},{kind:'account',index:9}]}},
+  ]:[])]}))
  put(a.launchConfig,L,accountBytes(b.launch,'Config',{...lc,launches:lc.launches.addn(1)}));put(a.swapConfig,S,accountBytes(b.swap,'Config',{...sc,pools_created:sc.pools_created.addn(1)}));if(!open)put(a.authorization,L,accountBytes(b.launch,'CreatorAuthorization',{...auth,consumed:auth.consumed.addn(1)}))
  if(inclusive)put(a.inclusiveFeePolicy,S,Buffer.concat([Buffer.from(sha(Buffer.from('account:InclusiveFeePolicy')),'hex').subarray(0,8),Buffer.from([1]),pk(a.pool).toBuffer(),sc.fee_collector.toBuffer(),Buffer.from([0xc4,9])]))
  const launchEvent={...zeroStruct(b.launch,'LaunchCreated'),launch:pk(a.launch),mint:pk(r.mint),creator:pk(r.creator),pool:pk(a.pool),quote_mint:pk(p.quoteMint),lp_mint:pk(a.lpMint),name:r.name,symbol:r.symbol,uri:r.uri,supply:bn(supply),decimals:lc.decimals,
   creator_fee_bps:r.creatorFeeBps,lp_fee_bps:lc.lp_fee_bps,sniper_window_secs:lc.sniper_window_secs,sniper_start_bps:lc.sniper_start_bps,virtual_quote:bn(vquote),virtual_base:bn(vbase),graduation_quote:bn(graduation),curve_tokens:bn(curve),reserve_tokens:bn(reserve),launch_fee_lamports:lc.launch_fee_lamports,config:pk(r.selectedConfig),custom_hook:pk(H),custom_hook_flags:flags,slot:bn(slot),ts:bn(timestamp)}
+ if(r.policyKind==='selected-hook')launchEvent.rules=selectedHookRules(r)
  const poolEvent={...zeroStruct(b.swap,'PoolCreated'),pool:pk(a.pool),payer:pk(r.creator),creator:pk(a.launch),base_mint:pk(r.mint),quote_mint:pk(p.quoteMint),lp_mint:pk(a.lpMint),base_vault:pk(a.baseVault),quote_vault:pk(a.quoteVault),
   lp_fee_bps:lc.lp_fee_bps,fee_model:inclusive?2:1,protocol_share_bps:sc.launch_protocol_share_bps,hook_program:pk(L),hook_flags:1985,virtual_base:bn(vbase),virtual_quote:bn(vquote),base_reserve:bn(curve),curve:true,slot:bn(slot),ts:bn(timestamp)}
  // E2-1: a v4 creation also announces itself after LaunchCreated, which still names bridged SOL as the quote.
  const nativeEvent=native?[{program:L,name:'NativeLaunchCreated',dataBase64:eventBytes(b.launch,'NativeLaunchCreated',{launch:pk(a.launch),pool:pk(a.pool),mint:pk(r.mint),virtual_quote:bn(vquote)}).toString('base64')}]:[]
  // An open launch announces itself first: OpenLaunchCreated, then LaunchCreated and NativeLaunchCreated as v4.
  const openEvent=open?[{program:L,name:'OpenLaunchCreated',dataBase64:openLaunchCreatedBytes({launch:a.launch,mint:r.mint,creator:r.creator,launch_config:r.selectedConfig,creator_fee_bps:r.creatorFeeBps,cap_bps:r.capBps}).toString('base64')}]:[]
- return {native,accounts:[...expected.values()],events:[...openEvent,{program:L,name:'LaunchCreated',dataBase64:eventBytes(b.launch,'LaunchCreated',launchEvent).toString('base64')},{program:S,name:'PoolCreated',dataBase64:eventBytes(b.swap,'PoolCreated',poolEvent).toString('base64')},...nativeEvent],created:[r.mint,...['launch','pool','lpMint','launchReserve','launchQuote','poolRegistry','baseVault','quoteVault','launchLp',...(inclusive?['inclusiveFeePolicy']:[])].map(n=>a[n])],feesLamports:lc.launch_fee_lamports.add(sc.pool_creation_fee_lamports).toString(),treasury:key(lc.treasury)}
+ const holdingEvents=(plan.postMintHoldings??[]).map(h=>({program:T,name:'HoldingCreated',dataBase64:eventBytes(b.token,'HoldingCreated',{mint:pk(r.mint),holding:pk(h.address),owner:pk(h.owner),payer:pk(r.creator),ts:bn(timestamp)}).toString('base64')}))
+ return {native,accounts:[...expected.values()],events:[...openEvent,{program:L,name:'LaunchCreated',dataBase64:eventBytes(b.launch,'LaunchCreated',launchEvent).toString('base64')},...(r.quoteCut?[{program:L,name:'LaunchQuoteCut',dataBase64:launchQuoteCutBytes(r,a,timestamp).toString('base64')}]:[]),{program:S,name:'PoolCreated',dataBase64:eventBytes(b.swap,'PoolCreated',poolEvent).toString('base64')},...nativeEvent,...holdingEvents],created:[r.mint,...['launch','pool','lpMint','launchReserve','launchQuote','poolRegistry','baseVault','quoteVault','launchLp',...(inclusive?['inclusiveFeePolicy']:[])].map(n=>a[n]),...(plan.postMintHoldings??[]).map(h=>h.address)],feesLamports:lc.launch_fee_lamports.add(sc.pool_creation_fee_lamports).toString(),treasury:key(lc.treasury)}
 }
 function authenticatedEvents(tx,b,programs){
  const keys=tx.keys,events=[],groups=new Set()
  for(const group of tx.innerInstructions){check(int(group.index)<tx.instructions.length&&!groups.has(group.index));groups.add(group.index)
   const stack=[null,keys[tx.instructions[group.index].programIdIndex]]
   for(const ix of group.instructions){const program=keys[ix.programIdIndex],h=ix.stackHeight;check(program&&Number.isInteger(h)&&h>=2&&h<=stack.length);stack.length=h;const parent=stack[h-1];stack[h]=program
-   const role=program===programs.launch?'launch':program===programs.swap?'swap':null;if(!role)continue
+   const role=program===programs.launch?'launch':program===programs.swap?'swap':program===programs.token&&group.index>=3?'token':null;if(!role)continue
    const bytes=Buffer.from(bs58.decode(ix.data));if(!bytes.subarray(0,8).equals(tag))continue
    check(parent===program&&ix.accounts.length===1&&keys[ix.accounts[0]]===pda(program,'__event_authority'))
    if(role==='launch'&&bytes.subarray(8,16).equals(OPEN_LAUNCH_CREATED)){const decoded=decodeOpenLaunchCreated(bytes);check(group.index===2);events.push({program,name:decoded.name,dataBase64:bytes.toString('base64'),data:decoded.data});continue}
+   if(role==='launch'&&bytes.subarray(8,16).equals(LAUNCH_QUOTE_CUT)){check(group.index===2&&bytes.length===124);events.push({program,name:'LaunchQuoteCut',dataBase64:bytes.toString('base64'),data:{}});continue}
    const decoded=b[role].coder.events.decode(bytes.subarray(8).toString('base64'));check(decoded&&eventBytes(b[role],decoded.name,decoded.data).equals(bytes))
+   if(role==='token'){check(decoded.name==='HoldingCreated');events.push({program,name:decoded.name,dataBase64:bytes.toString('base64'),data:normalize(decoded.data)});continue}
    if(['LaunchCreated','PoolCreated','NativeLaunchCreated','OpenLaunchCreated'].includes(decoded.name)){check(group.index===2);events.push({program,name:decoded.name,dataBase64:bytes.toString('base64'),data:normalize(decoded.data)})}
   }
  }
@@ -153,7 +181,7 @@ async function collectSettlement({config,profile,dossierJson,connections,settlem
   check(settlementContext.configurationSha256===sha(JSON.stringify(c))&&isDeepStrictEqual(ci.profile,profile)
    &&(selected?isDeepStrictEqual(stable(plan.review),stable(review)):isDeepStrictEqual(plan.review,review)))
   if(selected)check(review.observedSlot<=plan.review.observedSlot&&review.observedAtMs<=plan.review.observedAtMs)
-  if(plan.request.policyKind==='selected-hook')check(isDeepStrictEqual(ci.hookPin,c.selectedHookPin))
+  if(plan.request.policyKind==='selected-hook')check(isDeepStrictEqual(ci.hookPin,c.selectedHookRelease?.schema==='repoing/selected-hook-release/2'?ci.selectedAuthorityEvidence?.hookPin:c.selectedHookPin))
   for(const pin of d.accounts){const account=before.get(pin.address);check(productionAccountBindingMatches(pin,account,d,profile.idls))}
   const signed=verifyHookLabSignedMessage(review,signedTransactionBase64);check(signed.signature===signature&&review.profileSha256===c.profileSha256)
   identity={signature,messageSha256:signed.messageSha256,profileSha256:c.profileSha256,configurationSha256:sha(JSON.stringify(c))}
@@ -182,8 +210,9 @@ async function collectSettlement({config,profile,dossierJson,connections,settlem
   const deltas=new Map(),add=(address,n)=>deltas.set(address,(deltas.get(address)??0n)+n)
   add(review.payer,-fee)
   if(t.error!==null){check(t.keys.every((k,i)=>BigInt(t.post[i])-BigInt(t.pre[i])===(deltas.get(k)??0n)));return {...identity,status:'finalized-failure',inclusion,transactionSha256:sha(JSON.stringify(t)),feeLamports:String(fee)}}
-  const events=authenticatedEvents(t,b,p.programs),native=plan.quoteForm===1,open=canary==='open',names=['LaunchCreated','PoolCreated',...(native?['NativeLaunchCreated']:[]),...(open?['OpenLaunchCreated']:[])]
-  check(events.length===names.length&&names.every(name=>events.filter(x=>x.name===name).length===1))
+  const events=authenticatedEvents(t,b,p.programs),native=plan.quoteForm===1,open=canary==='open',names=['LaunchCreated','PoolCreated',...(native?['NativeLaunchCreated']:[]),...(open?['OpenLaunchCreated']:[]),...(ci.request.quoteCut?['LaunchQuoteCut']:[])]
+  const holdingEvents=events.filter(x=>x.name==='HoldingCreated')
+  check(holdingEvents.length===(plan.postMintHoldings??[]).length&&events.length===names.length+holdingEvents.length&&names.every(name=>events.filter(x=>x.name===name).length===1))
   if(open)check(events.findIndex(x=>x.name==='OpenLaunchCreated')<events.findIndex(x=>x.name==='LaunchCreated'))
   const timestamp=Number(events.find(x=>x.name==='LaunchCreated').data.ts),actual=new Map(snapshotInventory.map((k,i)=>[k,accounts[i]]))
   // The expected state under the LP name this swap wrote (one of LP_NAME_PREFIXES); any other LP mint fails below.
@@ -192,7 +221,8 @@ async function collectSettlement({config,profile,dossierJson,connections,settlem
   check(isDeepStrictEqual(events.map(({data,...e})=>e).sort((a,b)=>a.name.localeCompare(b.name)),expected.events.sort((a,b)=>a.name.localeCompare(b.name))))
   const want=new Map(expected.accounts.map(x=>[x.address,x]))
   for(const pin of d.programs){const pd=actual.get(pin.programData);check(pd&&pd.owner==='BPFLoaderUpgradeab1e11111111111111111111111'&&!pd.executable&&sha(raw(pd.dataBase64))===pin.programDataSha256&&pin.deploySlot<=t.slot)}
-  const hookWritable=new Set(selected?plan.selectedHookExtras.filter(x=>x.writable).map(x=>x.address):[])
+  const canonicalHoldings=new Set((plan.postMintHoldings??[]).map(h=>h.address))
+  const hookWritable=new Set(selected?plan.selectedHookExtras.filter(x=>x.writable&&!canonicalHoldings.has(x.address)).map(x=>x.address):[])
   if(hookWritable.size){const sim=settlementContext.simulation
    check(sim?.schema==='repoing/selected-hook-simulation/1'&&sim.messageSha256===review.messageSha256
     &&sim.configurationSha256===identity.configurationSha256&&isDeepStrictEqual(sim.providers,connections.map(x=>x.provider))
@@ -210,6 +240,7 @@ async function collectSettlement({config,profile,dossierJson,connections,settlem
   // The flags themselves, read at their bytes: pool 351 and launch 560 are 1 after a v4 creation, 0 after v3.
   check(poolIsNative(raw(actual.get(plan.addresses.pool).dataBase64))===native&&launchIsNative(raw(actual.get(plan.addresses.launch).dataBase64))===native)
   let rent=0n
+  for(const h of plan.postMintHoldings??[]){const i=t.keys.indexOf(h.address);check(i>=0&&BigInt(t.post[i])-BigInt(t.pre[i])===BigInt(ci.postMintHoldingRentLamports))}
   for(const address of expected.created){const i=t.keys.indexOf(address);check(i>=0&&BigInt(t.post[i])>0n&&BigInt(t.post[i])>=BigInt(t.pre[i]));const increase=BigInt(t.post[i])-BigInt(t.pre[i]);rent+=increase;add(address,increase)}
   const fees=BigInt(expected.feesLamports),debit=rent+fees
   check(rent<=BigInt(ci.limits.maxRentLamports)&&debit<=BigInt(ci.limits.maxInstructionDebitLamports)&&debit+fee<=BigInt(ci.limits.maxTotalDebitLamports))

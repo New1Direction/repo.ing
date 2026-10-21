@@ -45,7 +45,7 @@ const summary=row=>Object.freeze({id:row.id,owner:row.owner_wallet,custodyOperat
 // retiredOperations: {stage: [operation]} reviewed before a switch (owner-approved launches before open launches): their
 // rows stay readable so they settle and expire; no new review uses them.
 export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,serverSigner=null,sender=null,custodyAdapter=null,expiryObserver=null,closedStages=[],stageOperations={preparation:'max-wallet-preparation',launch:'max-wallet-launch'},retiredOperations={}}={}){
- const operations=Object.freeze(Object.fromEntries(Object.entries(stageOperations).map(([stage,value])=>[stage,Object.freeze(Array.isArray(value)?[...value]:[value])]))),allowed={preparation:['max-wallet-preparation','inclusive-max-wallet-preparation','selected-hook-preparation'],launch:['max-wallet-launch','open-launch'],'inclusive-buy':['inclusive-max-wallet-buy'],'inclusive-sell':['inclusive-max-wallet-sell'],
+ const operations=Object.freeze(Object.fromEntries(Object.entries(stageOperations).map(([stage,value])=>[stage,Object.freeze(Array.isArray(value)?[...value]:[value])]))),allowed={'hook-setup':['selected-hook-setup'],preparation:['max-wallet-preparation','inclusive-max-wallet-preparation','selected-hook-preparation'],launch:['max-wallet-launch','open-launch'],'inclusive-buy':['inclusive-max-wallet-buy'],'inclusive-sell':['inclusive-max-wallet-sell'],
   'wallet-fund':['hooklab-wallet-fund'],'wallet-withdraw':['hooklab-wallet-withdraw'],
   // A native-SOL launch's creator claiming its fees (needs the native-stages migration's stage list).
   'native-claim':['hooklab-native-claim'],
@@ -58,7 +58,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
  // closedStages: registered so their operations stay readable, settle and expire, but no new review, refresh, wallet
  // request, co-signature or send starts for them (native trades while native trading is off).
  const closed=new Set(closedStages);check([...closed].every(stage=>Object.hasOwn(operations,stage)))
- check(!custodyAdapter||Object.keys(operations).every(stage=>['preparation','launch'].includes(stage)))
+ check(!custodyAdapter||Object.keys(operations).every(stage=>['hook-setup','preparation','launch'].includes(stage)))
  async function transaction(sessionToken,id,work,custodyOperationId=null,retainClaimedSignature=false){
   let db
   try{
@@ -109,6 +109,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
      check(review.wallet===owner&&review.payer===owner&&resolved.status==='operator-pins-and-state-verified'
       &&resolved.owner===owner&&resolved.stage===stage&&resolved.profileSha256===review.profileSha256&&resolved.messageSha256===review.messageSha256)
      check(review.requiredSigners.includes(owner)&&operations[stage].includes(review.operation))
+     if(stage==='hook-setup')check(isDeepStrictEqual(review.requiredSigners,[owner]))
      await currentReview(db,review)
      if(custodyAdapter)await custodyAdapter.beginStage({db,owner,custodyOperationId,stage,review,request:resolved.request})
      const retainedContext=context(resolved)

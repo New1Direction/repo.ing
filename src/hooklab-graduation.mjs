@@ -3,6 +3,7 @@
 // graduation_topup, initial_lp, max_swap_in) and graduate.rs/finalize_curve; tests/fixtures/hooklab-graduation-vectors.json
 // pins every function to the Rust. Display and estimates only: nothing here signs or sends.
 import { inclusiveCreatorFee } from './hooklab-inclusive-fee-quote.mjs'
+import { shareCreatorCuts, shareProtocol } from './hooklab-share-fee-quote.mjs'
 
 const BPS = 10000n, MINIMUM_LIQUIDITY = 1000n, WAD = 10n ** 18n, U64 = (1n << 64n) - 1n
 const u64 = v => { const n = BigInt(v); if (n < 0n || n > U64) throw Error('INVALID_U64'); return n }
@@ -71,9 +72,30 @@ export function finalFillLamports(market) {
   if (isReady(p, threshold)) return null
   const min = (a, b) => a < b ? a : b, max = (a, b) => a > b ? a : b
   const empties = maxSwapIn(p.quoteReserve, p.virtualQuote, p.baseReserve, p.virtualBase)
-  const reaches = empties !== null && curveOut(p, empties) === p.baseReserve ? min(threshold - p.quoteReserve, empties) : threshold - p.quoteReserve
+  const shareModel = market.policyKind === 'selected-hook' && market.feeModel === 1
+  const reaches = empties !== null && (shareModel || curveOut(p, empties) === p.baseReserve) ? min(threshold - p.quoteReserve, empties) : threshold - p.quoteReserve
   // The swap must also give something: at least the input that buys one base unit.
   const target = max(reaches, swapInForOut(1n, p.quoteReserve, p.virtualQuote, p.baseReserve, p.virtualBase) ?? 1n)
+  if (shareModel) {
+    // An unmeasured display estimate: custom callback cuts and token deductions
+    // are still measured before signing. Model 1 pays its protocol share on top.
+    const net = amount => {
+      const cuts = shareCreatorCuts({ amount, creatorFeeBps: BigInt(feeBps) })
+      const received = amount - cuts.total
+      return received - ceilDiv(received * BigInt(market.lpFeeBps ?? 0), BPS) - shareProtocol(cuts.total, BigInt(market.protocolShareBps))
+    }
+    let low = 0n, high = target
+    while (net(high) < target) {
+      if (high === U64) return null
+      high = min(high * 2n, U64)
+    }
+    while (high - low > 1n) {
+      const mid = low + (high - low) / 2n
+      if (net(mid) >= target) high = mid
+      else low = mid
+    }
+    return high
+  }
   if (curveOut(p, target) > p.baseReserve || curveOut(p, target) === 0n) return null
   // Curve input = A − ⌈A·b/10⁴⌉ never skips a value as A grows, so the least A reaching `target` puts exactly `target` in.
   let amount = feeBps > 0 ? ceilDiv(target * BPS, BPS - BigInt(feeBps)) : target

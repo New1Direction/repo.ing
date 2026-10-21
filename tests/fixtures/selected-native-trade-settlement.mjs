@@ -8,15 +8,16 @@ import {pk,pda} from './selected-hook-preparation.mjs'
 import {loadNativeArtifacts} from '../../src/hooklab-native-pins.mjs'
 import {loadArtifacts} from '../../src/hooklab-owner-driver/artifacts.mjs'
 import {collectNativeTradeSettlement} from '../../src/hooklab-native-trade-settlement.mjs'
+import {collectSelectedNativeTradeReview} from '../../src/hooklab-native-trade-resolver.mjs'
 
-export function selectedNativeSettlementFixture(side='buy') {
- const f=selectedNativeSimulationFixture(side),bindings=selectedLaunchCollectorFixture(),{plan,p,accounts}=f,a=plan.addresses,q=plan.quote,r=plan.request,buy=side==='buy'
+export function selectedNativeSettlementFixture(side='buy',options={}) {
+ const f=selectedNativeSimulationFixture(side,undefined,options),bindings=selectedLaunchCollectorFixture(),{plan,p,accounts}=f,a=plan.addresses,q=plan.quote,r=plan.request,buy=side==='buy'
  const tx=new VersionedTransaction(VersionedMessage.deserialize(Buffer.from(plan.review.messageBase64,'base64')))
  tx.sign([Keypair.fromSeed(Buffer.alloc(32,31))])
  const signedTransactionBase64=Buffer.from(tx.serialize()).toString('base64'),signature=bs58.encode(tx.signatures[0]),keys=plan.review.accounts.map(x=>x.address),idx=k=>keys.indexOf(k)
  const preBalances=keys.map(k=>Number(accounts.get(k)?.lamports??0)),postBalances=preBalances.map((v,i)=>v+Number(plan.lamportDeltas[keys[i]]??0))
  const N=x=>new BN(String(x)),creator=BigInt(q.netCreatorFee),gross=BigInt(q.grossCreatorFee),delivered=BigInt(q.delivered),amount=BigInt(r.amountIn)
- const out=buy?750000n-BigInt(q.after.baseReserve):delivered+gross,received=buy?amount-creator:9000n,cut=buy?out-delivered:amount-received
+ const out=buy?750000n-BigInt(q.after.baseReserve):delivered+gross+(r.feeModel===1?BigInt(q.protocolFee):0n),received=buy?amount-creator:9000n,cut=buy?out-delivered:amount-received
  const paid=creator?[{holding:pk(a.launch),amount:N(creator)}]:[],pool=f.coders.swap.accounts.decode('Pool',Buffer.from(accounts.get(a.pool).dataBase64,'base64'))
  const events={
   InclusiveCreatorFeeAccrued:{version:1,pool:pk(a.pool),quote_mint:pk(p.quoteMint),direction:buy?1:0,gross_quote:N(gross),platform_quote:N(q.protocolFee),creator_quote:N(creator),creator_holding:pk(a.launch),platform_collector:pk(q.platformCollector),protocol_fees_quote_after:N(q.after.protocolFeesQuote)},
@@ -30,11 +31,18 @@ export function selectedNativeSettlementFixture(side='buy') {
   return {programIdIndex:idx(program),accounts:[idx(pda(program,'__event_authority'))],stackHeight:height,data:bs58.encode(Buffer.concat([Buffer.from('e445a52e51cb9a1d','hex'),Buffer.from(idl.events.find(e=>e.name===name).discriminator),coder.types.encode(name,events[name])]))}
  }
  const receipt={slot:110,transaction:{message:tx.message,signatures:tx.signatures.map(s=>bs58.encode(s))},meta:{err:null,fee:5000,preBalances,postBalances,innerInstructions:[]}}
- const rebuild=()=>{receipt.meta.innerInstructions=[{index:swapAt,instructions:[...['InclusiveCreatorFeeAccrued','Swapped','SwappedNative'].map(n=>encode(n,2)),{programIdIndex:idx(p.programs.token),accounts:[],stackHeight:2,data:''},encode('Transferred',3)]}]}
+ const rebuild=()=>{receipt.meta.innerInstructions=[{index:swapAt,instructions:[...(r.feeModel===1?['Swapped','SwappedNative']:['InclusiveCreatorFeeAccrued','Swapped','SwappedNative']).map(n=>encode(n,2)),{programIdIndex:idx(p.programs.token),accounts:[],stackHeight:2,data:''},encode('Transferred',3)]}]}
  rebuild()
  const connections=f.input.profile.providers.map((provider,i)=>({provider,connection:{rpcEndpoint:bindings.connections[i].connection.rpcEndpoint,getGenesisHash:async()=>p.genesisHash,getTransaction:async()=>structuredClone(receipt),getBlockSignatures:async()=>({blockhash:f.input.recentBlockhash.blockhash,previousBlockhash:p.quoteMint,parentSlot:109,blockHeight:110,signatures:[signature]}),getMultipleAccountsInfoAndContext:async ks=>({context:{slot:110},value:ks.map(k=>{const v=accounts.get(k.toBase58());return v?{owner:pk(v.owner),executable:v.executable,data:Buffer.from(v.dataBase64,'base64')}:null})})}}))
  // Keep the actual web3 Message instance (structuredClone loses its methods).
  for(const {connection} of connections)connection.getTransaction=async()=>({...receipt,transaction:receipt.transaction,meta:structuredClone(receipt.meta)})
  const args={config:bindings.config,profile:f.input.profile,dossierJson:bindings.dossierJson,connections,settlementContext:{schema:'repoing/native-trade-settlement-context/1',compilationInput:f.input},review:plan.review,signedTransactionBase64,signature}
- return {...f,args,events,receipt,rebuild,settle:overrides=>collectNativeTradeSettlement({...args,...overrides})}
+ return {...f,args,events,receipt,rebuild,settle:async overrides=>{
+  if(r.feeModel===1){
+   const measured=await collectSelectedNativeTradeReview(f)
+   args.settlementContext={...args.settlementContext,configurationSha256:f.configurationSha256,
+    compilationInput:measured.compilationInput,selectedSimulation:measured.selectedSimulation}
+  }
+  return collectNativeTradeSettlement({...args,...overrides})
+ }}
 }

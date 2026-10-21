@@ -17,6 +17,7 @@ const bound = z.object({ address: key, maxDebit: u64, minCredit: u64 }).strict()
 const conditionsSchema = z.object({ tokenProgram: key, configurationSha256: digest,
   holdings: z.array(bound.extend({ mint: key, owner: key }).strict()).max(64),
   native: z.array(bound).max(64), unchanged: z.array(z.object({ address: key, sha256: digest }).strict()).max(64),
+  events: z.array(z.object({ program: key, discriminator: z.string().regex(/^[a-f0-9]{16}$/), bytes: z.number().int().min(8).max(1024) }).strict()).max(8).optional(),
 }).strict()
 const magic = Buffer.from(sha('account:Holding'), 'hex').subarray(0, 8)
 function data(value) {
@@ -44,7 +45,48 @@ function holding(account, address, token, wanted) {
 }
 const within = (delta, limit) => check(delta >= -BigInt(limit?.maxDebit ?? '0') && (BigInt(limit?.minCredit ?? '0') === 0n || delta >= BigInt(limit.minCredit)))
 const identity = result => ({ reviewSha256: result.reviewSha256, conditionsSha256: result.conditionsSha256,
-  preStateSha256: result.preStateSha256, tokenDeltas: result.tokenDeltas, lamportDeltas: result.lamportDeltas })
+  preStateSha256: result.preStateSha256, tokenDeltas: result.tokenDeltas, lamportDeltas: result.lamportDeltas, programEvents: result.programEvents })
+
+// Simulation observations are not finalized settlement evidence. Receipts must
+// authenticate actual payouts separately; nested or user-prefixed logs cannot
+// speak for the program whose callback answer the compiler is measuring.
+function simulationEvents(logs, wanted) {
+  check(Array.isArray(logs))
+  const stack = [], events = []
+  for (const line of logs) {
+    let match = /^Program ([1-9A-HJ-NP-Za-km-z]+) invoke \[(\d+)\]$/.exec(line)
+    if (match) { check(Number(match[2]) === stack.length + 1); stack.push(match[1]); continue }
+    match = /^Program ([1-9A-HJ-NP-Za-km-z]+) success$/.exec(line)
+    if (match) { check(stack.pop() === match[1]); continue }
+    if (!line.startsWith('Program data: ')) continue
+    const program = stack.at(-1), descriptors = wanted.filter(e => e.program === program)
+    if (!descriptors.length) continue
+    const encoded = line.slice(14), bytes = Buffer.from(encoded, 'base64')
+    check(bytes.toString('base64') === encoded)
+    const descriptor = descriptors.find(e => bytes.subarray(0, 8).toString('hex') === e.discriminator)
+    if (descriptor) { check(bytes.length === descriptor.bytes && events.length < 64); events.push({ program, dataBase64: encoded }) }
+  }
+  check(stack.length === 0)
+  return events
+}
+
+// Agave caps returned accounts at the transaction's resolved key count, even
+// when readonly ProgramData/authority pins are outside that transaction.
+export async function simulateSelectedHookAccounts(connection, transaction, options) {
+  const message = transaction.message, addresses = options.accounts.addresses
+  const count = message.staticAccountKeys.length + message.addressTableLookups.reduce((n, t) => n + t.writableIndexes.length + t.readonlyIndexes.length, 0)
+  const batches = []
+  for (let i = 0; i < addresses.length; i += count) {
+    const slice = addresses.slice(i, i + count)
+    const batch = await connection.simulateTransaction(transaction, { ...options, accounts: { ...options.accounts, addresses: slice } })
+    check(batch.value.accounts?.length === slice.length)
+    batches.push(batch)
+  }
+  sameBank(batches.every(batch => batch.context.slot === batches[0].context.slot))
+  const metadata = batch => { const { accounts, ...value } = batch.value; return { context: batch.context, value } }
+  check(batches.every(batch => isDeepStrictEqual(metadata(batch), metadata(batches[0]))))
+  return { ...batches[0], value: { ...batches[0].value, accounts: batches.flatMap(batch => batch.value.accounts) } }
+}
 
 /** Connections and conditions are server-owned. Never bind this adapter directly to HTTP JSON.
  * RPC has no atomic read-before-simulate API: require the same finalized bank for both reads,
@@ -55,7 +97,7 @@ export async function collectSelectedHookSimulation(input) {
   for (let attempt = 0; ; attempt++) {
     try { return await collectSimulation(input) } catch (error) {
       if (error.code !== 'SELECTED_HOOK_SIMULATION_BANK_ADVANCED' || attempt === 2)
-        throw Object.assign(Error('Exact-message selected-hook simulation unavailable or changed; preserve the review and require new consent.'), { code: 'SELECTED_HOOK_SIMULATION_UNAVAILABLE' })
+        throw Object.assign(Error('Exact-message selected-hook simulation unavailable or changed; preserve the review and require new consent.', { cause: error }), { code: 'SELECTED_HOOK_SIMULATION_UNAVAILABLE' })
       // Retry read-only collection of the same retained message. Never retry a
       // changed state, output, fee, blockhash or deadline; never sign or send here.
     }
@@ -120,7 +162,8 @@ async function collectSimulation({ review, conditions, connections, expected, cl
         }
       }
       check(integer(clock()) < r.reviewExpiresAtMs)
-      return { provider, slot, before, after, tokenDeltas, lamportDeltas }
+      return { provider, slot, before, after, tokenDeltas, lamportDeltas,
+        ...(c.events ? { programEvents: simulationEvents(sim.value.logs, c.events) } : {}) }
     }))
     // Finish both read branches before a retry; a late response from the prior
     // bank must not overwrite evidence collected by a subsequent attempt.
@@ -129,16 +172,17 @@ async function collectSimulation({ review, conditions, connections, expected, cl
     const results = reads.map(x => x.value)
     const [one, two] = results
     sameBank(one.slot === two.slot)
-    check(isDeepStrictEqual(one.before, two.before) && isDeepStrictEqual(one.after, two.after))
+    check(isDeepStrictEqual(one.before, two.before) && isDeepStrictEqual(one.after, two.after) && isDeepStrictEqual(one.programEvents, two.programEvents))
     const result = { schema: 'repoing/selected-hook-simulation/1', messageSha256: r.messageSha256,
       reviewSha256: sha(JSON.stringify(r)), configurationSha256: c.configurationSha256, conditionsSha256: sha(JSON.stringify(c)),
       preStateSha256: sha(JSON.stringify(addresses.map((address, i) => ({ address, account: one.before[i] })))),
       providers: results.map(x => x.provider), simulationSlot: one.slot, tokenDeltas: one.tokenDeltas, lamportDeltas: one.lamportDeltas,
+      ...(c.events ? { programEvents: one.programEvents } : {}),
       canSign: false, canSubmit: false }
     if (expected) check(isDeepStrictEqual(identity(result), identity(expected)) && isDeepStrictEqual(result.providers, expected.providers))
     return Object.freeze(result)
   } catch (error) {
     if (error.code === 'SELECTED_HOOK_SIMULATION_BANK_ADVANCED') throw error
-    throw Object.assign(Error('Exact-message selected-hook simulation unavailable or changed; preserve the review and require new consent.'), { code: 'SELECTED_HOOK_SIMULATION_UNAVAILABLE' })
+    throw Object.assign(Error('Exact-message selected-hook simulation unavailable or changed; preserve the review and require new consent.', { cause: error }), { code: 'SELECTED_HOOK_SIMULATION_UNAVAILABLE' })
   }
 }

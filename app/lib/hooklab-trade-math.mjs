@@ -2,6 +2,7 @@
 // Estimates use the same quote model the server compiles with; the server's exact review is what gets signed.
 import { modelInclusiveCreatorQuote, previewSelectedHookQuote } from '../../src/hooklab-inclusive-fee-quote.mjs'
 import { finalFillLamports, isReady } from '../../src/hooklab-graduation.mjs'
+import { shareNativeQuote } from '../../src/hooklab-share-fee-quote.mjs'
 
 export { finalFillLamports }
 
@@ -51,10 +52,21 @@ const QUOTE_ERRORS = { MAX_WALLET: 'That would put you over this coin’s max pe
 export function estimateTrade(market, { side, amount, coinBalance = 0n, slippageBps = 300 }) {
   const p = market.pool, graduated = !!market.graduated, curveBuy = side === 'buy' && !graduated && !!market.graduationQuote
   if (curveBuy && isReady(p, market.graduationQuote)) return { error: 'This coin has finished its bonding curve and is graduating. Buying opens again once it moves to its open market. Selling still works.' }
-  const fill = curveBuy ? finalFillLamports(market) : null
+  const shareModel = market.policyKind === 'selected-hook' && market.feeModel === 1
+  const fill = curveBuy && !shareModel ? finalFillLamports(market) : null
   if (fill !== null && amount > fill) return { error: `That’s more than this coin’s curve has left: ${sol(fill, 6)} buys all of it and graduates the coin.` }
   try {
     const selected=market.policyKind==='selected-hook'
+    if(shareModel){
+      const q=shareNativeQuote({side,amountIn:amount,minAmountOut:0n,creatorFeeBps:BigInt(market.creatorFeeBps),lpFeeBps:BigInt(market.lpFeeBps??0),
+        tokenInputTax:0n,tokenOutputTax:0n,allowPartialFill:curveBuy,
+        pool:{...Object.fromEntries(Object.entries(p).map(([k,v])=>[k,BigInt(v)])),protocolShareBps:BigInt(market.protocolShareBps)}})
+      const reserve=BigInt(side==='buy'?p.quoteReserve:p.baseReserve)+BigInt(side==='buy'?p.virtualQuote:p.virtualBase)
+      const impact=Number((q.curveInput*10000n+reserve+q.curveInput-1n)/(reserve+q.curveInput))
+      if(impact>MAX_PRICE_IMPACT_BPS)return {error:'That moves the price more than 10%. Try a smaller amount.'}
+      return {delivered:q.delivered,minAmountOut:null,creatorFee:q.fees.creatorQuote,priceImpactBps:impact,
+        graduates:curveBuy&&isReady(q.after,market.graduationQuote),consumedInput:q.amountIn,unspentInput:q.unspentInput,hookDeductionsUnmeasured:true}
+    }
     const quote = (selected?previewSelectedHookQuote:modelInclusiveCreatorQuote)({ side, amountIn: amount, minAmountOut: 1n, maxInput: amount, creatorFeeBps: market.creatorFeeBps,
       feeModel: 2, protocolShareBps: 2500, lpFeeBps: 0, flatProtocolFeeBps: 0, sniperWindowSecs: 0, sniperStartBps: 0, quoteHook: 'none', modules: 0,
       authorShareBps: 0, rules: 'none', rewards: false, recipientBaseBalance: BigInt(coinBalance), maxWalletLifted: graduated,
@@ -67,7 +79,7 @@ export function estimateTrade(market, { side, amount, coinBalance = 0n, slippage
     // Without an exact fill no buy can stop at the graduation point, so one that gets there would overshoot it.
     if (curveBuy && !graduates && isReady(quote.after, market.graduationQuote)) return { error: 'That would take the coin past graduation. Try a smaller amount.' }
     return { delivered: quote.delivered, minAmountOut, creatorFee: quote.fees.grossQuote, priceImpactBps: Number(quote.priceImpactBps), graduates,
-      ...(selected?{hookDeductionsUnmeasured:true}:{}) }
+      ...(selected?{minAmountOut:null,hookDeductionsUnmeasured:true}:{}) }
   } catch (error) {
     if (curveBuy && error?.message === 'INSUFFICIENT_LIQUIDITY') return { error: 'That’s more than this coin’s curve has left. Try a smaller amount.' }
     return { error: QUOTE_ERRORS[error?.message] ?? 'This amount can’t be traded right now.' }
@@ -174,3 +186,11 @@ export function tradeIntent(market, side, amount, minAmountOut) {
 // A native coin's request (the native-quote action): the same, plus whether this buy is the final fill that graduates it.
 export const nativeTradeIntent = (market, side, amount, minAmountOut, graduate) => ({ ...tradeIntent(market, side, amount, minAmountOut), graduate: side === 'buy' && !!graduate,
   ...(market.policyKind==='selected-hook'?{policyKind:'selected-hook',selectedHook:market.selectedHook}:{}) })
+
+export function measuredTradeMinimum(quote,slippageBps){
+  if(!SLIPPAGE_CHOICES.includes(slippageBps))throw Error('Unsupported slippage')
+  const minimum=BigInt(quote.delivered)*BigInt(10000-slippageBps)/10000n
+  if(minimum<=0n)throw Error('This amount is too small to trade.')
+  const consumed=BigInt(quote.consumedInput??'0'),unspent=BigInt(quote.unspentInput??'0')
+  return unspent>0n&&consumed>0n?(minimum*(consumed+unspent)+consumed-1n)/consumed:minimum
+}

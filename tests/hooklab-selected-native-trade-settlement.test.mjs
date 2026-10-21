@@ -5,6 +5,13 @@ import BN from 'bn.js'
 import {selectedNativeSettlementFixture} from './fixtures/selected-native-trade-settlement.mjs'
 import {pk,pda} from './fixtures/selected-hook-preparation.mjs'
 
+test('model1 settlement survives JSONB review key ordering without accepting changed consent',async()=>{
+ const f=selectedNativeSettlementFixture('buy',{feeModel:1})
+ const reordered=Object.fromEntries(Object.entries(f.args.review).reverse())
+ assert.equal((await f.settle({review:reordered})).status,'finalized-success')
+ assert.equal((await f.settle({review:{...reordered,maxNativeDebitLamports:String(BigInt(reordered.maxNativeDebitLamports)+1n)}})).status,'unresolved')
+})
+
 for(const side of ['buy','sell']) {
  test(`synthetic authenticated selected ${side} settles`,async()=>{
   const f=selectedNativeSettlementFixture(side),result=await f.settle()

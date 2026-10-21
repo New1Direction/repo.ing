@@ -15,6 +15,9 @@ import { LAUNCH_STATE_HASHES, canonicalLaunchProof, canonicalObservation } from 
 import { launchSettingsChanged,launchesPaused,openCreatorFeeCeiling,openLaunchErrorText,passRefusal } from './hooklab-open-creation.mjs'
 import { parseLaunchConfigReserved } from './hooklab-launch-config-reserved.mjs'
 import { selectedHookPinSchema, selectedHookLaunchInventory, compileSelectedHookLaunchReview, launchPreparationRequest } from './hooklab-max-wallet-launch.mjs'
+import { selectedHookPolicyReleaseSchema, observeSelectedHookCompatibility, validateLocalSelectedHookPolicy } from './hooklab-selected-hook-compatibility.mjs'
+import { selectedAuthorityAccounts } from './hooklab-selected-hook-preparation.mjs'
+import { TOKEN_HOLDING_SIZE } from './hooklab-token-holding.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex')
 const check=(v,m)=>{if(!v)throw Object.assign(Error(m),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
 const integer=v=>{check(Number.isSafeInteger(v)&&v>=0,'Invalid RPC integer');return v}
@@ -26,7 +29,11 @@ const selectedHookReleaseSchema=z.object({
  sourceCommit:z.string().regex(/^[a-f0-9]{40}$/),profileSha256:hookDigest,dossierSha256:hookDigest,
  hookPin:selectedHookPinSchema,acceptanceSha256:hookDigest,releaseVerificationSha256:hookDigest,
 }).strict()
-export const selectedHookReleaseEvidenceSchema=selectedHookReleaseSchema.pick({hookPin:true,acceptanceSha256:true,releaseVerificationSha256:true})
+const selectedReleaseSchema=z.discriminatedUnion('schema',[selectedHookReleaseSchema,selectedHookPolicyReleaseSchema])
+export const selectedHookReleaseEvidenceSchema=z.union([
+ selectedHookReleaseSchema.pick({hookPin:true,acceptanceSha256:true,releaseVerificationSha256:true}),
+ selectedHookPolicyReleaseSchema.pick({compatibilityPolicy:true,acceptanceSha256:true,releaseVerificationSha256:true}),
+])
 // A server-owned record of operational approval, not a cryptographic protocol envelope.
 // No fee defaults: the currently implemented adapter only supports creator/author zero.
 export const maxWalletOperatorConfigSchema=z.object({
@@ -38,7 +45,7 @@ export const maxWalletOperatorConfigSchema=z.object({
  reviewer:hookAddress,treasury:hookAddress,lookupTable:z.object({address:hookAddress,sha256:hookDigest}).strict().nullable(),
  lamportsPerSignature:hookRawAmount.refine(v=>BigInt(v)>0n),
  selectedHookPin:selectedHookPinSchema.optional(),
- selectedHookRelease:selectedHookReleaseSchema.optional(),
+ selectedHookRelease:selectedReleaseSchema.optional(),
 }).strict()
 export const inclusiveMaxWalletOperatorConfigSchema=maxWalletOperatorConfigSchema.extend({
  schema:z.literal('repoing/inclusive-max-wallet-operator-config/1'),feeModel:z.literal(2),
@@ -78,16 +85,35 @@ export function validateMaxWalletOperatorBindings({config,profile,dossierJson,co
 }
 export function validateSelectedHookReleaseBindings(input){
  const bound=validateMaxWalletOperatorBindings(input),{config:c,profile:p,dossier:d}=bound
- const r=selectedHookReleaseSchema.parse(c.selectedHookRelease)
+ const r=selectedReleaseSchema.parse(c.selectedHookRelease),policy=r.schema==='repoing/selected-hook-release/2'
+ if(policy&&isLocalExecutionDossier(d)){
+  validateLocalSelectedHookPolicy(input)
+  return bound
+ }
  check(d.schema==='repoing/production-observation/2'&&p.stack?.open===true&&!p.programs.bridge&&c.feeModel===2
   &&c.launchLookupTable,'Selected production release needs the independent open stack')
  check(r.approvalReference===c.approvalReference&&r.sourceCommit===p.sourceCommit&&r.profileSha256===c.profileSha256
-  &&r.dossierSha256===c.dossierSha256&&isDeepStrictEqual(r.hookPin,c.selectedHookPin),'Selected production release binding differs')
- check(![...Object.values(p.programs),p.quoteMint,p.stack.kitProgram,'11111111111111111111111111111111',
+  &&r.dossierSha256===c.dossierSha256&&(policy?c.selectedHookPin===undefined:isDeepStrictEqual(r.hookPin,c.selectedHookPin)),'Selected production release binding differs')
+ if(!policy)check(![...Object.values(p.programs),p.quoteMint,p.stack.kitProgram,'11111111111111111111111111111111',
   'FbAuVaTqVPzs43KdsQE8ByfbMJdRFABanya3fuEVjdRM'].includes(r.hookPin.program),'Selected production hook is a stack role or acceptance fixture')
  check(['launch-config','swap-config'].every(role=>d.accounts.some(a=>a.role===role&&a.binding==='config-counters-v1')),
   'Selected production release needs stable config bindings')
  return bound
+}
+// Authority evidence contract for the corrected runtime. A release approves the compatibility
+// policy, never a browser's ELF. Only initial collection may omit the durable operation evidence.
+// Callers must atomically retain that evidence before issuing a wallet request, and carry it
+// through preparation, launch, trade, send and recovery. No signing permission is returned here.
+export async function observeReleasedSelectedHookCompatibility(input){
+ const {config:c,profile:p,dossier:d}=validateSelectedHookReleaseBindings(input)
+ check(c.selectedHookRelease.schema==='repoing/selected-hook-release/2','Historical singleton release is not a compatibility policy')
+ check(['initial','wallet-request','cosign','send','revalidation','recovery'].includes(input.stage),'Explicit compatibility stage required')
+ check(input.stage==='initial'||input.expectedEvidence,'Original operation evidence required')
+ for(const name of ['hookPin','elfSha256','upgradeAuthority'])check(!Object.hasOwn(input,name),'Client executable assertions forbidden')
+ return observeSelectedHookCompatibility({program:input.program,policy:c.selectedHookRelease.compatibilityPolicy,
+  genesisHash:p.genesisHash,minContextSlot:d.minSlot,expectedEvidence:input.expectedEvidence,
+  forbiddenPrograms:[...Object.values(p.programs),p.quoteMint,p.stack.kitProgram,'FbAuVaTqVPzs43KdsQE8ByfbMJdRFABanya3fuEVjdRM'].filter(Boolean),
+  connections:input.connections.map((v,i)=>({...v,trustDomain:c.providerTrustDomains[i].trustDomain}))})
 }
 export async function collectMaxWalletLaunchReview(input){
  try{return await collectLaunchReview(input)}
@@ -109,10 +135,13 @@ function openLaunchState(config,request){
  if(!reserved.open)throw refuse(openLaunchErrorText(6120))
  if(!reserved.creatorFeeBps.includes(request.creatorFeeBps)||request.creatorFeeBps>openCreatorFeeCeiling(config)||(request.policyKind!=='selected-hook'&&!reserved.capBps.includes(request.capBps)))throw refuse(openLaunchErrorText(6121))
 }
-async function collectLaunchReview({config,profile,dossierJson,connections,preparation,request,limits,expectedReview,clock=Date.now,nativeLaunches=false,open=false}){
+async function collectLaunchReview({config,profile,dossierJson,connections,preparation,request,selectedAuthorityEvidence,supplementalTable,limits,expectedReview,clock=Date.now,nativeLaunches=false,open=false}){
  const {config:c,profile:p,dossier:d}=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections})
  const r=parseMaxWalletLaunchRequest(request),selected=r.policyKind==='selected-hook',table=open?c.launchLookupTable:c.lookupTable
- check(!selected||open&&c.selectedHookPin?.program===r.selectedHook.program,'Selected hook approval unavailable')
+ const policyRelease=c.selectedHookRelease?.schema==='repoing/selected-hook-release/2'
+ const hookPin=policyRelease?selectedAuthorityEvidence?.hookPin:c.selectedHookPin
+ check(!selected||open&&hookPin?.program===r.selectedHook.program,'Selected hook approval unavailable')
+ if(selected&&policyRelease)validateSelectedHookReleaseBindings({config,profile,dossierJson,connections})
  if(open)check(table,'No shared launch table is configured')
  const retainedReview=expectedReview===undefined?null:hookLabReviewSchema.parse(expectedReview)
  if(retainedReview)inspectHookLabMessage(retainedReview)
@@ -128,14 +157,14 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
  let selectedBootstrap,selectedBootstrapSlot=0
  if(selected){
   const H=r.selectedHook.program, pd=PublicKey.findProgramAddressSync([pk(H).toBuffer()],pk('BPFLoaderUpgradeab1e11111111111111111111111'))[0].toBase58(),registry=PublicKey.findProgramAddressSync([Buffer.from('bordrless-hook-accounts'),pk(r.mint).toBuffer()],pk(H))[0].toBase58()
-  const keys=[H,pd,registry],snapshot=await connections[0].connection.getMultipleAccountsInfoAndContext(keys.map(pk),{commitment:'finalized',minContextSlot:integer(bootstrap.context.slot)})
+  const keys=[H,pd,registry,...selectedAuthorityAccounts(selectedAuthorityEvidence).map(a=>a.address)],snapshot=await connections[0].connection.getMultipleAccountsInfoAndContext(keys.map(pk),{commitment:'finalized',minContextSlot:integer(bootstrap.context.slot)})
   check(snapshot.value.length===keys.length&&integer(snapshot.context.slot)>=bootstrap.context.slot,'Selected bootstrap stale')
   selectedBootstrapSlot=snapshot.context.slot
   selectedBootstrap=new Map(keys.map((address,i)=>{const v=snapshot.value[i];check(v,'Selected dependency missing');return [address,{address,owner:v.owner.toBase58(),executable:v.executable,dataBase64:Buffer.from(v.data).toString('base64')}]}))
  }
- const {addresses:a,inventory}=selected?selectedHookLaunchInventory(profile,r,bootstrap.value[0].data,{accounts:selectedBootstrap,hookPin:c.selectedHookPin}):(open?openLaunchInventory:maxWalletLaunchInventory)(profile,r,bootstrap.value[0].data)
+ const {addresses:a,inventory}=selected?selectedHookLaunchInventory(profile,r,bootstrap.value[0].data,{accounts:selectedBootstrap,hookPin,selectedAuthorityEvidence}):(open?openLaunchInventory:maxWalletLaunchInventory)(profile,r,bootstrap.value[0].data)
  const extra=[...d.programs.flatMap(x=>[x.address,x.programData]),...d.accounts.map(x=>x.address),...(table?[table.address]:[])]
- const all=[...new Set([...inventory,...extra])].sort(),minContextSlot=Math.max(integer(bootstrap.context.slot),selectedBootstrapSlot,integer(preparation.executionSlot),d.minSlot)
+ const all=[...new Set([...inventory,...extra,...(supplementalTable?[supplementalTable.address]:[])])].sort(),minContextSlot=Math.max(integer(bootstrap.context.slot),selectedBootstrapSlot,integer(preparation.executionSlot),d.minSlot)
  const observations=await Promise.all(connections.map(async({provider,connection})=>{
   const genesisHash=await connection.getGenesisHash();check(genesisHash===p.genesisHash,'Wrong chain')
   const snapshot=await connection.getMultipleAccountsInfoAndContext(all.map(pk),{commitment:'finalized',minContextSlot})
@@ -174,11 +203,19 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
   blockhashValid:true,observedSlot:Math.max(...confirmations.map(x=>x.slot)),networkFeeLamports:String(BigInt(new Set([r.creator,r.feePayer,r.mint,...(open?[]:[r.reviewer])]).size)*BigInt(c.lamportsPerSignature)+priority),lamportsPerSignature:c.lamportsPerSignature}
  const lookup=table?map.get(table.address):null
  if(table)check(lookup&&!lookup.executable&&sha(Buffer.from(lookup.dataBase64,'base64'))===table.sha256,'Lookup table pin differs')
+ let postMintHoldingRentLamports
+ if(r.postMintSetup){
+  const rents=await Promise.all(connections.map(({connection})=>connection.getMinimumBalanceForRentExemption(TOKEN_HOLDING_SIZE,'finalized')))
+  check(rents[0]>0&&integer(rents[0])===integer(rents[1]),'Post-mint holding rent observations disagree')
+  postMintHoldingRentLamports=String(rents[0])
+ }
  const compilationInput={profile,request:r,preparationEvidence:canonicalLaunchProof({schema:'repoing/max-wallet-durable-prepared-state/1',profileSha256:preparation.profileSha256,
   preparationIntentSha256:preparation.preparationIntentSha256,executionSlot:preparation.executionSlot,preparedAccountHashes:preparation.preparedAccountHashes}),
   reviewedStateHashes:Object.fromEntries(LAUNCH_STATE_HASHES.filter(name=>!open||name!=='authorization').map(name=>[name,sha(Buffer.from(map.get(name==='quoteMint'?p.quoteMint:a[name]).dataBase64,'base64'))])),
-  observations:observations.map(o=>({...o,accounts:o.accounts.filter(x=>inventory.includes(x.address))})),recentBlockhash,...(selected?{hookPin:c.selectedHookPin}:{}),
-  lookupTable:lookup?{address:lookup.address,owner:lookup.owner,dataBase64:lookup.dataBase64,sha256:table.sha256}:null,limits:{...limits,nowMs:integer(clock())},...(nativeLaunches===true?{nativeLaunches:true}:{})}
+  observations:observations.map(o=>({...o,accounts:o.accounts.filter(x=>inventory.includes(x.address))})),recentBlockhash,...(postMintHoldingRentLamports?{postMintHoldingRentLamports}:{}),...(selected?{hookPin,...(selectedAuthorityEvidence?{selectedAuthorityEvidence}:{})}:{}),
+  lookupTable:lookup?{address:lookup.address,owner:lookup.owner,dataBase64:lookup.dataBase64,sha256:table.sha256}:null,
+  ...(supplementalTable?{supplementalTable:{plan:supplementalTable,snapshot:map.get(supplementalTable.address)}}:{}),
+  limits:{...limits,nowMs:integer(clock())},...(nativeLaunches===true?{nativeLaunches:true}:{})}
  const plan=(selected?compileSelectedHookLaunchReview:open?compileOpenLaunchReview:compileMaxWalletLaunchReview)(compilationInput)
  if(retainedReview){
   // Only observation metadata may refresh. Wallet-consented bytes, accounts,
@@ -190,5 +227,5 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
  const fees=await Promise.all(connections.map(({connection})=>connection.getFeeForMessage(message,'finalized')))
  for(const fee of fees)check(fee.value!==null&&String(integer(fee.value))===recentBlockhash.networkFeeLamports&&integer(fee.context.slot)>=recentBlockhash.observedSlot,'Exact message fee differs')
  const finished=integer(clock());check(finished>=started&&finished-started<=Math.min(limits.maxAgeMs,d.maxAgeMs)&&finished<limits.reviewExpiresAtMs,'Collection expired')
- return Object.freeze({plan:retainedReview?Object.freeze({...plan,review:Object.freeze(retainedReview)}):plan,settlementContext:{schema:open?'repoing/open-launch-settlement-context/1':'repoing/max-wallet-launch-settlement-context/1',configurationSha256:sha(JSON.stringify(c)),compilationInput},configurationSha256:sha(JSON.stringify(c)),observedAdmin:lc.admin.toBase58(),profileSha256:c.profileSha256,approvalReference:c.approvalReference,collection:{startedAtMs:started,finishedAtMs:finished,providers:[...profile.providers],feeQuotedByBoth:true},canSign:false,canSubmit:false})
+ return Object.freeze({plan:retainedReview?Object.freeze({...plan,review:Object.freeze(retainedReview)}):plan,settlementContext:{schema:open?'repoing/open-launch-settlement-context/1':'repoing/max-wallet-launch-settlement-context/1',configurationSha256:sha(JSON.stringify(c)),compilationInput,...(selectedAuthorityEvidence?{selectedAuthorityEvidence}:{})},configurationSha256:sha(JSON.stringify(c)),observedAdmin:lc.admin.toBase58(),profileSha256:c.profileSha256,approvalReference:c.approvalReference,collection:{startedAtMs:started,finishedAtMs:finished,providers:[...profile.providers],feeQuotedByBoth:true},canSign:false,canSubmit:false})
 }

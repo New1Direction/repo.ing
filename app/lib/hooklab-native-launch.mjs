@@ -13,10 +13,13 @@ import { usdLaunchPricingEnabled } from '../../src/hooklab-launch-pricing.mjs'
 import { openLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
 import { launchPriceAtInvite } from './hooklab-launch-price.mjs'
 import { selectedHookSchema, refuseUnsupportedSelectedHook } from '../../src/hooklab-selected-hook.mjs'
+import { hookPublicationSelectionSchema } from '../../src/hooklab-hook-catalog.mjs'
+import { selectedHookPreparationRequestSchema as preparationSchema } from '../../src/hooklab-selected-hook-preparation.mjs'
+import { selectedHookEconomics } from './hooklab-native-launch-form.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 const inputSchema=z.discriminatedUnion('action',[
- z.object({action:z.literal('reserve'),operationId:uuid,capBps:z.number().int().min(0).max(9999),selectedHook:selectedHookSchema.optional(),label:text(32).min(1),name:text(32).min(1),symbol:text(10).min(1),uri:text(200),virtualQuote:z.string().regex(/^(0|[1-9][0-9]*)$/).max(20),creatorFeeBps:z.number().int().min(0).max(9999)}).strict().refine(x=>x.selectedHook?x.capBps===0:x.capBps>0,'Selected hooks cannot claim a max-wallet cap'),
- z.object({action:z.literal('review'),operationId:uuid,signingId:uuid,stage:z.enum(['preparation','launch'])}).strict(),
+ z.object({action:z.literal('reserve'),operationId:uuid,capBps:z.number().int().min(0).max(9999),selectedHook:selectedHookSchema.optional(),hookPublication:hookPublicationSelectionSchema.optional(),quoteCut:preparationSchema.shape.quoteCut,authorShareBps:preparationSchema.shape.authorShareBps,rules:preparationSchema.shape.rules.optional(),label:text(32).min(1),name:text(32).min(1),symbol:text(10).min(1),uri:text(200),virtualQuote:z.string().regex(/^(0|[1-9][0-9]*)$/).max(20),creatorFeeBps:z.number().int().min(0).max(9999)}).strict().refine(x=>x.selectedHook?x.capBps===0:x.capBps>0&&x.quoteCut===undefined&&x.authorShareBps===undefined&&x.rules===undefined,'Selected hooks cannot claim a max-wallet cap'),
+ z.object({action:z.literal('review'),operationId:uuid,signingId:uuid,stage:z.enum(['hook-setup','preparation','launch'])}).strict(),
  z.object({action:z.enum(['get','refresh-review','wallet-request','cosign','submit','reconcile','expire']),signingId:uuid}).strict(),
  z.object({action:z.literal('retain-wallet'),signingId:uuid,signedTransactionBase64:z.string().max(1644)}).strict(),
 ])
@@ -44,7 +47,7 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
    if(new URL(request.url).search)return reply({error:'Query parameters unavailable.'},400)
    if(request.headers.get('content-type')?.split(';')[0].trim()!=='application/json')return reply({error:'JSON required.'},415)
    const token=walletIdentitySessionToken(request);if(!token)return reply({error:'Sign in with your wallet first.'},401)
-   let input;try{input=inputSchema.parse(JSON.parse((await readLimitedBody(request,8192)).toString('utf8')))}catch{return reply({error:'Invalid launcher request.'},400)}
+   let input;try{input=inputSchema.parse(JSON.parse((await readLimitedBody(request,65536)).toString('utf8')))}catch{return reply({error:'Invalid launcher request.'},400)}
    pool=database(config)
    const observing=input.action==='get'||input.action==='reconcile'
    if(!await quota(pool,[[`native-launch:${observing?'observe':'action'}:${clientAddress(request)??'unknown'}`,observing?120:30]]))return reply({error:'Too many requests. Try again later.'},429)
@@ -67,12 +70,12 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
     try{pricing=await launchPrice()}catch(error){return reply({error:error?.code==='LAUNCH_PRICE_REFUSED'?error.message:'The SOL price is unavailable right now. Try again in a minute.'},409)}
     if(BigInt(pricing.virtualQuote)<BigInt(chain.minVirtualQuote)||BigInt(pricing.virtualQuote)>BigInt(chain.maxVirtualQuote))return reply({error:'At today\'s SOL price the opening price is outside what the launch program accepts. Try again later.'},409)
     const approvals=ownerApprovals(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing:true,openLaunches:true,selectedHooksEnabled:service.selectedHooksEnabled===true}),db=await pool.connect()
-    try{await db.query('begin');const bound=await approvals.bindOpenLaunch(db,owner.wallet,input.operationId,{name:input.name,symbol:input.symbol,uri:input.uri,creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,...(input.selectedHook?{selectedHook:input.selectedHook}:{}),virtualQuote:pricing.virtualQuote,pricing});pricing=bound?.pricing??pricing;await db.query('commit')}
+    try{await db.query('begin');const bound=await approvals.bindOpenLaunch(db,owner.wallet,input.operationId,{name:input.name,symbol:input.symbol,uri:input.uri,creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,...(input.selectedHook?{selectedHook:input.selectedHook,hookPublication:input.hookPublication,...selectedHookEconomics(input)}:{}),virtualQuote:pricing.virtualQuote,pricing});pricing=bound?.pricing??pricing;await db.query('commit')}
     catch(error){await db.query('rollback').catch(()=>{});return reply({error:error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error.message:'Create your coin first.'},409)}
     finally{db.release()}
     const reserved=await service.reserve({sessionToken:token,owner:owner.wallet,input:{...input,virtualQuote:pricing.virtualQuote}})
     if(reserved.owner!==owner.wallet||reserved.operationId!==input.operationId)throw Error()
-    result={operationId:reserved.operationId,mint:reserved.mint,selectedConfig:reserved.selectedConfig,request:reserved.request,pricing}
+    result={operationId:reserved.operationId,mint:reserved.mint,selectedConfig:reserved.selectedConfig,request:reserved.request,...(reserved.hookSetupRequest?{hookSetupRequest:reserved.hookSetupRequest}:{}),pricing}
    }else if(input.action==='reserve'){
     if(env.HOOK_OWNER_APPROVED_LAUNCHES==='true'){
      // Owner-approved release: prepare only the exact coin the owner invited for this wallet.
@@ -84,7 +87,7 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
     }
     const reserved=await service.reserve({sessionToken:token,owner:owner.wallet,input})
     if(reserved.owner!==owner.wallet||reserved.operationId!==input.operationId)throw Error()
-    result={operationId:reserved.operationId,mint:reserved.mint,selectedConfig:reserved.selectedConfig,request:reserved.request}
+    result={operationId:reserved.operationId,mint:reserved.mint,selectedConfig:reserved.selectedConfig,request:reserved.request,...(reserved.hookSetupRequest?{hookSetupRequest:reserved.hookSetupRequest}:{})}
    }else if(input.action==='wallet-request'){result=await lifecycle.walletRequest(token,input.signingId);if(openLaunchesEnabled(env))result=customerWalletRequest(result)}
    else {
     let operation

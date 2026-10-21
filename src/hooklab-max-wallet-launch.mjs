@@ -18,8 +18,18 @@ import { NATIVE_BUILDS, nativeBuildOf } from './hooklab-native-pins.mjs'
 import { QUOTE_FORM_NATIVE, isNativeElfPin, nativeEconomicsHash } from './hooklab-native-launch.mjs'
 import { launchConfigReservedValid, parseLaunchConfigReserved } from './hooklab-launch-config-reserved.mjs'
 import { isStackProfile, profileRolesDistinct, kitOf } from './hooklab-stack.mjs'
-import { selectedHookPreparationRequestSchema } from './hooklab-selected-hook-preparation.mjs'
+import { selectedHookPreparationRequestSchema, assertSelectedAuthorityObserved, selectedHookRules, selectedHookConfigReserved, assertSelectedHookRuleBounds } from './hooklab-selected-hook-preparation.mjs'
+import { selectedHookAuthorityEvidenceSchema } from './hooklab-selected-hook-compatibility.mjs'
 import { selectedHookOpenLaunchAccounts } from './hooklab-selected-hook.mjs'
+import { hookPublicationSelectionSchema, materializePostMintHoldingOwners } from './hooklab-hook-catalog.mjs'
+import { createHolding } from './hooklab-token-holding.mjs'
+import { supplementalTableSchema, supplementalTableInstructions, assertFrozenSupplementalTable } from './hooklab-selected-launch-table.mjs'
+
+export function postMintHoldingPlan(profile, r) {
+  if (!r.postMintSetup) return []
+  return materializePostMintHoldingOwners(r.postMintSetup, r).map(owner => ({ owner,
+    address: PublicKey.findProgramAddressSync([Buffer.from('holding'), new PublicKey(r.mint).toBuffer(), new PublicKey(owner).toBuffer()], new PublicKey(profile.programs.token))[0].toBase58() }))
+}
 
 const check = (value, message) => { if (!value) throw Error(message) }
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -57,12 +67,15 @@ export const openLaunchRequestSchema = inclusiveMaxWalletPreparationRequestSchem
 // Every launch request shape: owner-approved (v1, inclusive) or open, by its schema.
 export const selectedHookPinSchema = z.object({program:key,elfSha256:digest,elfLength:number.min(4).max(10485760)}).strict()
 export const selectedHookLaunchRequestSchema = selectedHookPreparationRequestSchema.safeExtend({
+  postMintSetup:hookPublicationSelectionSchema.optional(),
+  configAuthor:key.optional(),
   schema:z.literal('repoing/selected-hook-launch-request/1'),name:byteString(32).refine(s=>s.length>0),
   symbol:byteString(10).refine(s=>s.length>0),uri:byteString(200),virtualQuote:u64,
 }).strict()
 export function launchPreparationRequest(request) {
   const r=parseMaxWalletLaunchRequest(request)
-  const value=Object.fromEntries(Object.entries(r).filter(([k])=>!['reviewer','name','symbol','uri','virtualQuote','schema'].includes(k)))
+  const value=Object.fromEntries(Object.entries(r).filter(([k])=>!['reviewer','name','symbol','uri','virtualQuote','schema','configAuthor','postMintSetup'].includes(k)))
+  if(r.configAuthor){value.creator=r.configAuthor;value.feePayer=r.configAuthor}
   return r.policyKind==='selected-hook'?selectedHookPreparationRequestSchema.parse({schema:'repoing/selected-hook-preparation-request/1',...value})
     :parseMaxWalletPreparationRequest({schema:r.policyVersion===2?'repoing/inclusive-max-wallet-preparation-request/1':'repoing/max-wallet-preparation-request/1',...value})
 }
@@ -133,24 +146,50 @@ export function compileOpenLaunchReview(input) {
   return compileLaunch(openInputSchema.parse(input), false, false, true)
 }
 const selectedInputSchema=openInputSchema.extend({request:selectedHookLaunchRequestSchema,hookPin:selectedHookPinSchema,
+  postMintHoldingRentLamports:u64.optional(),
+  supplementalTable:z.object({plan:supplementalTableSchema,snapshot:accountSchema}).strict().optional(),
+  selectedAuthorityEvidence:selectedHookAuthorityEvidenceSchema.optional(),
+  observations:z.array(inputSchema.shape.observations.element.extend({accounts:z.array(z.object({address:key,account:accountSchema.nullable()}).strict()).min(30).max(96)}).strict()).length(2),
   preparationEvidence:collectedProofSchema.extend({preparedAccountHashes:z.object({selectedConfig:digest,registry:digest}).strict()}).strict()}).strict()
 export function compileSelectedHookLaunchReview(input) {
   return compileLaunch(selectedInputSchema.parse(input),false,false,true)
 }
-function selectedAccounts(envelope,profile,r,c,accounts,hookPin) {
+function selectedAccounts(envelope,profile,r,c,accounts,hookPin,selectedAuthorityEvidence) {
   check(hookPin?.program===r.selectedHook.program,'Selected hook pin differs')
+  assertSelectedAuthorityObserved(selectedAuthorityEvidence,accounts,profile.genesisHash)
   const H=hookPin.program, data=pda(loader,kb(H))
-  return {programs:profile.programs,selectedHook:r.selectedHook,mint:r.mint,quoteMint:profile.quoteMint,
-    registry:accounts.get(pda(H,'bordrless-hook-accounts',kb(r.mint))),programAccount:accounts.get(H),programData:accounts.get(data),elfSha256:hookPin.elfSha256}
+  return {programs:profile.programs,selectedHook:r.selectedHook,mint:r.mint,quoteMint:profile.quoteMint,feeModel:r.feeModel,
+    registry:accounts.get(pda(H,'bordrless-hook-accounts',kb(r.mint))),programAccount:accounts.get(H),programData:accounts.get(data),elfSha256:hookPin.elfSha256,selectedAuthorityEvidence}
 }
-export function selectedHookLaunchInventory(envelope,request,launchConfigBytes,{accounts,hookPin}) {
+export function selectedHookLaunchInventory(envelope,request,launchConfigBytes,{accounts,hookPin,selectedAuthorityEvidence}) {
   const profile=parseMaxWalletProfile(JSON.parse(envelope.json)),r=selectedHookLaunchRequestSchema.parse(request),launch=binding(envelope,profile,'launch')
   const c=decoded(launch,'Config',Buffer.from(launchConfigBytes)),a=addressesFor(profile,r,c)
-  const selected=selectedHookOpenLaunchAccounts(selectedAccounts(envelope,profile,r,c,accounts,hookPin))
+  const selected=selectedHookOpenLaunchAccounts(selectedAccounts(envelope,profile,r,c,accounts,hookPin,selectedAuthorityEvidence))
   delete a.policy;delete a.authorization;delete a.gateProgramData;delete a.gateHookSigner
   a.registry=selected.registry;a.selectedProgramData=selected.programData;a.selectedTokenSigner=selected.tokenSigner
   const metas=exactMetas(profile,r,c,a,launch,OPEN,selected.remaining)
-  return {addresses:a,inventory:[...new Set([...metas.map(m=>str(m.pubkey)),a.launchProgramData,a.swapProgramData,a.swapGovernance,r.feePayer])].sort()}
+  return {addresses:a,inventory:[...new Set([...metas.map(m=>str(m.pubkey)),...postMintHoldingPlan(profile,r).flatMap(h=>[h.owner,h.address]),a.launchProgramData,a.swapProgramData,a.swapGovernance,r.feePayer])].sort()}
+}
+// Exactly the nonshared dependencies of this retained launch. Signers and invoked
+// programs remain static; unused observation-only pins are harmless table entries.
+export function selectedHookLaunchTableAddresses(envelope,request,configBytes,options) {
+  const profile=parseMaxWalletProfile(JSON.parse(envelope.json)),r=selectedHookLaunchRequestSchema.parse(request)
+  const excluded=new Set([...openLaunchTableAddresses(envelope,configBytes),r.creator,r.mint,r.feePayer,profile.programs.launch,profile.programs.token])
+  return selectedHookLaunchInventory(envelope,r,configBytes,options).inventory.filter(a=>!excluded.has(a))
+}
+// Pre-spend packet sizing uses the exact ABI/metas and metadata; guard values and
+// blockhashes have fixed encoded width. This is not a signing review or authority.
+export function selectedHookLaunchPacketSize(envelope,request,configBytes,options,tableAddress) {
+  const profile=parseMaxWalletProfile(JSON.parse(envelope.json)),r=selectedHookLaunchRequestSchema.parse(request),launch=binding(envelope,profile,'launch')
+  const c=decoded(launch,'Config',Buffer.from(configBytes)),selected=selectedHookOpenLaunchAccounts(selectedAccounts(envelope,profile,r,c,options.accounts,options.hookPin,options.selectedAuthorityEvidence))
+  const a=selectedHookLaunchInventory(envelope,r,configBytes,options).addresses
+  const guard={version:2,deadline_slot:bn(0),expected_launch_economics_hash:Array(32).fill(0),expected_pool_economics_hash:Array(32).fill(0),max_launch_fee_lamports:bn(0),max_pool_creation_fee_lamports:bn(0),max_rent_lamports:bn(0),max_total_debit_lamports:bn(0)}
+  const data=launch.coder.instruction.encode('create_launch_open_v1',{args:{name:r.name,symbol:r.symbol,uri:r.uri,creator_fee_bps:r.creatorFeeBps,virtual_quote:bn(r.virtualQuote),rules:selectedHookRules(r)},guard,fee_model:r.feeModel,quote_form:QUOTE_FORM_NATIVE,expected_control_hash:Array(32).fill(0),expected_hook_accounts_hash:Array(32).fill(0)})
+  const table=(address,addresses)=>new AddressLookupTableAccount({key:pk(address),state:{deactivationSlot:0xffffffffffffffffn,lastExtendedSlot:0,lastExtendedSlotStartIndex:0,authority:undefined,addresses:addresses.map(pk)}})
+  const tables=[table(str(pk(hash('hooklab:size-only-shared-table'))),openLaunchTableAddresses(envelope,configBytes)),table(tableAddress,selectedHookLaunchTableAddresses(envelope,r,configBytes,options))]
+  const message=new TransactionMessage({payerKey:pk(r.creator),recentBlockhash:zero,instructions:[ComputeBudgetProgram.setComputeUnitLimit({units:1400000}),ComputeBudgetProgram.setComputeUnitPrice({microLamports:0n}),
+    new TransactionInstruction({programId:pk(profile.programs.launch),keys:exactMetas(profile,r,c,a,launch,OPEN,selected.remaining),data}),...postMintHoldingPlan(profile,r).map(h=>createHolding(profile.programs,{payer:r.creator,mint:r.mint,owner:h.owner}))]}).compileToV0Message(tables)
+  return 1+64*message.header.numRequiredSignatures+message.serialize().length
 }
 export function openLaunchInventory(envelope, request, launchConfigBytes) {
   const profile = parseMaxWalletProfile(JSON.parse(envelope.json)), r = openLaunchRequestSchema.parse(request), launch = binding(envelope, profile, 'launch')
@@ -295,6 +334,8 @@ function compileLaunch(input, fixture, canary = false, open = false) {
   const launch = binding(envelope, profile, 'launch'), swap = binding(envelope, profile, 'swap'), gate = binding(envelope, profile, 'gate')
   const inclusive=r.policyVersion===2
   const selectedBranch=r.policyKind==='selected-hook'
+  const feeModel=selectedBranch?r.feeModel:inclusive?2:1, inclusivePolicy=inclusive&&feeModel===2
+  if(selectedBranch && feeModel===2)check(!r.quoteCut && isDeepStrictEqual(selectedHookRules(r),noRules) && ((r.configAuthor??r.creator)===r.creator || !r.authorShareBps), 'Inclusive launch does not support cut, burn rules or author attribution')
   // An open launch offers the fees on the chain's menu (checked below); every other launch, the reviewed profile's menu.
   check(inclusive === (profile.buildFeature==='inclusive-fees-candidate') && (!inclusive || open || approvedCreatorFees(profile).includes(r.creatorFeeBps)) && (!open || inclusive), 'Compiler family or explicit fee differs')
   const prep = selectedBranch?launchPreparationRequest(r):parseMaxWalletPreparationRequest({ schema: inclusive?'repoing/inclusive-max-wallet-preparation-request/1':'repoing/max-wallet-preparation-request/1', policyKind: r.policyKind, policyVersion: r.policyVersion, creator: r.creator, feePayer: r.feePayer,
@@ -334,25 +375,31 @@ function compileLaunch(input, fixture, canary = false, open = false) {
   const instructionName = open ? OPEN : inclusive ? (native ? 'create_launch_custom_v4' : 'create_launch_custom_v3') : 'create_launch_custom_mainnet'
   check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury) && (open || str(c.admin) === r.reviewer), 'Current admin, treasury or quote differs')
   if (canary) check(str(c.admin) === str(d.admin), 'Canary requires the existing shared admin role')
-  const selectedInput=selectedBranch?selectedAccounts(envelope,profile,r,c,accounts,input.hookPin):null
+  const selectedInput=selectedBranch?selectedAccounts(envelope,profile,r,c,accounts,input.hookPin,input.selectedAuthorityEvidence):null
   const selectedPlan=selectedBranch?selectedHookOpenLaunchAccounts(selectedInput):null
-  const a = selectedBranch?selectedHookLaunchInventory(envelope,r,raw(accounts.get(pda(L,'config')).dataBase64,250),{accounts,hookPin:input.hookPin}).addresses:addressesFor(profile, r, c)
+  const a = selectedBranch?selectedHookLaunchInventory(envelope,r,raw(accounts.get(pda(L,'config')).dataBase64,250),{accounts,hookPin:input.hookPin,selectedAuthorityEvidence:input.selectedAuthorityEvidence}).addresses:addressesFor(profile, r, c)
   const metas = exactMetas(profile, r, c, a, launch, instructionName,selectedPlan?.remaining)
-  const inventory = [...new Set([...metas.map(m => str(m.pubkey)), a.launchProgramData, a.swapProgramData, a.swapGovernance, r.feePayer])].sort()
+  const holdings = postMintHoldingPlan(profile,r)
+  const postInstructions = holdings.map(h=>createHolding(profile.programs,{payer:r.creator,mint:r.mint,owner:h.owner}))
+  const inventory = [...new Set([...metas.map(m => str(m.pubkey)),...holdings.flatMap(h=>[h.owner,h.address]), a.launchProgramData, a.swapProgramData, a.swapGovernance, r.feePayer])].sort()
+  for(const h of holdings)check(accounts.get(h.address)===null && ![...Object.values(a),r.mint,r.selectedConfig,...Object.values(profile.programs)].includes(h.address),'Post-mint holding must be an independent absent target')
+  const holdingRent=BigInt(input.postMintHoldingRentLamports??'0')*BigInt(holdings.length)
+  check(!holdings.length || holdingRent>0n && holdingRent<BigInt(l.maxRentLamports),'Explicit observed post-mint holding rent required within cap')
   check(isDeepStrictEqual([...accounts.keys()].sort(), inventory), 'Incomplete or extra launch inventory')
   const reviewer = open ? [] : [r.reviewer]
   const roles = [...Object.values(a), ...Object.values(profile.programs), profile.quoteMint, zero, r.creator, r.mint, r.selectedConfig, ...reviewer, str(c.treasury)]
   check(new Set(roles).size === roles.length && (r.feePayer === r.creator || !roles.includes(r.feePayer)), 'Launch roles alias')
   if(selectedBranch)check(![...roles,kitOf(profile)].includes(input.hookPin.program)
-    && selectedPlan.extras.every(m=>!roles.includes(m.address)&&m.address!==input.hookPin.program),'Selected hook or extras alias launch roles')
+    && selectedPlan.extras.every(m=>!roles.includes(m.address)&&m.address!==input.hookPin.program
+      && !selectedPlan.authorityAccounts.some(a=>a.address===m.address)),'Selected hook or extras alias launch roles')
   check([r.creator, r.feePayer, r.mint, r.selectedConfig, ...reviewer].every(k => PublicKey.isOnCurve(kb(k))), 'Required signer identity cannot be a PDA')
   check(!lookupTable || ![...inventory, ...roles, ComputeBudgetProgram.programId.toBase58()].includes(lookupTable.address), 'Lookup table aliases a launch role')
   for (const o of observations) for (const role of selectedBranch?['launch','swap']:['launch', 'swap', 'gate']) programEvidence(accounts, profile.programs[role], profile.elfSha256[role], envelope.elfLengths[role], o.slot, role === 'gate')
-  if(selectedBranch)for(const o of observations){programEvidence(accounts,input.hookPin.program,input.hookPin.elfSha256,input.hookPin.elfLength,o.slot,true);check(raw(accounts.get(a.selectedProgramData).dataBase64,10485805).length===45+input.hookPin.elfLength,'Selected program allocation differs')}
+  if(selectedBranch)for(const o of observations){programEvidence(accounts,input.hookPin.program,input.hookPin.elfSha256,input.hookPin.elfLength,o.slot,input.selectedAuthorityEvidence?.authority.kind!=='timelocked');check(raw(accounts.get(a.selectedProgramData).dataBase64,10485805).length===45+input.hookPin.elfLength,'Selected program allocation differs')}
   const tokenProgram = accounts.get(T), tokenBytes = tokenProgram && raw(tokenProgram.dataBase64, 36)
   check(tokenProgram?.owner === loader && tokenProgram.executable && tokenBytes.length === 36 && tokenBytes.readUInt32LE() === 2
     && tokenBytes.subarray(4).equals(kb(pda(loader, kb(T)))), 'Token ProgramData linkage differs')
-  for (const name of ['launch', 'pool', 'lpMint', 'launchReserve', 'launchQuote', 'poolRegistry', 'baseVault', 'quoteVault', 'launchLp',...(inclusive?['inclusiveFeePolicy']:[])]) check(accounts.get(a[name]) === null, 'Launch target already exists; reconcile, do not retry')
+  for (const name of ['launch', 'pool', 'lpMint', 'launchReserve', 'launchQuote', 'poolRegistry', 'baseVault', 'quoteVault', 'launchLp',...(inclusivePolicy?['inclusiveFeePolicy']:[])]) check(accounts.get(a[name]) === null, 'Launch target already exists; reconcile, do not retry')
   for (const address of new Set([r.creator, r.feePayer, ...reviewer, r.mint, str(c.treasury)])) {
     const account = accounts.get(address)
     check((address === r.mint && account === null) || account && account.owner === zero && !account.executable && raw(account.dataBase64, 0).length === 0, 'Signer, treasury or future mint is not an empty system account')
@@ -367,9 +414,10 @@ function compileLaunch(input, fixture, canary = false, open = false) {
   const canonicalRegistry = Buffer.concat([Buffer.from('02daf6662c38c0cd01020000000000', 'hex'), kb(a.policy), Buffer.from([0, 0]), kb(a.launch)])
   check(registryBytes.equals(canonicalRegistry), 'Registry must contain exactly two literal read-only canonical policy and launch entries')
   }
-  check(selected.version === 1 && str(selected.creator) === r.creator && selected.custom_hook && str(selected.custom_hook) === (selectedBranch?r.selectedHook.program:G)
-    && selected.creator_fee_bps === r.creatorFeeBps && selected.author_share_bps === 0 && selected.custom_hook_flags === (selectedBranch?r.hookFlags:1)
-    && selected.label === r.label && selected.reserved.every(v => v === 0) && isDeepStrictEqual(selected.rules, noRules), 'Prepared selected configuration differs')
+  if(selectedBranch)assertSelectedHookRuleBounds(r,c)
+  check(selected.version === 1 && str(selected.creator) === (r.configAuthor ?? r.creator) && selected.custom_hook && str(selected.custom_hook) === (selectedBranch?r.selectedHook.program:G)
+    && selected.creator_fee_bps === r.creatorFeeBps && selected.author_share_bps === (r.authorShareBps ?? 0) && selected.custom_hook_flags === (selectedBranch?r.hookFlags:1)
+    && selected.label === r.label && isDeepStrictEqual(selected.reserved, selectedHookConfigReserved(r, selectedBranch && input.selectedAuthorityEvidence?.authority.kind==='timelocked')) && isDeepStrictEqual(selected.rules, selectedBranch ? selectedHookRules(r) : noRules), 'Prepared selected configuration differs')
   if(inclusive)check((selectedBranch || policy.fee_model===2 && policy.protocol_share_bps===2500 && policy.creator_fee_bps===r.creatorFeeBps)
     && c.lp_fee_bps===0 && n(c.sniper_window_secs)===0n && c.sniper_start_bps===0 && d.protocol_fee_bps===0
     && d.launch_protocol_share_bps===2500 && r.creatorFeeBps<=c.max_creator_fee_bps, 'Inclusive fee policy or economics differs')
@@ -417,10 +465,11 @@ function compileLaunch(input, fixture, canary = false, open = false) {
   let launchEconomics = hash('hook-lab:create-launch-economics:v2', kb(L), kb(a.launchConfig), enc(c.version, 1), kb(c.admin), kb(c.treasury), kb(c.quote_mint),
     enc(c.launch_fee_lamports, 8), enc(c.lp_fee_bps, 2), enc(c.max_creator_fee_bps, 2), enc(c.sniper_window_secs, 8, true), enc(c.sniper_start_bps, 2), enc(c.curve_bps, 2),
     enc(c.supply, 8), enc(c.decimals, 1), enc(c.min_virtual_quote, 8), enc(c.max_virtual_quote, 8), launch.coder.types.encode('RuleBounds', c.rule_bounds),
-    enc(1, 1), kb(r.selectedConfig), enc(selected.version, 1), kb(selected.creator), launch.coder.types.encode('LaunchRules', selected.rules), enc(r.creatorFeeBps, 2), enc(1, 1), kb(selectedBranch?r.selectedHook.program:G), enc(r.hookFlags, 2), enc(0, 2), enc(0, 1))
+    enc(1, 1), kb(r.selectedConfig), enc(selected.version, 1), kb(selected.creator), launch.coder.types.encode('LaunchRules', selected.rules), enc(r.creatorFeeBps, 2), enc(1, 1), kb(selectedBranch?r.selectedHook.program:G), enc(r.hookFlags, 2), enc(str(selected.creator)===r.creator?0:Math.min(selected.author_share_bps,5000), 2), enc(selected.reserved[0]===1?1:0, 1))
+  if(selectedBranch && r.quoteCut)launchEconomics=hash('hook-lab:create-launch-quote-cut:v1',launchEconomics,kb(r.creator),kb(r.selectedConfig),enc(1,1),kb(r.selectedHook.program),kb(selected.creator),enc(r.quoteCut.maxBuyBps,2),enc(r.quoteCut.maxSellBps,2))
   let poolEconomics = hash('hook-lab:create-pool-economics:v2', kb(S), kb(a.swapConfig), enc(d.version, 1), kb(d.admin), kb(d.treasury), kb(d.fee_collector),
     enc(d.pool_creation_fee_lamports, 8), enc(d.protocol_fee_bps, 2), enc(d.launch_protocol_share_bps, 2))
-  if(inclusive){launchEconomics=inclusiveEconomicsHash('launch',launchEconomics);poolEconomics=inclusiveEconomicsHash('pool',poolEconomics)}
+  if(inclusive){launchEconomics=inclusiveEconomicsHash('launch',launchEconomics,feeModel);poolEconomics=inclusiveEconomicsHash('pool',poolEconomics,feeModel)}
   if(native){launchEconomics=nativeEconomicsHash('launch',launchEconomics);poolEconomics=nativeEconomicsHash('pool',poolEconomics)}
   const control = open ? hash('hook-lab:open-creation-controls:v1', kb(L), launchGov)
     : hash('hook-lab:mainnet-creation-controls:v1', kb(L), launchGov, hash('hook-lab:creator-authorization:v1', kb(L), kb(r.creator), enc(1, 1), enc(auth.expires_at_slot, 8), enc(auth.max_launches, 8), enc(auth.revision, 8)))
@@ -428,9 +477,9 @@ function compileLaunch(input, fixture, canary = false, open = false) {
     kb(a.policy), kb(G), enc(policyBytes.length, 4), policyBytes, kb(a.launch), kb(L))
   if(inclusive&&!selectedBranch)hookAccounts=inclusiveHookAccountsHash({program:G,registry:{address:a.registry,owner:G,data:registryBytes},policy:{address:a.policy,owner:G,data:policyBytes},launch:{address:a.launch,owner:L}})
   const guard = { version: 2, deadline_slot: bn(l.validUntilSlot), expected_launch_economics_hash: [...launchEconomics], expected_pool_economics_hash: [...poolEconomics],
-    max_launch_fee_lamports: bn(l.maxLaunchFeeLamports), max_pool_creation_fee_lamports: bn(l.maxPoolCreationFeeLamports), max_rent_lamports: bn(l.maxRentLamports), max_total_debit_lamports: bn(l.maxInstructionDebitLamports) }
-  const data = launch.coder.instruction.encode(selectedBranch?'create_launch_open_v1':open ? 'create_launch_custom_v4' : instructionName, { args: { name: r.name, symbol: r.symbol, uri: r.uri, creator_fee_bps: r.creatorFeeBps, virtual_quote: bn(r.virtualQuote), rules: noRules },
-    guard, ...(inclusive?{fee_model:2}:{}), ...(native?{quote_form:QUOTE_FORM_NATIVE}:{}), expected_control_hash: [...control], expected_hook_accounts_hash: [...hookAccounts] })
+    max_launch_fee_lamports: bn(l.maxLaunchFeeLamports), max_pool_creation_fee_lamports: bn(l.maxPoolCreationFeeLamports), max_rent_lamports: bn(BigInt(l.maxRentLamports)-holdingRent), max_total_debit_lamports: bn(BigInt(l.maxInstructionDebitLamports)-holdingRent) }
+  const data = launch.coder.instruction.encode(selectedBranch?'create_launch_open_v1':open ? 'create_launch_custom_v4' : instructionName, { args: { name: r.name, symbol: r.symbol, uri: r.uri, creator_fee_bps: r.creatorFeeBps, virtual_quote: bn(r.virtualQuote), rules: selectedBranch ? selectedHookRules(r) : noRules },
+    guard, ...(inclusive?{fee_model:feeModel}:{}), ...(native?{quote_form:QUOTE_FORM_NATIVE}:{}), expected_control_hash: [...control], expected_hook_accounts_hash: [...hookAccounts] })
   if (open) OPEN_LAUNCH_DISCRIMINATOR.copy(data, 0)   // v4's argument encoding under the open instruction's discriminator
   const instruction = new TransactionInstruction({ programId: pk(L), keys: metas, data })
   const tables = lookupTable ? [new AddressLookupTableAccount({ key: pk(lookupTable.address), state: AddressLookupTableAccount.deserialize(raw(lookupTable.dataBase64, 16384)) })] : []
@@ -439,12 +488,21 @@ function compileLaunch(input, fixture, canary = false, open = false) {
     check(sha(b) === lookupTable.sha256 && b.length >= 56 && b.length <= 8248 && state.addresses.length <= 256 && (b.length - 56) % 32 === 0 && b.readUInt32LE() === 1 && [0, 1].includes(b[21])
       && (b[21] === 1 ? b.subarray(54, 56).every(v => v === 0) : b.subarray(22, 56).every(v => v === 0))
       && state.lastExtendedSlotStartIndex <= state.addresses.length && new Set(state.addresses.map(str)).size === state.addresses.length, 'Lookup table hash, canonical state or addresses differ')
-    // An open launch uses only the owner's shared launch table: frozen, active, exactly the constant addresses.
+    // Preserve the shared table's exact constant inventory; dynamic addresses use
+    // a separate creator-funded table finalized in hook setup.
     if (open) check(b[21] === 0 && state.deactivationSlot === 0xffffffffffffffffn && isDeepStrictEqual(state.addresses.map(str), openTableFor(profile, c, launch)), 'Lookup table is not the frozen shared launch table')
   }
+  const supplemental=input.supplementalTable
+  if(supplemental){
+    check(selectedBranch && ![...inventory,...roles,lookupTable.address,ComputeBudgetProgram.programId.toBase58()].includes(supplemental.plan.address),'Supplemental table aliases a launch role')
+    supplementalTableInstructions(r.creator,supplemental.plan)
+    check(isDeepStrictEqual(supplemental.plan.addresses,selectedHookLaunchTableAddresses(envelope,r,raw(accounts.get(a.launchConfig).dataBase64,250),{accounts,hookPin:input.hookPin,selectedAuthorityEvidence:input.selectedAuthorityEvidence})),'Supplemental table launch dependencies changed')
+    const state=assertFrozenSupplementalTable(supplemental.snapshot,supplemental.plan,Math.min(...observations.map(o=>o.slot)),{warmed:true})
+    tables.push(new AddressLookupTableAccount({key:pk(supplemental.plan.address),state}))
+  }
   const message = new TransactionMessage({ payerKey: pk(r.feePayer), recentBlockhash: bh.blockhash, instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units: l.computeUnitLimit }),
-    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: BigInt(l.computeUnitPriceMicroLamports) }), instruction] }).compileToV0Message(tables)
-  check(!lookupTable || message.addressTableLookups.length === 1, 'Unused lookup table')
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: BigInt(l.computeUnitPriceMicroLamports) }), instruction,...postInstructions] }).compileToV0Message(tables)
+  check(message.addressTableLookups.length === tables.length, 'Unused lookup table')
   const keys = message.getAccountKeys({ addressLookupTableAccounts: tables }), bytes = message.serialize()
   if (open) check(1 + 64 * message.header.numRequiredSignatures + bytes.length <= 1232, 'Launch transaction exceeds the 1232-byte packet limit; shorten the coin URI')
   const priority = (BigInt(l.computeUnitLimit) * BigInt(l.computeUnitPriceMicroLamports) + 999999n) / 1000000n
@@ -453,11 +511,12 @@ function compileLaunch(input, fixture, canary = false, open = false) {
     policySha256: sha(JSON.stringify({ proof, reviewedStateHashes, observations })), intentSha256: sha(JSON.stringify(r)), payer: r.feePayer, wallet: r.creator,
     messageBase64: Buffer.from(bytes).toString('base64'), messageSha256: sha(bytes), requiredSigners: message.staticAccountKeys.slice(0, message.header.numRequiredSignatures).map(str),
     accounts: Array.from({ length: keys.length }, (_, i) => ({ address: str(keys.get(i)), signer: message.isAccountSigner(i), writable: message.isAccountWritable(i) })),
-    lookupTables: lookupTable ? [lookupTable] : [], observedSlot: slot, validUntilSlot: l.validUntilSlot, observedAtMs: l.nowMs, reviewExpiresAtMs: l.reviewExpiresAtMs,
+    lookupTables: [...(lookupTable ? [lookupTable] : []),...(supplemental?[{address:supplemental.snapshot.address,owner:supplemental.snapshot.owner,dataBase64:supplemental.snapshot.dataBase64,sha256:sha(raw(supplemental.snapshot.dataBase64,8248))}]:[])], observedSlot: slot, validUntilSlot: l.validUntilSlot, observedAtMs: l.nowMs, reviewExpiresAtMs: l.reviewExpiresAtMs,
     lastValidBlockHeight: bh.lastValidBlockHeight, baseFeeLamports: String(BigInt(bh.networkFeeLamports) - priority), maxFeeLamports: l.maxNetworkFeeLamports,
     instructionDebitLamports: l.maxInstructionDebitLamports, maxNativeDebitLamports: l.maxTotalDebitLamports }
-  const inspected = inspectHookLabMessage(review), wantSigners = new Set([r.creator, r.feePayer, r.mint, ...reviewer]), wantWritable = new Set([r.feePayer, ...metas.filter(m => m.isWritable).map(m => str(m.pubkey))])
-  check(inspected.instructions.length === 3 && review.accounts.every(a => a.signer === wantSigners.has(a.address) && a.writable === wantWritable.has(a.address)), 'Compiled launch privileges differ')
+  const inspected = inspectHookLabMessage(review), wantSigners = new Set([r.creator, r.feePayer, r.mint, ...reviewer]), wantWritable = new Set([r.feePayer, ...metas.filter(m => m.isWritable).map(m => str(m.pubkey)),...holdings.map(h=>h.address)])
+  check(inspected.instructions.length === 3+holdings.length && review.accounts.every(a => a.signer === wantSigners.has(a.address) && a.writable === wantWritable.has(a.address)), 'Compiled launch privileges differ')
+  postInstructions.forEach((ix,j)=>check(isDeepStrictEqual(inspected.instructions[3+j],{program:T,dataHex:ix.data.toString('hex'),accounts:ix.keys.map(m=>review.accounts.find(a=>a.address===str(m.pubkey)))}),'Post-mint instruction differs'))
   const canonicalInstruction = { program: L, dataHex: data.toString('hex'), accounts: metas.map(m => ({ address: str(m.pubkey), signer: m.isSigner, writable: m.isWritable })) }
   // Launch appears twice: declared writable as the target and read-only as a registry literal.
   // Solana compiles their privilege union; this is expected and never widens Policy/registry.
@@ -465,8 +524,9 @@ function compileLaunch(input, fixture, canary = false, open = false) {
   check(isDeepStrictEqual(inspected.instructions[2], effective), 'Effective instruction metas differ from canonical max-wallet launch policy')
   return freeze({ schema: canary ? 'repoing/canary-max-wallet-launch-review/1' : open ? 'repoing/open-launch-review/1' : 'repoing/max-wallet-launch-review/1', status: fixture ? 'offline-synthetic-review-only' : 'unauthenticated-deterministic-review-only', provenance: fixture ? proof.provenance : 'compiler-inputs-not-authority', sourceCommit: profile.sourceCommit,
     sourcePatchSha256: profile.sourcePatchSha256, releaseProfileSha256: envelope.expectedSha256, request: r, addresses: a, review, canonicalInstruction, instructions: inspected.instructions,
-    ...(selectedBranch?{selectedHookExtras:selectedPlan.extras}:{}),
-    policyKind: r.policyKind, policyVersion: r.policyVersion, ...(inclusive?{feeModel:2,protocolShareBps:2500,creatorFeeBps:r.creatorFeeBps}:{}), ...(native?{quoteForm:QUOTE_FORM_NATIVE}:{}), policy: selectedBranch?{capBps:0,hook:r.selectedHook.program,flags:r.hookFlags}:{ initialSupply: n(policy.initial_supply).toString(), capBps: policy.cap_bps,
+    ...(holdings.length?{postMintHoldings:holdings}:{}),
+    ...(selectedBranch?{selectedHookExtras:selectedPlan.extras,...(input.selectedAuthorityEvidence?{selectedAuthorityEvidence:input.selectedAuthorityEvidence}:{})}:{}),
+    policyKind: r.policyKind, policyVersion: r.policyVersion, ...(inclusive?{feeModel,protocolShareBps:2500,creatorFeeBps:r.creatorFeeBps}:{}), ...(native?{quoteForm:QUOTE_FORM_NATIVE}:{}), policy: selectedBranch?{capBps:0,hook:r.selectedHook.program,flags:r.hookFlags}:{ initialSupply: n(policy.initial_supply).toString(), capBps: policy.cap_bps,
       capRaw: (n(policy.initial_supply) * BigInt(policy.cap_bps) / 10000n).toString(), endsAt: 'authenticated-graduation', poolExemption: 'canonical-pool-only' },
     commitments: { launchEconomics: launchEconomics.toString('hex'), poolEconomics: poolEconomics.toString('hex'), launchGovernance: launchGov.toString('hex'),
       swapGovernance: swapGov.toString('hex'), creationControl: control.toString('hex'), hookAccounts: hookAccounts.toString('hex') },

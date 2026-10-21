@@ -70,13 +70,18 @@ test('the coin page carries each state into the Blocks and the trade panel', asy
   assert.match(graduated, /Graduated/); assert.match(graduated, /Lifted at graduation/); assert.doesNotMatch(graduated, /until graduation|Max 2% per wallet/)
   assert.match(graduated, /No max per wallet · 1% creator fee/); assert.match(before, /Max 2% per wallet · 1% creator fee/)
   assert.match(graduated, /has graduated to its open market\. Trading it on repo\.ing opens again soon/)
+  assert.match(before, /75% to the creator, 25% to repo\.ing/)
   for (const market of Object.values(markets)) {
-    const selected = { ...market, policyKind: 'selected-hook', capBps: 0,
+    const selected = { ...market, policyKind: 'selected-hook', feeModel: 1, protocolShareBps: 2500, capBps: 0,
       selectedHook: { program: mint, flags: 3 } }
     delete selected.capRaw
     const shown = await render(selected)
-    assert.match(shown, /Custom hook · No max-wallet gate/)
+    assert.match(shown, /Custom hook · Wallet limits set by hook/)
+    assert.doesNotMatch(shown, /No wallet holding limit/)
     assert.match(shown, /selected hook remains active/i)
+    assert.match(shown, /Creator revenue is 1% before configured author share/)
+    assert.match(shown, /protocol share is charged separately/)
+    assert.doesNotMatch(shown, /75% to the creator, 25% to repo\.ing/)
     assert.doesNotMatch(shown, /Max 0%|Max wallet lifted|max per wallet lifts|no wallet can hold more|any wallet can hold any amount/i)
   }
 })

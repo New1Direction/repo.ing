@@ -10,7 +10,7 @@
 // a recorded policy change.
 import { isDeepStrictEqual } from 'node:util'
 import BN from 'bn.js'
-import { derivedAddresses, LOADER, pk } from '../pins.mjs'
+import { derivedAddresses, LOADER, pk, pda, kb } from '../pins.mjs'
 import { value } from '../config.mjs'
 import { readAccounts, rentExemption } from '../rpc.mjs'
 import { plain, sol } from '../preview.mjs'
@@ -169,15 +169,15 @@ export const collectNative = {
     const mint = ctx.options?.mint
     check(typeof mint === 'string' && pk(mint).toBase58() === mint, 'collect-native requires --mint MINT (the coin whose platform fees to collect)')
     const d = derivedAddresses(ctx.programs, ctx.quoteMint), S = ctx.programs.swap
-    const instruction = ixOf(ctx).collectProtocolFeesNative(ctx.programs, ctx.quoteMint, { cranker: ctx.roles.payer, mint, collector: ctx.roles.treasury })
-    const pool = instruction.keys[2].pubkey.toBase58(), policy = instruction.keys[6].pubkey.toBase58()
+    const pool = pda(S, 'pool', kb(mint), kb(ctx.quoteMint), Buffer.alloc(2), kb(ctx.programs.launch)), policy = pda(S, 'inclusive-fee-policy', kb(pool))
     check(abiOf(ctx).idls.swap.instructions.some(ix => ix.name === 'collect_protocol_fees_native'), 'The stack\'s swap build has no collect_protocol_fees_native')
     const snapshot = await readAccounts(ctx.readers, ctx.genesis, [d.swapConfig, pool, policy, ctx.roles.payer, ctx.roles.treasury])
     const config = cdecode(ctx, 'swap', 'Config', owned(snapshot.accounts, d.swapConfig, S, 'swap config'))
     check(config.fee_collector.toBase58() === ctx.roles.treasury, 'The swap Config\'s fee collector is not the treasury role')
     const p = cdecode(ctx, 'swap', 'Pool', owned(snapshot.accounts, pool, S, 'pool'))
     check(p.base_mint.toBase58() === mint && p.quote_mint.toBase58() === ctx.quoteMint, 'Pool binding differs')
-    owned(snapshot.accounts, policy, S, 'inclusive fee policy')
+    const instruction = ixOf(ctx).collectProtocolFeesNative(ctx.programs, ctx.quoteMint, { cranker: ctx.roles.payer, mint, collector: ctx.roles.treasury, feeModel: p.fee_model })
+    if (p.fee_model === 2) owned(snapshot.accounts, policy, S, 'inclusive fee policy')
     const owed = BigInt(p.protocol_fees_quote.toString())
     if (owed === 0n) return { blocked: `nothing to collect: pool ${pool} holds no platform fees`, observedSlot: snapshot.slot }
     const { review, blockhash } = await simpleMessage(ctx, { stage: 'collect-native', payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot, units: 100000 })

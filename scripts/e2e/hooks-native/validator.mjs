@@ -19,14 +19,14 @@ export async function startValidator({ root, roles, set, own = null, log }) {
   const base = await freePortRange(48), rpcPort = base, faucetPort = base + 2, gossipPort = base + 3
   const ledger = path.join(root, 'ledger'), genesis = path.join(root, 'genesis'), upgrade = roles.upgrade.publicKey.toBase58()
   const extra = own ? [markerMintRow(own.stack, roles)] : []
-  if (own?.selected) {
+  for (const selected of own?.selectedHooks ?? (own?.selected ? [own.selected] : [])) {
     // Agave 4.0.1 --upgradeable-program ... none creates Some(SystemProgram),
     // not Borsh None. The selected adapter correctly requires actual None.
     // Seed genuine loader-owned immutable program accounts at local genesis.
-    const loader = 'BPFLoaderUpgradeab1e11111111111111111111111', id = own.selected.pin.program
+    const loader = 'BPFLoaderUpgradeab1e11111111111111111111111', id = selected.pin.program
     const dataAddress = PublicKey.findProgramAddressSync([new PublicKey(id).toBuffer()], new PublicKey(loader))[0]
     const program = Buffer.alloc(36); program.writeUInt32LE(2); dataAddress.toBuffer().copy(program, 4)
-    const data = Buffer.alloc(45 + own.selected.bytes.length); data.writeUInt32LE(3); own.selected.bytes.copy(data, 45)
+    const data = Buffer.alloc(45 + selected.bytes.length); data.writeUInt32LE(3); selected.bytes.copy(data, 45)
     const row = (pubkey, bytes, executable) => ({ pubkey, account: { lamports: 2_000_000_000, data: [bytes.toString('base64'), 'base64'], owner: loader, executable, rentEpoch: 0 } })
     extra.push(row(id, program, true), row(dataAddress.toBase58(), data, false))
   }

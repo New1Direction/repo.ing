@@ -5,8 +5,8 @@ import bs58 from 'bs58'
 import { fixture, key, pk } from './selected-hook-preparation.mjs'
 import { deriveCustomPreparationRecord } from '../../src/hooklab-custom-preparation-receipts.mjs'
 
-export function selectedHookPreparationReceiptFixture() {
-  const input = fixture(), record = deriveCustomPreparationRecord(input, input.profile.expectedSha256)
+export function selectedHookPreparationReceiptFixture(input = fixture()) {
+  const record = deriveCustomPreparationRecord(input, input.profile.expectedSha256)
   const tx = new VersionedTransaction(VersionedMessage.deserialize(Buffer.from(record.plan.review.messageBase64, 'base64')))
   tx.sign([31, 33].map(n => Keypair.fromSeed(Buffer.alloc(32, n))))
   const signedTransactionBase64 = Buffer.from(tx.serialize()).toString('base64')
@@ -23,7 +23,7 @@ export function selectedHookPreparationReceiptFixture() {
     programSnapshot: { slot: 120, commitment: 'finalized', accounts: ['launch', 'hook', 'launchProgramData', 'hookProgramData'].map(role => {
       const e = input.observations[0].accounts.find(a => a.address === record.plan.addresses[role]).account
       return state(role, e)
-    }) }, absenceSnapshot: { slot: 120, commitment: 'finalized', accounts: record.expectedAbsent.map(address => ({ address, exists: false })) } }))
+    }).concat(input.selectedAuthorityEvidence?.authority.kind==='timelocked'?['timelock','executor','executorProgramData'].map(role=>state(role,input.selectedAuthorityEvidence.authority[role])):[]) }, absenceSnapshot: { slot: 120, commitment: 'finalized', accounts: record.expectedAbsent.map(address => ({ address, exists: false })) } }))
   return { preparationInput: input, expectedProfileSha256: input.profile.expectedSha256, expectedProviders: input.profile.providers,
     evidenceMode: 'synthetic-fixture', signedTransactionBase64, observations }
 }
@@ -45,7 +45,7 @@ export function selectedHookPreparationRpcProviders(f, { beforeRead = async () =
       },
       async getBlockSignatures() { await read('getBlockSignatures'); return f.observations[i].block },
       async getMultipleAccountsInfoAndContext(keys) {
-        await read('getMultipleAccountsInfoAndContext'); assert.equal(keys.length, 8)
+        await read('getMultipleAccountsInfoAndContext'); assert.equal(keys.length, 4+f.observations[i].programSnapshot.accounts.length)
         const o = f.observations[i], accounts = [...o.snapshot.accounts, ...o.programSnapshot.accounts]
         return { context: { slot: 120 }, value: keys.map(k => {
           const a = accounts.find(a => a.address === k.toBase58())

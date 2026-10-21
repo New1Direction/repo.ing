@@ -17,10 +17,12 @@ const PINS = Object.freeze({
 })
 const trim = bytes => { let end = bytes.length; while (end && bytes[end - 1] === 0) end--; return bytes.subarray(0, end) }
 
-export function selectedFixtureStack({ upgradeAuthority, kind = process.env.HOOKS_E2E_SELECTED_FIXTURE ?? 'test' }) {
-  if (!['test', 'production-receipt'].includes(kind)) throw Error('Unknown selected-hook fixture')
+export function selectedFixtureStack({ upgradeAuthority, kind = process.env.HOOKS_E2E_SELECTED_FIXTURE ?? 'test', candidate }) {
+  if (candidate) kind = 'economic'
+  if (!['test', 'production-receipt', 'economic'].includes(kind)) throw Error('Unknown selected-hook fixture')
+  if (kind === 'economic' && !candidate) throw Error('Economic fixture requires an explicit verified candidate inventory')
   const receipt = kind === 'production-receipt'
-  const pins = receipt ? { ...PINS, selected: ['target/production-transfer-receipt/transfer_receipt_hook.so', '5bf22f1aa461a11e7f755d0cb31129afc9b356e2a37d88cacff1ed7577613e7d'] } : PINS
+  const pins = candidate ? candidate.pins : receipt ? { ...PINS, selected: ['target/production-transfer-receipt/transfer_receipt_hook.so', '5bf22f1aa461a11e7f755d0cb31129afc9b356e2a37d88cacff1ed7577613e7d'] } : PINS
   const read = file => readFileSync(path.join(ROOT, file))
   const bytes = Object.fromEntries(Object.entries(pins).map(([role, [file, digest]]) => {
     const value = read(file)
@@ -29,19 +31,25 @@ export function selectedFixtureStack({ upgradeAuthority, kind = process.env.HOOK
   }))
   const ids = JSON.parse(read('ids/independent.json')), manifest = JSON.parse(read('ids/independent-manifest.json'))
   const names = { launch: 'bordrless_launch', swap: 'bordrless_swap', gate: 'hook_max_wallet' }
-  const idls = Object.fromEntries(Object.entries(names).map(([role, name]) => [role, read(`idl/independent/${name}.json`)]))
+  const idls = Object.fromEntries(Object.entries(names).map(([role, name]) => {
+    if (!candidate) return [role, read(`idl/independent/${name}.json`)]
+    const [file, digest] = candidate.idls[role], value = read(file)
+    if (sha256(value) !== digest) throw Error(`Economic acceptance ${role} IDL differs: ${file}`)
+    return [role, value]
+  }))
   for (const [role, value] of Object.entries(idls)) if (JSON.parse(value).address !== ids[role]) throw Error(`Selected acceptance ${role} IDL address differs`)
   const elfs = Object.fromEntries(['launch', 'swap', 'gate', 'token'].map(role => [role, bytes[role]]))
   const stack = parseStack({ schema: 'repoing/hooks-stack/1', id: 'selected-acceptance', status: 'placeholder',
     programs: Object.fromEntries(Object.keys(elfs).map(role => [role, ids[role]])), quoteMint: ids.quoteMarkerMint,
     upgradeAuthority, kitProgram: manifest.kitId,
-    build: { name: 'selected-acceptance', source: { repo: 'New1Direction/hook-lab', branch: 'repair/creator-selected-hooks', commit: 'd202089dd2271fe329e8604ec42d348cbc1865f9' },
+    build: { name: 'selected-acceptance', source: { repo: 'New1Direction/hook-lab', branch: 'repair/creator-selected-hooks', commit: candidate?.sourceCommit ?? 'd202089dd2271fe329e8604ec42d348cbc1865f9' },
       elf: Object.fromEntries(Object.entries(elfs).map(([role, value]) => [role, { trimmedSha256: sha256(trim(value)), trimmedLength: trim(value).length }])),
       idlSha256: Object.fromEntries(Object.entries(idls).map(([role, value]) => [role, sha256(value)])), open: true } })
   // solana-test-validator's loader preserves full ELF bytes. The selected adapter
   // pins exactly that immutable ProgramData payload, not a trimmed release hash.
-  const selectedHookPin = { program: receipt ? '4P9UnqR2FgD1XjkcpyWzabQCrhPDTQkZy8631jvTnYqL' : SELECTED_PROGRAM, elfSha256: sha256(bytes.selected), elfLength: bytes.selected.length }
+  const selectedHookPin = { program: candidate ? candidate.hooks[0].program : receipt ? '4P9UnqR2FgD1XjkcpyWzabQCrhPDTQkZy8631jvTnYqL' : SELECTED_PROGRAM, elfSha256: sha256(bytes.selected), elfLength: bytes.selected.length }
   return Object.freeze({ name: stack.build.name, stack, elfs, idls, ids: stack.programs, quoteMint: stack.quoteMint,
     elfSha256: Object.fromEntries(Object.entries(elfs).map(([role, value]) => [role, sha256(value)])),
-    selected: { bytes: bytes.selected, pin: selectedHookPin, flags: 3, source: receipt ? 'programs/transfer_receipt_hook/src/lib.rs' : 'programs/hook_tester/src/lib.rs' } })
+    ...(candidate ? { selectedHooks: candidate.hooks.map(h => ({ ...h, bytes: bytes[h.role], pin: { program: h.program, elfSha256: sha256(bytes[h.role]), elfLength: bytes[h.role].length } })) } : {}),
+    selected: { bytes: bytes.selected, pin: selectedHookPin, flags: candidate ? candidate.hooks[0].flags : 3, source: candidate ? 'programs/tax_hook/src/lib.rs' : receipt ? 'programs/transfer_receipt_hook/src/lib.rs' : 'programs/hook_tester/src/lib.rs' } })
 }

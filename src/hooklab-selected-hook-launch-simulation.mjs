@@ -52,8 +52,9 @@ export async function collectSelectedHookLaunchSimulation({ plan, settlementCont
       return [{ address: a.address, mint: new PublicKey(b.subarray(10, 42)).toBase58(),
         owner: new PublicKey(b.subarray(42, 74)).toBase58(), maxDebit: '0', minCredit: String(b.readBigUInt64LE(74)) }]
     })
-    check(holdings.length === 5 && new Set(holdings.map(x => x.address)).size === holdings.length)
-    const hookWritable = [...new Set(compiled.selectedHookExtras.filter(x => x.writable).map(x => x.address))].sort()
+    check(holdings.length === 5 + (compiled.postMintHoldings?.length ?? 0) && new Set(holdings.map(x => x.address)).size === holdings.length)
+    const postMintHoldings = new Set((compiled.postMintHoldings ?? []).map(h => h.address))
+    const hookWritable = [...new Set(compiled.selectedHookExtras.filter(x => x.writable && !postMintHoldings.has(x.address)).map(x => x.address))].sort()
     const canonical = new Set(post.accounts.map(x => x.address))
     check(hookWritable.every(address => !canonical.has(address) && observations.every(o => {
       const a = o.get(address)

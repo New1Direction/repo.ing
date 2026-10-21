@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Coins } from 'lucide-react'
 import { useWallet } from './wallet'
 import { useHookWalletSession } from './hooklab-wallet-signin'
+import { HooksOperationError } from './hooks-ui'
 import { sol } from '../lib/hooklab-trade-math.mjs'
 import { expectOperation, isFinal, runOperation } from '../lib/hooklab-trade-runner.mjs'
 
@@ -42,7 +43,7 @@ export function HookClaimFeesView({ claim, wallet, symbol, signedIn, busy = fals
     </div>
     {receive > 0n && !signedIn && <p className="hooks-claim-note">Sign in with this wallet to claim it.</p>}
     {done && <p role="status" className="hooks-trade-result">{done}</p>}
-    {error && <p className="inline-error" role="alert">{error}</p>}
+    <HooksOperationError error={error}/>
   </section>
 }
 

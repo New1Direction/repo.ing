@@ -4,13 +4,17 @@ import { DEFAULT_CREATOR_FEE_BPS, DEFAULT_WALLET_CAP_BPS } from '../../src/hookl
 import { formatSol, formatUsd, launchValues } from '../../src/hooklab-launch-pricing.mjs'
 import { launchHookInput } from './hooklab-native-launch-form.mjs'
 
-export const SELECTED_HOOK_NOTE = 'Custom hook signing requires verified release approval. The selected hook’s registry must be prepared for the reserved mint through that hook’s own interface before its lifecycle can be reviewed. Program and flags are immutable after review. Token fees require exact-message simulation; no deterministic token-fee quote is available.'
+export const SELECTED_HOOK_NOTE = 'Custom-hook launches must be approved for this release before you can sign. You review hook setup, coin settings and opening trading separately, with three wallet approvals. Your chosen hook and settings stay fixed throughout the launch. Token fees are checked on your transaction before approval.'
+export const THREE_APPROVALS = 'Your wallet will ask you to approve three times: hook setup, launch configuration, then opening trading.'
 
 // Recovery must retain the exact hook identity, not reinterpret cap 0 as a gate default.
 export function sameLaunchHook(left, right) {
   try {
     const a = launchHookInput(left), b = launchHookInput(right)
+    const canonical = v => v && typeof v === 'object' ? Array.isArray(v) ? v.map(canonical) : Object.fromEntries(Object.keys(v).sort().map(k => [k, canonical(v[k])])) : v
     return a.capBps === b.capBps && a.selectedHook?.program === b.selectedHook?.program && a.selectedHook?.flags === b.selectedHook?.flags
+      && JSON.stringify(canonical(a.hookPublication ?? null)) === JSON.stringify(canonical(b.hookPublication ?? null))
+      && ['quoteCut', 'authorShareBps', 'rules'].every(k => JSON.stringify(canonical(a[k] ?? null)) === JSON.stringify(canonical(b[k] ?? null)))
   } catch { return false }
 }
 
@@ -105,15 +109,17 @@ export function nextOpenLaunchAction(operation, { wallet, now = Date.now() } = {
   if (status === 'signed') return 'submit'
   if (status === 'signing-claimed' || status === 'signing-unknown') return 'wait'
   if (status === 'expired') return 'fresh'
-  if (status === 'finalized-success') return operation.stage === 'preparation' ? 'launch' : 'live'
+  if (status === 'finalized-success') return operation.stage === 'hook-setup' ? 'preparation' : operation.stage === 'preparation' ? 'launch' : 'live'
   return PENDING.has(status) ? 'reconcile' : 'stop'
 }
 // What the creator reads while the guided step runs.
 export function openLaunchStatus(operation, action) {
   const second = operation?.stage === 'launch'
-  if (action === 'sign') return `Approve in your wallet (${second ? 2 : 1} of 2)`
+  const custom = !!operation?.request?.selectedHook || operation?.review?.operation === 'selected-hook-preparation'
+  if (operation?.stage === 'hook-setup') return action === 'sign' ? 'Review and approve hook setup in your wallet (1 of 3)' : action === 'preparation' ? 'Hook setup is confirmed. Preparing your coin settings…' : 'Setting up your selected hook on Solana…'
+  if (action === 'sign') return `Approve in your wallet (${custom ? second ? 3 : 2 : second ? 2 : 1} of ${custom ? 3 : 2})`
   if (action === 'reconcile' || action === 'submit' || action === 'cosign' || action === 'wait') return second ? 'Opening trading on Solana…' : 'Setting up your coin on Solana…'
-  if (action === 'launch') return 'Your coin is set up. Preparing the second approval…'
+  if (action === 'launch') return custom ? 'Your coin settings are confirmed. Preparing the third approval…' : 'Your coin is set up. Preparing the second approval…'
   if (action === 'live') return 'Your coin is live.'
   return ''
 }

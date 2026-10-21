@@ -12,6 +12,7 @@ import { isStackProfile } from './hooklab-stack.mjs'
 import { localAcceptanceNetwork } from './hooklab-local-acceptance.mjs'
 import { selectedHookPinSchema } from './hooklab-max-wallet-launch.mjs'
 import { validateSelectedHookReleaseBindings } from './hooklab-max-wallet-launch-collector.mjs'
+import { validateLocalSelectedHookPolicy } from './hooklab-selected-hook-compatibility.mjs'
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const refuse=message=>{throw Object.assign(Error(message),{code:'PRODUCTION_BOOTSTRAP_REFUSED'})}
 const need=(ok,message)=>{if(!ok)refuse(message)}
@@ -111,6 +112,7 @@ export async function productionSettings({env=process.env,readBundle=path=>readF
  const launchBundle=openLaunchesEnabled(env)?stack:bundle
  return {bundle,stack,launchBundle,connections,observers,reviewTiming,
   async launchLimits(){const c=await common();return {preparationLimits:{...c,maxRentLamports:'20000000',maxTotalDebitLamports:String(20000000+Number(networkFee))},
+   setupLimits:{...c,maxRentLamports:'20000000',maxTotalDebitLamports:String(20000000+Number(networkFee))},
    launchLimits:{...c,...launchDebitLimits(launchBundle.config.economics,networkFee,
     openLaunchesEnabled(env)?(await openLaunchRent(size=>connections[0].connection.getMinimumBalanceForRentExemption(size,'finalized'))).guard:undefined)}}},
   tradeLimits:{nowMs:Date.now(),maxAgeMs:60000,maxSlotLag:SLOT_LAG,validUntilSlot:0,reviewExpiresAtMs:0,maxNetworkFeeLamports:networkFee,maxTotalDebitLamports:networkFee,
@@ -125,10 +127,17 @@ export function selectedHookSettings({env=process.env,stack,open,connections=sta
  need(stack&&open,'selected hooks require our open-launch stack')
  if(local){
   need(localAcceptanceNetwork(env),'local selected hooks require local acceptance')
+  if(stack.config.selectedHookRelease?.schema==='repoing/selected-hook-release/2'){
+   need(env.HOOK_LOCAL_SELECTED_HOOK_PIN_JSON===undefined,'local policy cannot be combined with a singleton pin')
+   return {selectedHooksEnabled:true,selectedHookPin:null,selectedHookRelease:validateLocalSelectedHookPolicy({...stack,connections,env})}
+  }
   return {selectedHooksEnabled:true,selectedHookPin:selectedHookPinSchema.parse(JSON.parse(env.HOOK_LOCAL_SELECTED_HOOK_PIN_JSON??'null'))}
  }
  need(!localAcceptanceNetwork(env),'production selected hooks cannot use local acceptance')
  const bound=validateSelectedHookReleaseBindings({...stack,connections})
+ // The policy/evidence unit is not an execution adapter. Never advertise enabled while
+ // downstream custody/compilers still require a singleton and immutable-only account plan.
+ need(bound.config.selectedHookRelease.schema!=='repoing/selected-hook-release/2','selected-hook policy requires durable authority-evidence integration before runtime enablement')
  return {selectedHooksEnabled:true,selectedHookPin:bound.config.selectedHookPin}
 }
 
@@ -152,7 +161,7 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  // Open launches use the bundle's one shared launch table and need no admin co-signature; the owner's Mac is not involved.
  const open=openLaunchesEnabled(env)
  const {selectedHooksEnabled,selectedHookPin}=selectedHookSettings({env,stack:own,open,connections:s.connections})
- if(selectedHooksEnabled){need(own&&open,'selected hooks require our open-launch stack');own.config={...own.config,selectedHookPin}}
+ if(selectedHooksEnabled){need(own&&open,'selected hooks require our open-launch stack');if(selectedHookPin)own.config={...own.config,selectedHookPin}}
  const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,...(open?{...own,openLaunches:true}:{launchLookupTable}),selectedHooksEnabled,reviewTiming:s.reviewTiming,nativeLaunches:env.HOOK_NATIVE_LAUNCHES_ENABLED==='true',...await s.launchLimits()})
  const native=await launchRuntime()
  installNativeLaunchRuntime({...native,async reserve(input){return (await launchRuntime()).reserve(input)}})

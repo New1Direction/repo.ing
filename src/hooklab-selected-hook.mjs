@@ -7,6 +7,7 @@ import { PublicKey, TransactionInstruction } from '@solana/web3.js'
 import { z } from 'zod'
 import { hookAddress } from './hooklab-execution-contract.mjs'
 import { inclusivePolicyMeta } from './hooklab-inclusive-fee-abi.mjs'
+import { selectedHookAuthorityEvidenceSchema } from './hooklab-selected-hook-compatibility.mjs'
 
 const check = (ok, message) => { if (!ok) throw Error(message) }
 const kb = value => new PublicKey(hookAddress.parse(value)).toBuffer()
@@ -68,7 +69,7 @@ export function resolveSelectedHookRegistry({ hook, mint, registry, callbackAcco
 
 /** Borsh tuple required by create_launch_open_v1's nongate branch, fee policy excluded. */
 export function selectedHookAccountsHash({ hook, registry, extras, feeModel = 2 }) {
-  check(feeModel === 2 && extras.length <= 32, 'Only inclusive fee model 2 is supported')
+  check([1, 2].includes(feeModel) && extras.length <= 33, 'Unsupported selected fee model or account count')
   const raw = Buffer.from(registry.dataBase64, 'base64')
   check(raw.toString('base64') === registry.dataBase64 && raw.length <= 16384, 'Registry bytes differ')
   const bytes = [Buffer.from('hook-lab:selected-hook-accounts:v1'), kb(hook), kb(registry.address), kb(registry.owner), u32(raw.length), raw, u32(extras.length)]
@@ -82,7 +83,7 @@ export function selectedHookAccountsHash({ hook, registry, extras, feeModel = 2 
 /** Resolve launch and transfer slices from immutable program evidence and registry bytes.
  * Hook ELF digest must be an independent operator pin, never inferred from these bytes.
  */
-export function selectedHookAccountPlan({ programs, selectedHook, mint, registry, programAccount, programData, elfSha256, callbackAccounts, sourceOwner, destinationOwner, mintStable = false }) {
+export function selectedHookAccountPlan({ programs, selectedHook, mint, registry, programAccount, programData, elfSha256, callbackAccounts, sourceOwner, destinationOwner, mintStable = false, feeModel = 2, selectedAuthorityEvidence }) {
   const { program: hook, flags } = selectedHookSchema.parse(selectedHook)
   const identities = ['token', 'swap', 'launch', 'gate'].map(role => { kb(programs[role]); return programs[role] })
   check(new Set(identities).size === identities.length && !identities.includes(zero)
@@ -91,17 +92,43 @@ export function selectedHookAccountPlan({ programs, selectedHook, mint, registry
   check(programAccount?.address === hook && programAccount.owner === loader && programAccount.executable === true
     && pb.length === 36 && pb.readUInt32LE() === 2 && pb.subarray(4).equals(kb(dataAddress)), 'Hook ProgramData linkage differs')
   check(programData?.address === dataAddress && programData.owner === loader && programData.executable === false
-    && db.length >= 49 && db.readUInt32LE() === 3 && db[12] === 0 && db.subarray(45, 49).equals(Buffer.from([127, 69, 76, 70]))
-    && /^[a-f0-9]{64}$/.test(elfSha256) && createHash('sha256').update(db.subarray(45)).digest('hex') === elfSha256, 'Hook must be immutable and ELF-pinned')
+    && db.length >= 49 && db.readUInt32LE() === 3 && db.subarray(45, 49).equals(Buffer.from([127, 69, 76, 70]))
+    && /^[a-f0-9]{64}$/.test(elfSha256) && createHash('sha256').update(db.subarray(45)).digest('hex') === elfSha256, 'Hook ELF pin or linkage differs')
+  let authority = null
+  if (selectedAuthorityEvidence) {
+    const e = selectedHookAuthorityEvidenceSchema.parse(selectedAuthorityEvidence)
+    const identity = a => ({ address: a.address, owner: a.owner, executable: a.executable, dataBase64: a.dataBase64 })
+    check(e.hookPin.program === hook && e.hookPin.elfSha256 === elfSha256 && e.hookPin.elfLength === db.length - 45
+      && isDeepStrictEqual(e.programAccount, identity(programAccount)) && isDeepStrictEqual(e.programData, identity(programData)), 'Retained selected authority identity differs')
+    authority = e.authority
+  }
+  const delayed = authority?.kind === 'timelocked'
+  check(db[12] === (delayed ? 1 : 0), 'Hook must be immutable or have verified delayed authority')
+  let executorProof = [], timelockProof = []
+  if (delayed) {
+    const { timelock, executor, executorProgramData, upgradeAuthority } = authority
+    const executorData = pda(loader, kb(executor.address)), eb = Buffer.from(executor.dataBase64, 'base64'), edb = Buffer.from(executorProgramData.dataBase64, 'base64')
+    const [tl, bump] = PublicKey.findProgramAddressSync([Buffer.from('timelock'), kb(hook)], new PublicKey(executor.address)), tb = Buffer.from(timelock.dataBase64, 'base64')
+    check(executor.address === 'BBUzaamchPWZpKENmn7bopiuQWvRGm2Vg8TqLLgzgGGZ'
+      && executor.owner === loader && executor.executable && eb.length === 36 && eb.readUInt32LE() === 2 && eb.subarray(4).equals(kb(executorData))
+      && executorProgramData.address === executorData && executorProgramData.owner === loader && !executorProgramData.executable
+      && edb.length >= 49 && edb.readUInt32LE() === 3 && edb[12] === 0 && edb.subarray(45, 49).equals(Buffer.from([127, 69, 76, 70])), 'Timelock executor must be immutable')
+    check(timelock.address === tl.toBase58() && upgradeAuthority === timelock.address && db.subarray(13, 45).equals(kb(upgradeAuthority))
+      && timelock.owner === executor.address && !timelock.executable && tb.length === 279 && tb.subarray(0, 8).equals(Buffer.from('bd214e4bcd1f04b1', 'hex'))
+      && tb[8] === 1 && tb[9] === bump && tb.subarray(10, 42).equals(kb(hook)) && tb.subarray(42, 74).equals(kb(dataAddress))
+      && tb.readUInt32LE(138) === authority.delaySeconds && tb[142] === 0 && tb.subarray(143, 227).every(v => v === 0), 'Timelock is not idle or identity differs')
+    executorProof = [meta(executor.address), meta(executorData)]; timelockProof = [meta(timelock.address)]
+  }
   const tokenSigner = pda(programs.token, Buffer.from('hook-authority'), kb(hook))
   const prefix = mintStable ? [tokenSigner, mint, mint, mint, mint] : callbackAccounts
   const extras = resolveSelectedHookRegistry({ hook, mint, registry, callbackAccounts: prefix, sourceOwner, destinationOwner, mintStable })
   return { hook, flags, registry: registry.address, extras, tokenSigner, programData: dataAddress,
-    launchRemainingPrefix: [meta(pda(programs.launch, Buffer.from('governance'))), meta(dataAddress), meta(hook), meta(tokenSigner), meta(registry.address), ...extras],
+    authorityAccounts: [...timelockProof, ...executorProof],
+    launchRemainingPrefix: [meta(pda(programs.launch, Buffer.from('governance'))), meta(dataAddress), ...executorProof, meta(hook), meta(tokenSigner), meta(registry.address), ...extras, ...timelockProof],
     transferSlice: [meta(hook), meta(tokenSigner), ...extras],
-    commitment: selectedHookAccountsHash({ hook, registry, extras }).toString('hex'),
+    commitment: selectedHookAccountsHash({ hook, registry, extras: [...extras, ...timelockProof], feeModel }).toString('hex'),
     // No invented cap and no deterministic arbitrary-hook token-fee quote.
-    capBps: 0, feeModel: 2, canSign: false, canSubmit: false }
+    capBps: 0, feeModel, canSign: false, canSubmit: false }
 }
 
 export function refuseUnsupportedSelectedHook() {
@@ -112,9 +139,8 @@ export function refuseUnsupportedSelectedHook() {
 // pinned swap/launch/token identities; do not accept an arbitrary fee-policy address.
 export function selectedHookOpenLaunchAccounts(input) {
   const plan = selectedHookAccountPlan({ ...input, mintStable: true }), { programs, mint, quoteMint } = input
-  check(plan.extras.length <= 4, 'Launch supports at most four extras')
   const pool = pda(programs.swap, Buffer.from('pool'), kb(mint), kb(quoteMint), Buffer.alloc(2), kb(programs.launch))
-  return { ...plan, pool, remaining: [...plan.launchRemainingPrefix, inclusivePolicyMeta(programs.swap, pool, 'create')] }
+  return { ...plan, pool, remaining: [...plan.launchRemainingPrefix, ...(plan.feeModel === 2 ? [inclusivePolicyMeta(programs.swap, pool, 'create')] : [])] }
 }
 
 /** Candidate ABI only, with caller-supplied reviewed IDL and guard. No custody, RPC, signing,
@@ -149,6 +175,6 @@ export function selectedHookOpenLaunchInstruction(input, launchIdl) {
       && (!declared.address || declared.address === actual.pubkey.toBase58()), 'Launch account privileges or fixed address differ')
   }
   return new TransactionInstruction({ programId: new PublicKey(L), keys: [...keys, ...plan.remaining.map(a => m(a.address, a.writable))],
-    data: new BorshCoder(launchIdl).instruction.encode('create_launch_open_v1', { args, guard, fee_model: 2, quote_form: 1,
+    data: new BorshCoder(launchIdl).instruction.encode('create_launch_open_v1', { args, guard, fee_model: plan.feeModel, quote_form: 1,
       expected_control_hash: [...control], expected_hook_accounts_hash: [...Buffer.from(plan.commitment, 'hex')] }) })
 }

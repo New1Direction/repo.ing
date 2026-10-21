@@ -30,25 +30,35 @@ export function nativeClaimResolver({ config, profile, dossierJson, connections,
 
   async function collect({ owner, stage, intent, expectedReview, originalContext }) {
     check(stage === CLAIM_STAGE, 'Unsupported claim stage')
-    const request = nativeClaimRequestSchema.parse({ schema: 'repoing/hooklab-native-claim-request/1', creator: owner, mint: intent?.mint })
+    const request = nativeClaimRequestSchema.parse({ schema: 'repoing/hooklab-native-claim-request/1', creator: owner, mint: intent?.mint, ...(intent?.claimantRole !== undefined ? { claimantRole: intent.claimantRole } : {}) })
     if (originalContext) check(originalContext.configurationSha256 === configurationSha256 && isDeepStrictEqual(originalContext.compilationInput.request, request))
-    const started = integer(clock()), inventory = nativeClaimInventory(claimProfile, request), launch = launchAddress(p.programs, request.mint)
+    const started = integer(clock()), launch = launchAddress(p.programs, request.mint)
     const rentFor = async bytes => {
       const values = await Promise.all(providers.map(({ connection }) => connection.getMinimumBalanceForRentExemption(bytes, 'finalized')))
       check(values.every(v => integer(v) === values[0])); return String(values[0])
     }
     const observations = await Promise.all(providers.map(async ({ provider, connection }) => {
       check(await connection.getGenesisHash() === p.genesisHash)
-      const state = await connection.getMultipleAccountsInfoAndContext(inventory.map(pk), { commitment: 'finalized', minContextSlot: expectedReview?.observedSlot ?? 0 })
-      check(state.value.length === inventory.length)
-      return canonicalObservation({ provider, genesisHash: p.genesisHash, commitment: 'finalized', slot: integer(state.context.slot), observedAtMs: started,
-        accounts: state.value.map((v, i) => ({ address: inventory[i], account: v ? { address: inventory[i], owner: v.owner.toBase58(), executable: v.executable,
-          lamports: String(integer(v.lamports)), dataBase64: Buffer.from(v.data).toString('base64') } : null })) })
+      let inventory = nativeClaimInventory(claimProfile, request), minContextSlot = expectedReview?.observedSlot ?? 0
+      // Base -> immutable config/partner state -> their destinations. Re-read the complete
+      // inventory at each step; never merge snapshots or use the other provider's discovery.
+      for (let step = 0; step < 4; step++) {
+        const state = await connection.getMultipleAccountsInfoAndContext(inventory.map(pk), { commitment: 'finalized', minContextSlot })
+        check(state.value.length === inventory.length && integer(state.context.slot) >= minContextSlot)
+        minContextSlot = state.context.slot
+        const observation = canonicalObservation({ provider, genesisHash: p.genesisHash, commitment: 'finalized', slot: minContextSlot, observedAtMs: started,
+          accounts: state.value.map((v, i) => ({ address: inventory[i], account: v ? { address: inventory[i], owner: v.owner.toBase58(), executable: v.executable,
+            lamports: String(integer(v.lamports)), dataBase64: Buffer.from(v.data).toString('base64') } : null })) })
+        const next = nativeClaimInventory(claimProfile, request, new Map(observation.accounts.map(x => [x.address, x.account])))
+        if (isDeepStrictEqual(next, inventory)) return observation
+        inventory = next
+      }
+      throw Error('Claim inventory did not stabilize')
     }))
     // Every trade of the coin moves the launch account's lamports, and the creator's wallet can move too, so two providers
     // at different slots differ there. Everything else must agree; the claim then compiles from the first snapshot (the
     // amount is whatever the account holds above rent when it lands, settled from the receipt).
-    const steady = o => o.accounts.map(x => x.account && [launch, request.creator].includes(x.address) ? { ...x, account: { ...x.account, lamports: null } } : x)
+    const steady = o => o.accounts.map(x => x.account && (x.address === launch || x.account.owner === '11111111111111111111111111111111' && !x.account.executable && x.account.dataBase64 === '') ? { ...x, account: { ...x.account, lamports: null } } : x)
     check(isDeepStrictEqual(steady(observations[0]), steady(observations[1])), 'Providers disagree on claim state')
     const first = Object.fromEntries(observations[0].accounts.map(x => [x.address, x.account]))
     for (const o of observations) o.accounts = o.accounts.map(x => ({ ...x, account: first[x.address] }))

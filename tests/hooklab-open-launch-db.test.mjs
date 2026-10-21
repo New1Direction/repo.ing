@@ -5,7 +5,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { Keypair } from '@solana/web3.js'
+import { readFile } from 'node:fs/promises'
+import { Keypair, PublicKey, ComputeBudgetProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
 import pg from 'pg'
 import { ownerApprovalStore } from '../src/hooklab-owner-approval.mjs'
 import { MIGRATIONS, migrationSchema, productionSchema } from '../scripts/hooklab-production-schema.mjs'
@@ -15,6 +16,8 @@ import { createLaunchRequestsHandler } from '../app/lib/hooklab-launch-requests.
 import { createNativeLaunchHandler } from '../app/lib/hooklab-native-launch.mjs'
 import { executionGenesis } from '../src/hooklab-local-acceptance.mjs'
 import sharp from 'sharp'
+import { hookCatalogStore, taxHookSetupManifest } from '../src/hooklab-hook-catalog.mjs'
+import { nativeSigningLifecycle } from '../src/hooklab-native-signing.mjs'
 
 const config = { host: '127.0.0.1', port: 55432, user: 'postgres', password: 'launchtest', database: 'postgres' }
 const key = label => Keypair.fromSeed(createHash('sha256').update(`OPEN LAUNCH DB TEST ONLY ${label}`).digest()).publicKey.toBase58()
@@ -26,11 +29,15 @@ const pricing = (() => { const sources = [{ source: 'coingecko', usdMicros: '150
   return { solUsdMicros: '150000000', sources, virtualQuote: launchVirtualQuote(150000000n) } })()
 
 async function withDatabase(work) {
-  const root = new pg.Pool(config), name = `open_launch_${randomUUID().replaceAll('-', '')}`; let pool
+  const testConfig = process.env.HOOKLAB_REQUEST_TEST_SOCKET ? { host: process.env.HOOKLAB_REQUEST_TEST_SOCKET, port: 5432, user: process.env.USER, database: 'postgres' } : config
+  const root = new pg.Pool(testConfig), name = `open_launch_${randomUUID().replaceAll('-', '')}`; let pool
   try {
-    await root.query(`create database ${name}`); pool = new pg.Pool({ ...config, database: name })
+    await root.query(`create database ${name}`); pool = new pg.Pool({ ...testConfig, database: name })
     await pool.query(productionSchema().sql)
     for (const migration of Object.keys(MIGRATIONS)) await pool.query(migrationSchema(migration).sql)
+    if(!(await pool.query("select 1 from information_schema.columns where table_name='hook_lab_launch_requests' and column_name='hook_publication'")).rows.length)
+      await pool.query(await readFile(new URL('../src/hooklab-selected-hook-setup-schema.sql',import.meta.url),'utf8'))
+    if (!Object.hasOwn(MIGRATIONS, 'hook-catalog')) await pool.query(await readFile(new URL('../src/hooklab-hook-catalog-schema.sql',import.meta.url),'utf8'))
     await work(pool)
   } finally {
     await pool?.end()
@@ -40,9 +47,43 @@ async function withDatabase(work) {
   }
 }
 const intent = (id, extra = {}) => ({ id, name: 'Open coin', symbol: 'OPEN', uri: `https://repo.ing/api/hook-lab/coins/${id}/metadata`, creatorFeeBps: 50, capBps: 500, ...extra })
+async function publication(pool,selectedHook){
+ const p=await hookCatalogStore(pool).publish(key('publisher'),{name:'Synthetic hook',version:randomUUID(),selectedHook,behavior:'Synthetic',fees:'Synthetic',risks:'Synthetic',manifest:taxHookSetupManifest(selectedHook)},{hookPin:{program:selectedHook.program,elfSha256:'b'.repeat(64)},authority:{kind:'immutable'}})
+ return {digest:p.digest,manifest:p.manifest,configuration:{feeBps:'100',maxWalletBps:'0',collector:key('collector')}}
+}
+
+test('hook setup exact-message journal resumes after restart, refreshes only unsigned bytes and never sends twice',()=>withDatabase(async pool=>{
+ // Synthetic server resolver only; real setup settlement is tested independently with both readers.
+ const signer=Keypair.fromSeed(Buffer.alloc(32,71)),owner=signer.publicKey.toBase58(),operationId=randomUUID(),id=randomUUID(),now=Date.now()
+ const token=Buffer.alloc(32,72).toString('base64url'),genesisHash=executionGenesis()
+ await pool.query("insert into hook_lab_wallet_sessions(token_sha256,wallet,origin,audience,genesis_hash,expires_at) values($1,$2,'https://repo.ing','general-launcher',$3,clock_timestamp()+interval '30 minutes')",[createHash('sha256').update(token).digest('hex'),owner,genesisHash])
+ const request={schema:'synthetic-test-only',creator:owner,mint:key('setup-mint')},hash=value=>createHash('sha256').update(value).digest('hex')
+ function review(blockhash){
+  const message=new TransactionMessage({payerKey:signer.publicKey,recentBlockhash:blockhash,instructions:[ComputeBudgetProgram.setComputeUnitLimit({units:200000}),ComputeBudgetProgram.setComputeUnitPrice({microLamports:0}),new TransactionInstruction({programId:new PublicKey(key('setup-program')),keys:[{pubkey:signer.publicKey,isWritable:true,isSigner:true}],data:Buffer.from([1])})]}).compileToV0Message()
+  return {schema:'hooklab-message-review/1',operation:'selected-hook-setup',genesisHash,profileSha256:'a'.repeat(64),policySha256:'b'.repeat(64),intentSha256:hash(JSON.stringify(request)),payer:owner,wallet:owner,messageBase64:Buffer.from(message.serialize()).toString('base64'),messageSha256:hash(message.serialize()),requiredSigners:[owner],accounts:message.staticAccountKeys.map((k,i)=>({address:k.toBase58(),signer:message.isAccountSigner(i),writable:message.isAccountWritable(i)})),lookupTables:[],observedSlot:40,validUntilSlot:90,observedAtMs:now,reviewExpiresAtMs:now+60000,lastValidBlockHeight:150,baseFeeLamports:'5000',maxFeeLamports:'5000',instructionDebitLamports:'10000',maxNativeDebitLamports:'15000'}
+ }
+ let currentReview=review(key('setup-blockhash')),sends=0
+ const result=()=>({status:'operator-pins-and-state-verified',owner,stage:'hook-setup',profileSha256:'a'.repeat(64),messageSha256:currentReview.messageSha256,configurationSha256:'c'.repeat(64),request,review:currentReview,settlementContext:{schema:'synthetic-test-only'}})
+ const settings={enabled:true,origin:'https://repo.ing',stageOperations:{'hook-setup':'selected-hook-setup'},resolver:{prepare:async()=>result(),revalidate:async()=>result(),reconcile:async input=>({status:'finalized-success',signature:input.signature,messageSha256:input.review.messageSha256,profileSha256:input.review.profileSha256})},sender:{send:async input=>{sends++;return input.signature}}}
+ let store=nativeSigningLifecycle(pool,settings)
+ const original=await store.createReview(token,id,{custodyOperationId:operationId,stage:'hook-setup'})
+ assert.deepEqual(await nativeSigningLifecycle(pool,settings).createReview(token,id,{custodyOperationId:operationId,stage:'hook-setup'}),original)
+ currentReview=review(key('setup-next-blockhash'))
+ const refreshed=await store.refreshReview(token,id);assert.notEqual(refreshed.messageSha256,original.messageSha256)
+ const walletRequest=await store.walletRequest(token,id),tx=VersionedTransaction.deserialize(Buffer.from(walletRequest.partialTransactionBase64,'base64'));tx.sign([signer])
+ await store.retainWalletSignature(token,id,Buffer.from(tx.serialize()).toString('base64'))
+ await assert.rejects(store.refreshReview(token,id))
+ store=nativeSigningLifecycle(pool,settings)
+ assert.equal((await store.get(token,id)).status,'signed')
+ await assert.rejects(store.createReview(token,randomUUID(),{custodyOperationId:operationId,stage:'hook-setup'}))
+ assert.equal((await store.submitOnce(token,id)).status,'submitted')
+ await assert.rejects(store.submitOnce(token,id));assert.equal(sends,1)
+ assert.equal((await nativeSigningLifecycle(pool,settings).reconcile(token,id)).status,'finalized-success')
+}))
 
 test('selected hook coin survives HTTP handler restart with immutable intent and refuses reserve before signing', () => withDatabase(async pool => {
   const creator = key('selected-owner'), selectedHook = { program: key('selected-hook'), flags: 129 }, id = randomUUID()
+  const hookPublication=await publication(pool,selectedHook)
   const token = Buffer.alloc(32, 61).toString('base64url'), genesisHash = executionGenesis()
   await pool.query("insert into hook_lab_wallet_sessions(token_sha256,wallet,origin,audience,genesis_hash,expires_at) values($1,$2,'https://repo.ing','general-launcher',$3,clock_timestamp()+interval '30 minutes')", [createHash('sha256').update(token).digest('hex'), creator, genesisHash])
   const image = `data:image/png;base64,${(await sharp({ create: { width: 512, height: 512, channels: 3, background: '#81e6ad' } }).png().toBuffer()).toString('base64')}`
@@ -52,21 +93,27 @@ test('selected hook coin survives HTTP handler restart with immutable intent and
     openCreation: async () => ({ native: true, open: true, paused: false, ...MENUS }), launchPriceEstimate: async () => null }
   const request = (body, path = 'launch-requests', cookie = token) => new Request(`https://repo.ing/api/hook-lab/${path}`, { method: 'POST',
     headers: { origin: 'https://repo.ing', 'content-type': 'application/json', cookie: `__Host-hook-wallet-session=${cookie}` }, body: JSON.stringify(body) })
-  const coin = { action: 'create', requestId: id, name: 'Custom coin', symbol: 'CSTM', image, description: '', x: '', website: '', telegram: '', creatorFeeBps: 100, capBps: 0, selectedHook }
+  const economics = { quoteCut: { maxBuyBps: 80, maxSellBps: 40 }, authorShareBps: 1000, rules: { burnBuyBps: 20, burnSellBps: 30 } }
+  const coin = { action: 'create', requestId: id, name: 'Custom coin', symbol: 'CSTM', image, description: '', x: '', website: '', telegram: '', creatorFeeBps: 100, capBps: 0, selectedHook,hookPublication,...economics }
   const first = await createLaunchRequestsHandler(options)(request(coin))
   assert.equal(first.status, 200, await first.clone().text())
   const stored = (await first.json()).request
   assert.deepEqual(stored.selectedHook, selectedHook); assert.equal(stored.capBps, 0); assert.equal(stored.status, 'queued')
+  assert.deepEqual(stored.hookPublication,hookPublication)
+  for (const key of Object.keys(economics)) assert.deepEqual(stored[key], economics[key])
   assert.equal(stored.custodyOperationId, null)
   const recovered = await createLaunchRequestsHandler(options)(request({ action: 'get' }))
   assert.deepEqual((await recovered.json()).request, stored, 'fresh handler recovers the exact recorded coin')
   assert.equal((await createLaunchRequestsHandler(options)(request({ action: 'get' }, 'launch-requests', Buffer.alloc(32, 62).toString('base64url')))).status, 401)
-  for (const change of [{ capBps: 100 }, { selectedHook: { ...selectedHook, flags: 256 } }, { selectedHook: undefined }]) {
+  for (const change of [{ capBps: 100 }, { selectedHook: { ...selectedHook, flags: 256 } }, { selectedHook: undefined }, { quoteCut: { maxBuyBps: 0, maxSellBps: 40 } }, { authorShareBps: 5001 }, { rules: { burnBuyBps: -1, burnSellBps: 0 } }, { author: creator }]) {
     const response = await createLaunchRequestsHandler(options)(request({ ...coin, ...change, requestId: randomUUID() }))
     assert.equal(response.status, 400)
   }
   await assert.rejects(pool.query("update hook_lab_launch_requests set selected_hook=$2 where id=$1", [id, { ...selectedHook, flags: 1 }]), /immutable/i)
+  await assert.rejects(pool.query("update hook_lab_launch_requests set hook_publication=$2 where id=$1", [id, {...hookPublication,configuration:{...hookPublication.configuration,feeBps:'101'}}]), /immutable/i)
   await assert.rejects(pool.query("update hook_lab_launch_requests set name='Other' where id=$1", [id]), /immutable/i)
+  await assert.rejects(pool.query('update hook_lab_launch_requests set selected_economics=$2 where id=$1', [id, { ...economics, authorShareBps: 0 }]), /immutable/i)
+  await assert.rejects(pool.query('update hook_lab_launch_requests set selected_economics=null where id=$1', [id]), /immutable/i)
   let reserved = 0
   const native = createNativeLaunchHandler({ ...options, runtime: () => ({ reserve: async () => { reserved++; throw Error('must not reserve') }, lifecycle: {} }) })
   const blocked = await native(request({ action: 'reserve', operationId: randomUUID(), capBps: 0, selectedHook, creatorFeeBps: 100,
@@ -91,20 +138,42 @@ async function launched(pool, store, operationId, creator, mint) {
 
 test('selected launch binds exact hook and retains its original price after interrupted preparation', () => withDatabase(async pool => {
   const creator=key('selected-binding'), id=randomUUID(), operationId=randomUUID(), selectedHook={program:key('selected-binding-hook'),flags:3}
-  const value=intent(id,{capBps:0,selectedHook}), settings={openLaunches:true,usdPricing:true,selectedHooksEnabled:true}
+  const hookPublication=await publication(pool,selectedHook)
+  const economics={quoteCut:{maxBuyBps:80,maxSellBps:40},authorShareBps:1000,rules:{burnBuyBps:20,burnSellBps:30}}
+  const value=intent(id,{capBps:0,selectedHook,hookPublication,...economics}), settings={openLaunches:true,usdPricing:true,selectedHooksEnabled:true}
   let store=ownerApprovalStore(pool,settings)
   await store.createRequest(creator,value,profile,{source:'open',menus:MENUS})
   const bound=await bind(pool,store,creator,operationId,{...value,virtualQuote:pricing.virtualQuote,pricing})
   assert.equal(bound.status,'launching'); assert.deepEqual(bound.selectedHook,selectedHook)
+  for (const key of Object.keys(economics)) assert.deepEqual(bound[key], economics[key])
   store=ownerApprovalStore(pool,settings)
   const nextPrice={solUsdMicros:'151000000',sources:pricing.sources.map(v=>({...v,usdMicros:'151000000'})),virtualQuote:launchVirtualQuote(151000000n)}
   const recovered=await bind(pool,store,creator,operationId,{...value,virtualQuote:nextPrice.virtualQuote,pricing:nextPrice})
   assert.equal(recovered.pricing.virtualQuote,pricing.virtualQuote)
   assert.equal(recovered.pricing.solUsdMicros,pricing.solUsdMicros)
+  for (const key of Object.keys(economics)) assert.deepEqual(recovered[key], economics[key])
+  for (const patch of [{quoteCut:undefined},{authorShareBps:0},{rules:'none'},{quoteCut:{maxBuyBps:81,maxSellBps:40}}])
+    await assert.rejects(bind(pool,store,creator,operationId,{...value,...patch,virtualQuote:pricing.virtualQuote,pricing}), /economics differ/)
   for(const patch of [{selectedHook:{...selectedHook,flags:1}},{selectedHook:undefined},{capBps:100,selectedHook:undefined}])
     await assert.rejects(bind(pool,store,creator,operationId,{...value,...patch,virtualQuote:pricing.virtualQuote,pricing}))
+  await assert.rejects(bind(pool,store,creator,operationId,{...value,hookPublication:{...hookPublication,configuration:{...hookPublication.configuration,feeBps:'102'}},virtualQuote:pricing.virtualQuote,pricing}))
   await assert.rejects(bind(pool,store,creator,randomUUID(),{...value,virtualQuote:pricing.virtualQuote,pricing}))
   assert.equal((await store.requestFor(creator)).custodyOperationId,operationId)
+  // Exercise the strict reserve HTTP schema and its handoff to both the original
+  // request binder and the runtime, with no signing or chain access.
+  let reserves=0
+  const handler=()=>createNativeLaunchHandler({env:{HOOK_OPEN_LAUNCHES:'true',HOOK_NATIVE_LAUNCH_ENABLED:'true',HOOK_WALLET_IDENTITY_ENABLED:'true'},
+    configuration:()=>({origin:'https://repo.ing'}),database:()=>({connect:()=>pool.connect(),end:async()=>{}}),
+    principalStore:()=>({resolve:async()=>({wallet:creator})}),quota:async()=>true,launchPrice:async()=>pricing,
+    runtime:()=>({openLaunches:true,selectedHooksEnabled:true,openCreation:async()=>({native:true,open:true,paused:false,...MENUS,minVirtualQuote:'1',maxVirtualQuote:'18446744073709551615'}),
+      reserve:async({input,owner})=>{reserves++;for(const key of Object.keys(economics))assert.deepEqual(input[key],economics[key]);return {owner,operationId,request:input}}})})
+  const {id:_,...reserveValue}=value
+  const reserve=patch=>handler()(new Request('https://repo.ing/api/hook-lab/native-launch',{method:'POST',headers:{origin:'https://repo.ing','content-type':'application/json',cookie:`__Host-hook-wallet-session=${Buffer.alloc(32,17).toString('base64url')}`},body:JSON.stringify({action:'reserve',operationId,label:'OPEN',...reserveValue,virtualQuote:pricing.virtualQuote,...patch})}))
+  assert.equal((await reserve({})).status,200)
+  assert.equal((await reserve({})).status,200,'handler restart retries the identical economics')
+  for(const patch of [{quoteCut:undefined},{authorShareBps:0},{rules:'none'}])assert.equal((await reserve(patch)).status,409)
+  for(const patch of [{quoteCut:{maxBuyBps:1001,maxSellBps:0}},{authorShareBps:5001},{rules:{burnBuyBps:0,burnSellBps:10001}},{configAuthor:key('other-author')}])assert.equal((await reserve(patch)).status,400)
+  assert.equal(reserves,2,'changed intent never reaches runtime reservation')
 }))
 
 test('open requests: chain menus, no invite, many creators at once, the fixed price bound with the launch', { skip: process.env.HOOK_SKIP_DB === 'true' && 'database tests skipped' }, () => withDatabase(async pool => {

@@ -32,24 +32,35 @@ export async function reviewNewMintPreparationCandidate({custody,sessionToken,in
   productionUnsignedMessage:null,canSign:false,canSubmit:false,executionAuthorized:false})
 }
 
-const selectedInputSchema=inputSchema.omit({capBps:true,creatorFeeBps:true}).extend({selectedHook:selectedHookSchema,creatorFeeBps:z.number().int().min(0).max(9999)}).strict()
-// Config-only candidate. Bind intent before the hook-specific registry handoff so a missing
-// registry or lost response cannot issue a new mint or silently change the selected hook.
-// This does not open the production runtime's SELECTED_HOOK_REVIEW_UNAVAILABLE boundary.
-export async function reviewNewMintSelectedHookPreparationCandidate({custody,sessionToken,input,profile,hookPin,connections,limits,clock}){
- const {operationId,selectedHook,label,creatorFeeBps}=selectedInputSchema.parse(input)
+const selectedInputSchema=inputSchema.omit({capBps:true,creatorFeeBps:true}).extend({selectedHook:selectedHookSchema,creatorFeeBps:z.number().int().min(0).max(9999),
+ quoteCut:selectedHookPreparationRequestSchema.shape.quoteCut,authorShareBps:selectedHookPreparationRequestSchema.shape.authorShareBps,rules:selectedHookPreparationRequestSchema.shape.rules.optional()}).strict()
+// Reservation is deliberately independent of registry/configuration collection. Setup must
+// settle before the latter is reachable, but authority and intent are bound before consent.
+export async function reserveNewMintSelectedHookPreparationIntent({custody,sessionToken,input,profile,observeSelectedHook}){
+ const {operationId,selectedHook,label,creatorFeeBps,quoteCut,authorShareBps,rules}=selectedInputSchema.parse(input)
  const reserved=await custody.reserveNewCandidate(sessionToken,operationId,profile.expectedSha256)
- if(!['reserved','preparation-reviewed'].includes(reserved.stage))throw Error('Existing mint requires reconciliation; replacement preparation refused')
+ if(reserved.stage!=='reserved'&&!reserved.preparedRequest)throw Error('Original preparation intent missing')
  const request=selectedHookPreparationRequestSchema.parse({schema:'repoing/selected-hook-preparation-request/1',policyKind:'selected-hook',policyVersion:2,
-  creator:reserved.owner,feePayer:reserved.owner,mint:reserved.mint,selectedConfig:reserved.selectedConfig,capBps:0,label,creatorFeeBps,rules:'none',
-  hookFlags:selectedHook.flags,selectedHook,feeModel:2,protocolShareBps:2500})
+  creator:reserved.owner,feePayer:reserved.owner,mint:reserved.mint,selectedConfig:reserved.selectedConfig,capBps:0,label,creatorFeeBps,rules:rules??'none',
+  ...(quoteCut!==undefined?{quoteCut}:{}),...(authorShareBps!==undefined?{authorShareBps}:{}),
+  hookFlags:selectedHook.flags,selectedHook,feeModel:reserved.preparedRequest?.feeModel??1,protocolShareBps:2500})
  if(reserved.preparedRequest&&!isDeepStrictEqual(reserved.preparedRequest,request))throw Error('Preparation intent is immutable; retained mint cannot be repurposed')
- const bound=reserved.stage==='reserved'?await custody.retainPreparationIntent(sessionToken,operationId,{expectedRevision:reserved.revision,request}):reserved
- const collected=await collectSelectedHookPreparationReview({profile,hookPin,request,connections,limits,clock})
+ const selectedAuthorityEvidence=reserved.selectedAuthorityEvidence??(observeSelectedHook?await observeSelectedHook(selectedHook.program,{stage:'initial'}):null)
+ if(observeSelectedHook&&reserved.preparedRequest&&!reserved.selectedAuthorityEvidence)throw Error('Original selected authority evidence missing')
+ if(observeSelectedHook&&reserved.selectedAuthorityEvidence)await observeSelectedHook(selectedHook.program,{stage:'revalidation',expectedEvidence:selectedAuthorityEvidence})
+ const bound=reserved.stage==='reserved'?await custody.retainPreparationIntent(sessionToken,operationId,{expectedRevision:reserved.revision,request,selectedAuthorityEvidence}):reserved
+ return Object.freeze({custody:bound,request,selectedAuthorityEvidence})
+}
+export async function reviewNewMintSelectedHookPreparationCandidate({custody,sessionToken,input,profile,hookPin,observeSelectedHook,connections,limits,clock}){
+ const {custody:bound,request,selectedAuthorityEvidence}=await reserveNewMintSelectedHookPreparationIntent({custody,sessionToken,input,profile,observeSelectedHook})
+ if(!['reserved','preparation-reviewed'].includes(bound.stage))throw Error('Existing mint requires reconciliation; replacement preparation refused')
+ const {operationId,selectedHook}=input
+ const collected=await collectSelectedHookPreparationReview({profile,hookPin:selectedAuthorityEvidence?.hookPin??hookPin,selectedAuthorityEvidence,request,connections,limits,clock})
+ if(observeSelectedHook)await observeSelectedHook(selectedHook.program,{stage:'revalidation',expectedEvidence:selectedAuthorityEvidence})
  if(!isDeepStrictEqual(identity(await custody.get(sessionToken,operationId)),identity(bound)))throw Error('Preparation custody identity changed during review')
  const evidenceSha256=createHash('sha256').update(JSON.stringify({request,review:collected.plan.review,collection:collected.collection})).digest('hex')
  const retained=await custody.retainPreparationReview(sessionToken,operationId,{expectedRevision:bound.revision,request,evidenceSha256})
  return Object.freeze({schema:'repoing/new-mint-selected-hook-preparation-candidate/1',status:'candidate-review-only',custody:retained,request,
-  candidateReview:collected.plan.review,preparationInput:collected.preparationInput,selectedHook:collected.plan.selectedHook,collection:collected.collection,
+  candidateReview:collected.plan.review,preparationInput:collected.preparationInput,selectedAuthorityEvidence,selectedHook:collected.plan.selectedHook,collection:collected.collection,
   blockers:['SELECTED_HOOK_REVIEW_UNAVAILABLE'],productionUnsignedMessage:null,canSign:false,canSubmit:false,executionAuthorized:false})
 }
