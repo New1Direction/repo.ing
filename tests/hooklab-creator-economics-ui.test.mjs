@@ -97,17 +97,18 @@ test('advanced economics start omitted, explicitly configure bounds, and max-wal
   assert.doesNotThrow(() => launchHookInput(form))
 })
 
-test('recorded review and signing recovery expose actual economics and additional protocol fees', () => {
+test('recorded review and signing recovery expose the existing gross creator budget split', () => {
   const request = { ...selected, ...economics, id: 'recorded', status: 'queued' }
-  const availability = { openCreation: { open: true, native: true, selectedHooksEnabled: true } }
+  const availability = { openCreation: { open: true, native: true, selectedHooksEnabled: true, maxCreatorFeeBps: 200 } }
   for (const step of ['review', 'sign']) {
     const markup = html(h(HookOpenLaunch, { genesisHash: 'offline', initial: { availability, request, coin: selected, step } }), { wallet: true })
     for (const value of ['123 bps', '0 bps', '4321 bps', '987 bps', '654 bps']) assert.ok(markup.includes(value), `${step}: ${value}`)
-    assert.match(markup, /Additional protocol/)
+    assert.match(markup, /floor\(gross \/ 4\)/)
+    assert.match(markup, /creator receives the remainder/)
     assert.match(markup, /creator wallet receives the author share/i)
-    assert.doesNotMatch(markup, /75%|25%/)
+    assert.doesNotMatch(markup, /additional protocol charge/i)
   }
   const blocks = html(h(HookBlocks, { form: selected, set() {} }))
-  assert.match(blocks, /additional protocol/i)
-  assert.doesNotMatch(blocks, /75%|25%/)
+  assert.match(blocks, /floor\(gross \/ 4\)/)
+  assert.doesNotMatch(blocks, /additional protocol charge/i)
 })

@@ -54,7 +54,7 @@ export function nativeTradeResolver({config,profile,dossierJson,connections,limi
   const selected=raw.policyKind==='selected-hook'
   if((raw.selectedHook||raw.policyKind&&raw.policyKind!=='max-wallet')&&(!selected||!selectedOpen))refuseUnsupportedSelectedHook()
   const request=nativeSwapRequestSchema.parse({...raw,schema:'repoing/native-swap-request/1',policyKind:selected?'selected-hook':'max-wallet',policyVersion:2,feeModel:selected?(originalContext?.compilationInput.request.feeModel??raw.feeModel??1):2,protocolShareBps:2500,trader:owner})
-  check(stage===`native-${request.side}`&&approvedCreatorFees(bound.profile).includes(request.creatorFeeBps))
+  check(stage===`native-${request.side}`&&(selected||approvedCreatorFees(bound.profile).includes(request.creatorFeeBps)))
   if(originalContext)check(originalContext.configurationSha256===configurationSha256&&isDeepStrictEqual(originalContext.compilationInput.request,request))
   const started=integer(clock())
   let hookEvidence=null,selectedAuthorityEvidence=null

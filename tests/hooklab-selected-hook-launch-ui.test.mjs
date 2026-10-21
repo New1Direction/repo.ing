@@ -21,7 +21,15 @@ const compiled = await build({
 const { HookOpenLaunch } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`)
 const selectedHook = { program: 'So11111111111111111111111111111111111111112', flags: 129 }
 const coin = { name: 'Selected coin', symbol: 'SELECT', image: 'data:image/png;base64,AAAA', description: '', x: '', website: '', telegram: '', creatorFeeBps: 100, capBps: 0, hookKind: 'selected', selectedHook }
-const availability = { status: 'available', openCreation: { native: true, open: true, paused: false, creatorFeeBps: [50, 100, 200], capBps: [100, 200], launchFeeLamports: '20000000' } }
+const availability = { status: 'available', openCreation: { native: true, open: true, paused: false, creatorFeeBps: [50, 100, 200], maxCreatorFeeBps: 200, capBps: [100, 200], launchFeeLamports: '20000000' } }
+
+test('availability refresh preserves non-menu, zero and explicitly empty selected fees', async () => {
+  for (const creatorFeeBps of [137, 0, '']) await harness(async ui => {
+    await ui.mount({ step: 'coin', coin: { ...coin, creatorFeeBps } })
+    assert.equal(document.getElementById('selected-creator-fee').value, String(creatorFeeBps))
+    assert.equal(document.getElementById('selected-creator-fee').checkValidity(), creatorFeeBps !== '')
+  })
+})
 
 test('creator records exact custom intent, recovers it on remount, and release approval blocks signing after reserve', async () => {
   await harness(async ui => {
@@ -71,6 +79,7 @@ async function harness(run, mutation) {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   const calls = [], errors = []; let retained = null, root
   globalThis.fetch = async (url, init) => {
+    if (String(url).includes('hook-catalog')) return Response.json({ publications: [] })
     if (!init?.body) return Response.json(availability)
     const body = JSON.parse(init.body); calls.push(body)
     if (body.action === 'get') return Response.json({ status: 'available', request: retained })

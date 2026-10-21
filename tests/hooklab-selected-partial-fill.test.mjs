@@ -63,14 +63,14 @@ test('the collector measures a capped custom quote answer and requires its exact
     f.coders[role].types.encode(name, state).copy(bytes, 8); a.dataBase64 = bytes.toString('base64')
   }
   const pool = f.coders.swap.accounts.decode('Pool', Buffer.from(f.accounts.get(f.a.pool).dataBase64, 'base64'))
-  // 101 in: ceil(1%) creator=2, floor(3.21%) custom=3, ceil(25% of cuts) protocol=2, curve=94.
-  const delivered = 94n * BigInt(pool.base_reserve.add(pool.virtual_base).toString()) / 5094n
+  // 101 in: creator=2 + custom=3 gross; platform=floor(5/4)=1, creator residual=4, curve=96.
+  const delivered = 96n * BigInt(pool.base_reserve.add(pool.virtual_base).toString()) / 5096n
   Object.assign(f.input.request, { amountIn: '101', maxInput: '101', minAmountOut: String(delivered * 97n / 100n) })
   const after = new Map([...f.accounts].map(([k, v]) => [k, structuredClone(v)]))
   for (const [address, delta] of [[f.a.baseVault, -delivered], [f.a.traderBase, delivered]]) {
     const a = after.get(address), bytes = Buffer.from(a.dataBase64, 'base64'); bytes.writeBigUInt64LE(bytes.readBigUInt64LE(74) + delta, 74); a.dataBase64 = bytes.toString('base64')
   }
-  for (const [address, delta] of [[f.request.trader, -5101n], [f.a.launch, 5n], [f.a.pool, 96n]])
+  for (const [address, delta] of [[f.request.trader, -5101n], [f.a.launch, 4n], [f.a.pool, 97n]])
     after.get(address).lamports = String(BigInt(after.get(address).lamports) + delta)
   const event = Buffer.alloc(85); createHash('sha256').update('event:QuoteCutTaken').digest().copy(event, 0, 0, 8)
   pk(f.a.launch).toBuffer().copy(event, 8); pk(f.request.trader).toBuffer().copy(event, 40); event[72] = 1
@@ -89,7 +89,7 @@ test('the collector measures a capped custom quote answer and requires its exact
   } }))
   const collect = () => collectSelectedNativeTradeReview({ compilationInput: f.input, configurationSha256: 'a'.repeat(64), connections, clock: () => 1200 })
   const result = await collect()
-  assert.equal(result.plan.quote.hookQuoteFee, '3'); assert.equal(result.plan.quote.netCreatorFee, '2'); assert.equal(result.plan.quote.protocolFee, '2')
+  assert.equal(result.plan.quote.hookQuoteFee, '3'); assert.equal(result.plan.quote.netCreatorFee, '4'); assert.equal(result.plan.quote.protocolFee, '1')
   assert.equal(result.compilationInput.selectedQuoteCutBps, 321)
   for (const change of [b => { b[40] ^= 1 }, b => b.writeUInt16LE(322, 75), b => b.writeBigUInt64LE(4n, 77), (b, i) => { if (i) b[73] ^= 1 }]) {
     corrupt = change; await assert.rejects(collect())
@@ -103,17 +103,17 @@ test('measured final fill uses consumed input and applies minimum to that fracti
   const addresses = { baseVault: 'vault', traderBase: 'trader' }
   const deltas = { vault: '-10', trader: '10' }
   const economics = { allowPartialFill: true }
-  // 13 quote consumed: creator 2, additional share 1, curve input 10.
-  // The requested minimum of 85 prorates to floor(85 * 13 / 101) = 10.
+  // 12 quote consumed: gross creator fee 2, platform 0, creator 2, curve input 10.
+  // The requested minimum of 85 prorates to floor(85 * 12 / 101) = 10.
   const q = selectedNativeMeasuredQuote(request, pool, deltas, addresses, economics)
-  assert.equal(q.traderDebit, 13n)
-  assert.equal(q.unspentInput, 88n)
+  assert.equal(q.traderDebit, 12n)
+  assert.equal(q.unspentInput, 89n)
   assert.equal(q.minAmountOut, 10n)
   assert.equal(q.delivered, 10n)
   assert.equal(q.fees.creatorQuote, 2n)
-  assert.equal(q.fees.protocolQuote, 1n)
-  assert.deepEqual(q.after, { baseReserve: 0n, quoteReserve: 110n, protocolFeesQuote: 8n })
-  assert.throws(() => selectedNativeMeasuredQuote({ ...request, minAmountOut: '86' }, pool, deltas, addresses, economics), /MIN_OUTPUT/)
+  assert.equal(q.fees.protocolQuote, 0n)
+  assert.deepEqual(q.after, { baseReserve: 0n, quoteReserve: 110n, protocolFeesQuote: 7n })
+  assert.throws(() => selectedNativeMeasuredQuote({ ...request, minAmountOut: '93' }, pool, deltas, addresses, economics), /MIN_OUTPUT/)
   assert.throws(() => selectedNativeMeasuredQuote(request, pool, { ...deltas, vault: '-11' }, addresses, economics), /vault debit/)
 })
 
@@ -127,9 +127,9 @@ test('selected share buy graduates on actual readiness rather than the legacy in
   Object.assign(f.input.request, { amountIn: '20', maxInput: '20', graduate: true })
   const plan = compileNativeSwapReview(f.input)
   assert.equal(plan.graduates, true)
-  assert.equal(plan.quote.after.quoteReserve, '1008')
+  assert.equal(plan.quote.after.quoteReserve, '1009')
   assert.equal(plan.quote.netCreatorFee, '1')
-  assert.equal(plan.quote.protocolFee, '1')
+  assert.equal(plan.quote.protocolFee, '0')
   assert.equal(plan.economics.allowPartialFill, true)
   assert.equal(plan.instructions.at(-1).program, f.p.programs.launch)
   assert.throws(() => compileNativeSwapReview({ ...f.input, request: { ...f.input.request, graduate: false } }), /curve changed/)

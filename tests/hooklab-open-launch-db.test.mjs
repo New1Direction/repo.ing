@@ -21,7 +21,7 @@ import { nativeSigningLifecycle } from '../src/hooklab-native-signing.mjs'
 
 const config = { host: '127.0.0.1', port: 55432, user: 'postgres', password: 'launchtest', database: 'postgres' }
 const key = label => Keypair.fromSeed(createHash('sha256').update(`OPEN LAUNCH DB TEST ONLY ${label}`).digest()).publicKey.toBase58()
-const MENUS = { creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500] }
+const MENUS = { creatorFeeBps: [50, 100, 200], maxCreatorFeeBps: 200, capBps: [100, 200, 300, 500] }
 const IMAGE = 'data:image/png;base64,iVBORw0KGgo='
 const profile = { image: IMAGE, description: 'A test coin.', x: '', website: '', telegram: '' }
 // Two agreeing sources at $150: the price the server fixes at reserve.
@@ -140,11 +140,12 @@ test('selected launch binds exact hook and retains its original price after inte
   const creator=key('selected-binding'), id=randomUUID(), operationId=randomUUID(), selectedHook={program:key('selected-binding-hook'),flags:3}
   const hookPublication=await publication(pool,selectedHook)
   const economics={quoteCut:{maxBuyBps:80,maxSellBps:40},authorShareBps:1000,rules:{burnBuyBps:20,burnSellBps:30}}
-  const value=intent(id,{capBps:0,selectedHook,hookPublication,...economics}), settings={openLaunches:true,usdPricing:true,selectedHooksEnabled:true}
+  const value=intent(id,{creatorFeeBps:137,capBps:0,selectedHook,hookPublication,...economics}), settings={openLaunches:true,usdPricing:true,selectedHooksEnabled:true}
   let store=ownerApprovalStore(pool,settings)
   await store.createRequest(creator,value,profile,{source:'open',menus:MENUS})
   const bound=await bind(pool,store,creator,operationId,{...value,virtualQuote:pricing.virtualQuote,pricing})
   assert.equal(bound.status,'launching'); assert.deepEqual(bound.selectedHook,selectedHook)
+  assert.equal(bound.creatorFeeBps,137)
   for (const key of Object.keys(economics)) assert.deepEqual(bound[key], economics[key])
   store=ownerApprovalStore(pool,settings)
   const nextPrice={solUsdMicros:'151000000',sources:pricing.sources.map(v=>({...v,usdMicros:'151000000'})),virtualQuote:launchVirtualQuote(151000000n)}

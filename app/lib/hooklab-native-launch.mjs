@@ -16,6 +16,7 @@ import { selectedHookSchema, refuseUnsupportedSelectedHook } from '../../src/hoo
 import { hookPublicationSelectionSchema } from '../../src/hooklab-hook-catalog.mjs'
 import { selectedHookPreparationRequestSchema as preparationSchema } from '../../src/hooklab-selected-hook-preparation.mjs'
 import { selectedHookEconomics } from './hooklab-native-launch-form.mjs'
+import { isOpenCreatorFeeChoice } from '../../src/hooklab-launch-menus.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 const inputSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('reserve'),operationId:uuid,capBps:z.number().int().min(0).max(9999),selectedHook:selectedHookSchema.optional(),hookPublication:hookPublicationSelectionSchema.optional(),quoteCut:preparationSchema.shape.quoteCut,authorShareBps:preparationSchema.shape.authorShareBps,rules:preparationSchema.shape.rules.optional(),label:text(32).min(1),name:text(32).min(1),symbol:text(10).min(1),uri:text(200),virtualQuote:z.string().regex(/^(0|[1-9][0-9]*)$/).max(20),creatorFeeBps:z.number().int().min(0).max(9999)}).strict().refine(x=>x.selectedHook?x.capBps===0:x.capBps>0&&x.quoteCut===undefined&&x.authorShareBps===undefined&&x.rules===undefined,'Selected hooks cannot claim a max-wallet cap'),
@@ -65,7 +66,7 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
     if(!service.openLaunches)throw Error()
     const chain=await service.openCreation()
     if(!chain.native||!chain.open||chain.paused)return reply({status:'paused',error:'Launches are paused right now. Your SOL was not spent; try again later.'},409)
-    if(!chain.creatorFeeBps.includes(input.creatorFeeBps)||(input.selectedHook?input.capBps!==0:!chain.capBps.includes(input.capBps)))return reply({error:'That creator fee or max per wallet is no longer offered. Pick one from the current list.'},409)
+    if(!isOpenCreatorFeeChoice(input,chain)||(input.selectedHook?input.capBps!==0:!chain.capBps.includes(input.capBps)))return reply({error:'That creator fee or max per wallet is no longer offered. Review the current chain limits.'},409)
     let pricing
     try{pricing=await launchPrice()}catch(error){return reply({error:error?.code==='LAUNCH_PRICE_REFUSED'?error.message:'The SOL price is unavailable right now. Try again in a minute.'},409)}
     if(BigInt(pricing.virtualQuote)<BigInt(chain.minVirtualQuote)||BigInt(pricing.virtualQuote)>BigInt(chain.maxVirtualQuote))return reply({error:'At today\'s SOL price the opening price is outside what the launch program accepts. Try again later.'},409)

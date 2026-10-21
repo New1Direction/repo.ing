@@ -38,15 +38,17 @@ export function menuChoice(menu, current, fallback) {
   if (!Array.isArray(menu) || !menu.length) return current
   return menu.includes(current) ? current : menu.includes(fallback) ? fallback : menu[0]
 }
-export const openMenus = openCreation => ({ creatorFeeBps: openCreation?.creatorFeeBps ?? [], capBps: openCreation?.capBps ?? [] })
+export const openMenus = openCreation => ({ creatorFeeBps: openCreation?.creatorFeeBps ?? [], capBps: openCreation?.capBps ?? [], maxCreatorFeeBps: openCreation?.maxCreatorFeeBps })
 export const defaultOpenChoices = openCreation => ({ creatorFeeBps: menuChoice(openCreation?.creatorFeeBps, DEFAULT_CREATOR_FEE_BPS, DEFAULT_CREATOR_FEE_BPS),
   capBps: menuChoice(openCreation?.capBps, DEFAULT_WALLET_CAP_BPS, DEFAULT_WALLET_CAP_BPS) })
 
 // Why the creator cannot launch right now, in plain words, or ''.
-export function openCreationProblem(openCreation) {
+export function openCreationProblem(openCreation, coin = null) {
   if (!openCreation) return 'Launching isn’t available right now. Try again in a minute.'
   if (!openCreation.native || !openCreation.open || openCreation.paused) return 'Launches are paused right now. Try again later.'
-  if (!openCreation.creatorFeeBps?.length || !openCreation.capBps?.length) return 'Launching isn’t available right now. Try again in a minute.'
+  if (coin?.selectedHook || coin?.hookKind === 'selected') {
+    if (!Number.isInteger(openCreation.maxCreatorFeeBps) || openCreation.maxCreatorFeeBps < 0) return 'The current chain fee ceiling is unavailable. Try again in a minute.'
+  } else if (!openCreation.creatorFeeBps?.length || !openCreation.capBps?.length) return 'Launching isn’t available right now. Try again in a minute.'
   return ''
 }
 

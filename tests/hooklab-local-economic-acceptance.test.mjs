@@ -25,12 +25,15 @@ test('economic candidate inventory requires separately pinned candidate IDLs, ne
   const proposed = structuredClone(candidate)
   proposed.hooks[0].program = '8WpjE7zTWWhLyzXnenjn3P1iXriTZTfgaiKSmf2kugau'
   proposed.pins.selected = ['target/creator-selected-v1-split-candidate/tax_hook.so', '3eacfb1d1e904a324c150204a9f2bcf8aa75a9d3da663a7cbbf985d89dc51402']
-  proposed.pins.swap = ['target/creator-selected-v1-split-candidate/bordrless_swap.so', '671f551f7916b47dbf8efea65f13cbce35c05b5d35c598e1ceb7c17437812ff2']
+  proposed.pins.launch = ['target/creator-fee-share-candidate/bordrless_launch.so', 'e7d40e0eef6e09ada198f848f8bd6795aece7d674264a58b17c526d5e698b231']
+  proposed.pins.swap = ['target/creator-fee-share-candidate/bordrless_swap.so', '0a635a23ceefaad9ea934d6e1ae4737fd3c788e7e680f313db4db64a92167c4a']
   proposed.pins.gate = ['target/creator-selected-v1-candidate/hook_max_wallet.so', '0f3261b6420f20a3c9feb1d5ead5e8cb432ce972e8716d61dda995fe78c1697b']
   assert.deepEqual(economic.economicInventorySchema.parse(proposed), proposed)
   for (const mutate of [v => { v.pins.selected[1] = '94f64d07b44a73e7e69b4f03cfda86bbc72d55505c69bd873e6c4ddf55bf853e' },
     v => { v.pins.selected = ['target/creator-selected-v1-candidate/tax_hook_proposed.so', '35dc99b93c474fdbc8d0961c04bc96f28058533e53beba5e1be7d6f2096dc182'] },
     v => { v.pins.swap = ['target/creator-selected-v1-candidate/bordrless_swap.so', '932e8df779adace0bb44f839a384aa44c422973aca4fb818a847f375170cd151'] },
+    v => { v.pins.swap = ['target/creator-selected-v1-split-candidate/bordrless_swap.so', '671f551f7916b47dbf8efea65f13cbce35c05b5d35c598e1ceb7c17437812ff2'] },
+    v => { v.pins.launch = ['target/creator-selected-v1-candidate/bordrless_launch.so', '84e60787a76b68120fabc2298a0833c8f0f5f18e879a9633217e3e1cb7745d29'] },
     v => { v.pins.gate[1] = 'a'.repeat(64) }, v => { v.hooks[0].flags = 3 }]) {
     const invalid = structuredClone(proposed); mutate(invalid)
     assert.throws(() => economic.economicInventorySchema.parse(invalid))

@@ -11,7 +11,7 @@ import { HookWalletSignIn, shortAddress, useHookWalletSession } from './hooklab-
 import { HookCoinFields, HookCoinPreview, HookLaunchNotes, HookEconomicsReview } from './hooklab-coin-form'
 import { HooksOperationError } from './hooks-ui'
 import { coinProblem } from './hooklab-launch-request'
-import { percent } from '../../src/hooklab-launch-menus.mjs'
+import { percent, isOpenCreatorFeeChoice } from '../../src/hooklab-launch-menus.mjs'
 import { coinImageUrl, telegramHandle, websiteUrl, xHandle } from '../../src/hooklab-coin-profile.mjs'
 import { launchHookInput, reservationInput } from '../lib/hooklab-native-launch-form.mjs'
 import { signReviewedLaunch } from '../lib/hooklab-launch-wallet.mjs'
@@ -65,13 +65,13 @@ export function OpenLaunchReview({ coin, image, profile, openCreation, costs, pr
   const selectedReady = coin.selectedHook && openCreation?.selectedHooksEnabled === true
   // Gate account rent and transaction fees are not estimates for an unreviewed custom lifecycle.
   const { rows, total, need } = openLaunchCosts(coin.selectedHook ? { launchFeeLamports: openCreation?.launchFeeLamports } : openCreation, coin.selectedHook ? {} : costs)
-  const values = openLaunchPrice(price), problem = openCreationProblem(openCreation)
+  const values = openLaunchPrice(price), problem = openCreationProblem(openCreation, coin)
   const unknown = coin.selectedHook ? 'Not yet reviewed' : 'Shown in your wallet'
   const amount = value => value ? <>{value.sol}{value.usd && <small>{value.usd}</small>}</> : coin.selectedHook ? unknown : 'Set when you sign'
   return <section className="launch-panel hooks-open-review" aria-labelledby="hooks-review-title">
     <h2 id="hooks-review-title">Check your launch</h2>
     <HookCoinPreview image={image} name={coin.name} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} selectedHook={coin.selectedHook} profile={profile}/>
-    {coin.selectedHook && <div role="note"><p>{selectedReady ? 'Each approval covers only the hook and settings you reviewed. Changed settings require a new review.' : SELECTED_HOOK_NOTE}</p><p>Creator revenue, hook fees and additional protocol charges are shown separately. Wallet limits depend on your chosen hook.</p>
+    {coin.selectedHook && <div role="note"><p>{selectedReady ? 'Each approval covers only the hook and settings you reviewed. Changed settings require a new review.' : SELECTED_HOOK_NOTE}</p><p>Custom SOL cuts join the same quote fee budget, not an additional SOL charge. The token tax split is unchanged. Wallet limits depend on your chosen hook.</p>
       {coin.hookPublication && <dl>{Object.entries(coin.hookPublication.configuration).map(([name,value]) => <div key={name}><dt>{coin.hookPublication.manifest?.fields?.find(f => f.name === name)?.label ?? name}</dt><dd style={{ overflowWrap: 'anywhere' }}>{String(value)}</dd></div>)}</dl>}
       <details><summary>Technical details</summary><p>Program: <code style={{ overflowWrap: 'anywhere' }}>{coin.selectedHook.program}</code> · Flags: {coin.selectedHook.flags}</p>
         {coin.hookPublication && <p>Publication: <code style={{ overflowWrap: 'anywhere' }}>{coin.hookPublication.digest}</code></p>}</details>
@@ -181,7 +181,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   const refresh = useCallback(async () => {
     try {
       const value = await available(); setAvailability(value)
-      setCoin(current => step !== 'coin' ? current : ({ ...current, creatorFeeBps: menuChoice(value.openCreation?.creatorFeeBps, current.creatorFeeBps, current.creatorFeeBps),
+      setCoin(current => step !== 'coin' ? current : ({ ...current, creatorFeeBps: current.selectedHook || current.hookKind === 'selected' ? current.creatorFeeBps : menuChoice(value.openCreation?.creatorFeeBps, current.creatorFeeBps, current.creatorFeeBps),
         capBps: current.selectedHook || current.hookKind === 'selected' ? 0 : menuChoice(value.openCreation?.capBps, current.capBps, current.capBps) }))
       if (!session.signedIn) return
       const mine = await post(REQUESTS, { action: 'get' }); setRequest(mine.request ?? null)
@@ -271,7 +271,8 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
       let current = request && ['queued', 'launching'].includes(request.status) ? request : null
       if (current && (coin.selectedHook || current.selectedHook || coin.hookKind === 'selected') && !sameLaunchHook(coin, current)) throw Error('The recorded hook configuration differs. Reload to recover the original launch; nothing was signed.')
       if (!current) {
-        const problem = coinProblem(coin) || openCreationProblem(openCreation); if (problem) throw Error(problem)
+        const problem = coinProblem(coin) || openCreationProblem(openCreation, coin); if (problem) throw Error(problem)
+        if (!isOpenCreatorFeeChoice(coin, openCreation)) throw Error('Enter an integer creator fee within the current chain limits.')
         const created = await post(REQUESTS, { action: 'create', requestId: crypto.randomUUID(), name: coin.name.trim(), symbol: coin.symbol, image: coin.image,
           description: coin.description, x: coin.x, website: coin.website, telegram: coin.telegram, creatorFeeBps: coin.creatorFeeBps, ...launchHookInput(coin) })
         if ((coin.selectedHook || created.request?.selectedHook || coin.hookKind === 'selected') && !sameLaunchHook(coin, created.request))
@@ -302,8 +303,9 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   }
   const toReview = event => {
     event.preventDefault()
-    const problem = coinProblem(coin) || openCreationProblem(openCreation)
+    const problem = coinProblem(coin) || openCreationProblem(openCreation, coin)
     if (problem) { setError(problem); return }
+    if (!isOpenCreatorFeeChoice(coin, openCreation)) { setError('Enter an integer creator fee within the current chain limits.'); return }
     try { launchHookInput(coin) } catch (e) { setError(e.message); return }
     setError(''); setStep('review')
   }
@@ -312,11 +314,11 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   const shown = recorded && step !== 'coin' ? recorded : { ...coin, name: coin.name.trim() }
   const image = recorded?.profile && step !== 'coin' ? coinImageUrl('', recorded.id, 128) : coin.image
   const phase = { coin: 0, review: 1, sign: 2, live: OPEN_LAUNCH_STEPS.length }[step]
-  const paused = initialBlockers.length > 0 || !!openCreationProblem(openCreation)
+  const paused = initialBlockers.length > 0 || !!openCreationProblem(openCreation, coin)
   return <div className="hooks-launch hooks-open-launch">
     <OpenLaunchSteps phase={phase}/>
     {step === 'coin' && <form className="launch-panel hooks-launch-panel" onSubmit={toReview} noValidate>
-      {availability && paused && <p className="hooks-ended" role="status">{openCreationProblem(openCreation) || 'Launching isn’t available right now. Try again later.'}</p>}
+      {availability && paused && <p className="hooks-ended" role="status">{openCreationProblem(openCreation, coin) || 'Launching isn’t available right now. Try again later.'}</p>}
       {!session.signedIn && session.checked && <p className="hooks-returning">Already started a launch? <button type="button" className="hooks-text-button" disabled={session.busy} onClick={session.signIn}>{session.busy ? 'Check your wallet…' : 'Sign in to continue it'}</button></p>}
       <div className="launch-columns">
         <fieldset className="launch-fields launch-fieldset" disabled={busy}>

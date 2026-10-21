@@ -27,7 +27,7 @@ export function localEconomicPolicyBundle(bundle) {
   return { ...bundle, config: { ...bundle.config, selectedHookRelease } }
 }
 
-const artifact = z.tuple([z.string().regex(/^target\/creator-selected-v1-(?:split-)?candidate\/[a-z0-9_]+\.so$/), z.string().regex(/^[a-f0-9]{64}$/)])
+const artifact = z.tuple([z.string().regex(/^target\/(?:creator-selected-v1-(?:split-)?candidate|creator-fee-share-candidate)\/[a-z0-9_]+\.so$/), z.string().regex(/^[a-f0-9]{64}$/)])
 const candidateIdl = z.tuple([z.string().regex(/^target\/creator-selected-v1-candidate\/[a-z0-9_]+\.json$/), z.string().regex(/^[a-f0-9]{64}$/)])
 export const economicInventorySchema = z.object({
   schema: z.literal('repoing/local-economic-candidate/1'), sourceCommit: z.string().regex(/^[a-f0-9]{40}$/),
@@ -45,10 +45,12 @@ export const economicInventorySchema = z.object({
   .refine(v => v.hooks[0].program !== '8WpjE7zTWWhLyzXnenjn3P1iXriTZTfgaiKSmf2kugau' ||
     (v.pins.selected[0] === 'target/creator-selected-v1-split-candidate/tax_hook.so' &&
       v.pins.selected[1] === '3eacfb1d1e904a324c150204a9f2bcf8aa75a9d3da663a7cbbf985d89dc51402' &&
-      v.pins.swap[0] === 'target/creator-selected-v1-split-candidate/bordrless_swap.so' &&
-      v.pins.swap[1] === '671f551f7916b47dbf8efea65f13cbce35c05b5d35c598e1ceb7c17437812ff2' &&
+      v.pins.launch[0] === 'target/creator-fee-share-candidate/bordrless_launch.so' &&
+      v.pins.launch[1] === 'e7d40e0eef6e09ada198f848f8bd6795aece7d674264a58b17c526d5e698b231' &&
+      v.pins.swap[0] === 'target/creator-fee-share-candidate/bordrless_swap.so' &&
+      v.pins.swap[1] === '0a635a23ceefaad9ea934d6e1ae4737fd3c788e7e680f313db4db64a92167c4a' &&
       v.pins.gate[1] === '0f3261b6420f20a3c9feb1d5ead5e8cb432ce972e8716d61dda995fe78c1697b'),
-  'Proposed tax identity requires exact split/exemption tax and corrected swap ELFs and unchanged deployed gate')
+  'Proposed tax identity requires exact split/exemption tax, creator-budget launch/swap ELFs and unchanged deployed gate')
 
 export function economicFixtureStack({ upgradeAuthority, inventoryFile = process.env.HOOKS_E2E_ECONOMIC_INVENTORY } = {}) {
   if (!inventoryFile) throw Error('Economic acceptance BLOCKED: HOOKS_E2E_ECONOMIC_INVENTORY must name the build-owner pinned inventory; receipt/tester ELFs are not V1 evidence')

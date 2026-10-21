@@ -8,12 +8,38 @@ const input = (extra = {}) => ({ side: 'buy', amountIn: 10003n, minAmountOut: 1n
   creatorFeeBps: 137n, quoteCutBps: 43n, lpFeeBps: 31n,
   tokenInputTax: 0n, tokenOutputTax: 17n, burnOut: 11n, pool, ...extra })
 
+test('native creator share is floor-rounded inside the gross fee, including custom quote revenue', () => {
+  for (const [amountIn, gross] of [[17n, 1n], [201n, 3n], [301n, 4n], [401n, 5n]]) {
+    const q = shareNativeQuote(input({ amountIn, creatorFeeBps: 100n, quoteCutBps: 0n,
+      lpFeeBps: 0n, tokenOutputTax: 0n, burnOut: 0n,
+      pool: { ...pool, baseReserve: 100000n, quoteReserve: 100000n,
+        virtualBase: 0n, virtualQuote: 0n, protocolShareBps: 2500n } }))
+    assert.equal(q.fees.protocolQuote, gross / 4n)
+    assert.equal(q.fees.creatorQuote, gross - gross / 4n)
+    assert.equal(q.curveInput, amountIn - gross)
+    assert.equal(q.delivered, (amountIn - gross) * 100000n / (100000n + amountIn - gross))
+    assert.equal(q.quoteVaultDelta + q.fees.creatorQuote, amountIn)
+  }
+  const q = shareNativeQuote(input({ side: 'sell', amountIn: 101n, creatorFeeBps: 100n,
+    quoteCutBps: 83n, lpFeeBps: 0n, burnIn: 17n, tokenInputTax: 29n,
+    burnOut: 0n, tokenOutputTax: 0n,
+    pool: { ...pool, baseReserve: 1000n, quoteReserve: 1000000n,
+      virtualBase: 0n, virtualQuote: 0n, protocolShareBps: 2500n } }))
+  assert.equal(q.grossOutput, 52132n)
+  assert.equal(q.fees.customQuote, 432n)
+  assert.equal(q.fees.creatorQuote, 716n) // ceil(52132*1%) + floor(52132*0.83%) = 954; 954-238
+  assert.equal(q.fees.protocolQuote, 238n)
+  assert.equal(q.delivered, 51178n)
+  assert.equal(q.after.quoteReserve, 947868n)
+  assert.equal(-q.quoteVaultDelta + q.fees.protocolQuote, q.grossOutput)
+})
+
 test('protocol share rounds up independently and accepts the pool rate endpoints', () => {
   assert.equal(shareProtocol(7n, 3333n), 3n)
   assert.equal(shareProtocol(7n, 0n), 0n)
   assert.equal(shareProtocol(7n, 10000n), 7n)
 })
-test('creator is retained whole; holder rounding is independent; custom cut floors', () => {
+test('gross creator and holder rounding is independent; custom cut floors', () => {
   assert.deepEqual(shareCreatorCuts({ amount: 10001n, creatorFeeBps: 50n,
     holderFeeBps: 100n, eligible: 1n, minEligible: 1n }),
   { creator: 51n, holder: 101n, custom: 0n, total: 152n })
@@ -26,18 +52,18 @@ test('dust drops creator and holder together and drops custom when it consumes t
   assert.deepEqual(shareCreatorCuts({ amount: 100n, creatorFeeBps: 100n, quoteCutBps: 10000n }),
     { creator: 1n, holder: 0n, custom: 0n, total: 1n })
 })
-test('native buy charges additional protocol share and LP revenue, not a creator split', () => {
+test('native buy splits the gross budget and charges only the separate LP revenue', () => {
   const q = shareNativeQuote(input())
-  assert.equal(q.receivedIn, 9822n)
-  assert.equal(q.curveInput, 9730n)
-  assert.equal(q.grossOutput, 29026n)
-  assert.equal(q.delivered, 28998n)
-  assert.equal(q.cutsIn, 181n)
+  assert.equal(q.receivedIn, 9882n)
+  assert.equal(q.curveInput, 9791n)
+  assert.equal(q.grossOutput, 29103n)
+  assert.equal(q.delivered, 29075n)
+  assert.equal(q.cutsIn, 121n)
   assert.equal(q.cutsOut, 17n)
-  assert.deepEqual(q.fees, { creatorQuote: 138n, customQuote: 43n, lpFee: 0n,
-    lpProtocolQuote: 31n, inputShareQuote: 61n, outputShareQuote: 0n, protocolQuote: 92n })
-  assert.deepEqual(q.after, { baseReserve: 20977n, quoteReserve: 16731n, protocolFeesQuote: 101n })
-  assert.equal(q.quoteVaultDelta, 9822n)
+  assert.deepEqual(q.fees, { grossQuote: 181n, creatorQuote: 121n, customQuote: 43n, lpFee: 0n,
+    lpProtocolQuote: 31n, inputShareQuote: 60n, outputShareQuote: 0n, protocolQuote: 91n })
+  assert.deepEqual(q.after, { baseReserve: 20900n, quoteReserve: 16792n, protocolFeesQuote: 100n })
+  assert.equal(q.quoteVaultDelta, 9882n)
   assert.equal(q.canSign, false)
 })
 test('native sell measures input tax without charging its SOL equivalent', () => {
@@ -47,12 +73,12 @@ test('native sell measures input tax without charging its SOL equivalent', () =>
   assert.equal(q.cutsIn, 23n)
   assert.equal(q.grossOutput, 165n)
   assert.equal(q.amountOutBeforeHooks, 164n)
-  assert.equal(q.delivered, 160n)
+  assert.equal(q.delivered, 161n)
   assert.equal(q.cutsOut, 3n)
-  assert.deepEqual(q.fees, { creatorQuote: 3n, customQuote: 0n, lpFee: 0n,
-    lpProtocolQuote: 1n, inputShareQuote: 0n, outputShareQuote: 1n, protocolQuote: 2n })
-  assert.deepEqual(q.after, { baseReserve: 51198n, quoteReserve: 6836n, protocolFeesQuote: 11n })
-  assert.equal(q.quoteVaultDelta, -163n)
+  assert.deepEqual(q.fees, { grossQuote: 3n, creatorQuote: 3n, customQuote: 0n, lpFee: 0n,
+    lpProtocolQuote: 1n, inputShareQuote: 0n, outputShareQuote: 0n, protocolQuote: 1n })
+  assert.deepEqual(q.after, { baseReserve: 51198n, quoteReserve: 6836n, protocolFeesQuote: 10n })
+  assert.equal(q.quoteVaultDelta, -164n)
 })
 test('burns do not accrue protocol share on either side', () => {
   const q = shareNativeQuote(input({ creatorFeeBps: 0n, quoteCutBps: 0n,
@@ -66,9 +92,9 @@ test('fill uses smallest fee-adjusted input, caps output, and prorates minimum d
     burnOut: 0n, allowPartialFill: true,
     pool: { ...pool, baseReserve: 10n, quoteReserve: 100n, virtualBase: 100n,
       virtualQuote: 0n, protocolShareBps: 2500n } }))
-  // 13 - ceil(13/10) - ceil(2/4) = 10; 12 only nets 9.
-  assert.equal(q.amountIn, 13n)
-  assert.equal(q.unspentInput, 88n)
+  // 12 - ceil(12/10) = 10; 11 only nets 9. The share is inside the two-lamport fee.
+  assert.equal(q.amountIn, 12n)
+  assert.equal(q.unspentInput, 89n)
   assert.equal(q.grossOutput, 10n)
   assert.equal(q.minAmountOut, 1n)
   assert.equal(q.after.baseReserve, 0n)
@@ -77,7 +103,7 @@ test('without fill permission a buy past the real reserve fails', () => {
   assert.throws(() => shareNativeQuote(input({ pool: { ...pool, baseReserve: 1n } })), /LIQUIDITY/)
 })
 test('minimum applies to measured delivery, not nominal curve output', () => {
-  assert.throws(() => shareNativeQuote(input({ minAmountOut: 28999n })), /MIN_OUTPUT/)
+  assert.throws(() => shareNativeQuote(input({ minAmountOut: 29076n })), /MIN_OUTPUT/)
 })
 test('zero protocol rate is read from the pool', () => {
   const q = shareNativeQuote(input({ pool: { ...pool, protocolShareBps: 0n } }))

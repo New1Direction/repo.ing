@@ -18,7 +18,7 @@ function fixture(side,partial=false){
  for(const obs of ci.observations){const row=obs.accounts.find(x=>x.address===a.pool),bytes=Buffer.from(row.account.dataBase64,'base64'),pool=f.coders.swap.accounts.decode('Pool',bytes);pool.fee_model=1;pool.lp_fee_bps=37;f.coders.swap.types.encode('Pool',pool).copy(bytes,8);row.account.dataBase64=bytes.toString('base64')}
  const pre={baseReserve:partial?500n:750000n,quoteReserve:partial?100n:100000n,virtualBase:partial?500n:0n,virtualQuote:0n,protocolFeesQuote:733n,protocolShareBps:2500n}
  const q=shareNativeQuote({side,amountIn:BigInt(plan.request.amountIn),minAmountOut:1n,creatorFeeBps:100n,lpFeeBps:37n,quoteCutBps:83n,tokenInputTax:buy?0n:701n,tokenOutputTax:buy?103n:0n,burnIn:buy?0n:29n,burnOut:buy?17n:0n,pool:pre,allowPartialFill:partial})
- const e=f.events,paid=[{holding:pk(a.launch),amount:N(q.fees.creatorQuote+q.fees.customQuote)}]
+ const e=f.events,paid=[{holding:pk(a.launch),amount:N(q.fees.creatorQuote)}]
  Object.assign(e.Swapped,{amount_in:N(q.amountIn),amount_out:N(q.grossOutput),received_in:N(q.receivedIn),delivered_out:N(q.delivered),cuts_in:N(q.cutsIn),cuts_out:N(q.cutsOut),burn_in:N(q.burnIn),burn_out:N(q.burnOut),protocol_fee:N(q.fees.protocolQuote),lp_fee_bps:37,base_reserve:N(q.after.baseReserve),quote_reserve:N(q.after.quoteReserve),virtual_base:N(0),virtual_quote:N(0),deltas_in:buy?paid:[],deltas_out:buy?[]:paid})
  e.Swapped.virtual_base=N(pre.virtualBase)
  const keys=plan.review.accounts.map(x=>x.address),idx=k=>keys.indexOf(k),sourceBefore=buy?pre.baseReserve:100000n,destBefore=buy?0n:pre.baseReserve,burn=buy?q.burnOut:q.burnIn,debit=(buy?q.grossOutput:q.amountIn)-burn,tax=buy?103n:701n
@@ -32,6 +32,23 @@ function fixture(side,partial=false){
  const rebuild=()=>{tx.innerInstructions=[{index:swapAt,instructions:[...['Swapped','SwappedNative'].map(n=>encode(n,2)),...['Burned','Transferred'].flatMap(n=>[{programIdIndex:idx(P.token),accounts:[],stackHeight:2,data:''},encode(n,3)])]}]}
  rebuild();return {e,tx,plan,q,rebuild,encode,P,verify:()=>verifyNativeTradeEvents({ci,plan,tx,fee:5000n})}
 }
+
+test('receipt enforces the inclusive gross creator budget, independently of token tax and LP fees',()=>{
+ const f=fixture('buy'),v=f.verify()
+ // Gross 1000: creator ceil(1%)=10, custom floor(0.83%)=8; split 18 into 4+14.
+ // LP ceil((1000-18)*0.37%)=4; curve floor(978*750000/100978)=7263.
+ assert.equal(v.quote.grossCreatorFee,'18')
+ assert.equal(v.quote.netCreatorFee,'14')
+ assert.equal(v.quote.protocolFee,'8')
+ assert.equal(v.quote.delivered,'7143') // 7263 - burn17 - tokenTax103
+ assert.equal(v.lamportDeltas[f.plan.addresses.launch],'14')
+ assert.equal(v.lamportDeltas[f.plan.addresses.pool],'986')
+ // Reinstating the old full-gross payout must fail even if both quote events agree.
+ f.e.Swapped.deltas_in[0].amount=new BN(18)
+ f.e.SwappedNative.quote_deltas=f.e.Swapped.deltas_in
+ f.rebuild()
+ assert.throws(f.verify)
+})
 
 test('model1 final fill matches pinned consumed input and floor-prorates original minimum',()=>{
  const f=fixture('buy',true)

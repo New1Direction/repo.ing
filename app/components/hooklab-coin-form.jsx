@@ -156,7 +156,7 @@ export function HookEconomicsReview({ coin }) {
   if (!coin.selectedHook) return null
   return <div className="inner-card fee-breakdown" aria-label="Configured custom hook economics">
     <h3>Custom hook fees and burns</h3>
-    <p>Creator revenue: {percent(coin.creatorFeeBps)} before author share. Additional protocol charges are separate, not deducted from creator revenue; each trade shows checked amounts before approval.</p>
+    <p>Gross creator fee: {percent(coin.creatorFeeBps)}. repo.ing receives floor(gross / 4); the creator receives the remainder, then any configured author share is deducted. Custom SOL cuts join the same quote fee budget, not an additional SOL charge. The token tax split is unchanged; each trade shows checked amounts before approval.</p>
     <p>Your creator wallet receives the author share too. It does not go to a separate recipient.</p>
     <dl>
       <div><dt>Custom SOL cut limits</dt><dd>{coin.quoteCut === undefined ? 'Unconfigured (hook defaults)' : `Buy maximum ${coin.quoteCut.maxBuyBps} bps · Sell maximum ${coin.quoteCut.maxSellBps} bps`}</dd></div>
@@ -189,8 +189,14 @@ export function HookBlocks({ form, set, disabled, menus = null, allowSelectedHoo
     </article>}
     <article className="hooks-block is-on" aria-label="Creator fee block">
       <BlockHeader id="creator-fee" state={on}/>
-      <Presets label="Creator fee" choices={fees} value={form.creatorFeeBps} onChange={creatorFeeBps => set({ creatorFeeBps })} disabled={disabled} format={percent}/>
-      <p className="launch-buy-hint">{selected ? `Creator revenue is ${percent(form.creatorFeeBps)} before the author share. Additional protocol charges are separate, not deducted from creator revenue. Hook SOL fees and token burns are checked on each transaction before approval.` : `Every buy and sell pays ${percent(form.creatorFeeBps)}. You earn ${creatorCut(form.creatorFeeBps)} of each trade in SOL; repo.ing keeps ${platformCut(form.creatorFeeBps)}.`}</p>
+      {selected ? <>
+        <label className="field-label" htmlFor="selected-creator-fee">Creator fee (bps)</label>
+        <input id="selected-creator-fee" className="field-input" type="number" min={0} max={menus?.maxCreatorFeeBps} step={1} required value={form.creatorFeeBps}
+          disabled={disabled || !Number.isInteger(menus?.maxCreatorFeeBps)} aria-describedby="selected-creator-fee-limit"
+          onChange={e => set({ creatorFeeBps: e.target.value === '' ? '' : Number(e.target.value) })}/>
+        <p id="selected-creator-fee-limit">{Number.isInteger(menus?.maxCreatorFeeBps) ? `Choose an integer from 0 to ${menus.maxCreatorFeeBps} bps (100 bps = 1%). Current chain ceiling.` : 'Waiting for the current chain fee ceiling.'}</p>
+      </> : <Presets label="Creator fee" choices={fees} value={form.creatorFeeBps} onChange={creatorFeeBps => set({ creatorFeeBps })} disabled={disabled} format={percent}/>}
+      <p className="launch-buy-hint">{selected ? 'The settled creator fee is the gross fee: repo.ing receives floor(gross / 4); the creator receives the remainder, then any configured author share is deducted. Custom SOL cuts join the same quote fee budget, not an additional SOL charge. The token tax split is unchanged. Amounts are checked before each approval.' : `Every buy and sell pays ${percent(form.creatorFeeBps)}. You earn ${creatorCut(form.creatorFeeBps)} of each trade in SOL; repo.ing keeps ${platformCut(form.creatorFeeBps)}.`}</p>
     </article>
     <p className="hooks-blocks-soon-title">More blocks are on the way</p>
     <ul className="hooks-blocks-soon">{SOON_BLOCKS.map(block => <li key={block.id} className="hooks-block is-soon">
@@ -219,8 +225,8 @@ export function HookLaunchNotes({ capBps, creatorFeeBps, selectedHook = null, la
     {launchPrice !== undefined && <HookStartingPrice price={launchPrice} open={open}/>}
     <div className="inner-card fee-breakdown"><h3>Every trade</h3>
       <div className="fee-line"><span>Creator fee<small>Paid by every buy and sell</small></span><strong>{percent(creatorFeeBps)}</strong></div>
-      <div className="fee-line"><span>You earn<small>{selectedHook ? 'Creator revenue before configured author shares' : '75% of the creator fee, in SOL'}</small></span><strong>{selectedHook ? percent(creatorFeeBps) : creatorCut(creatorFeeBps)}</strong></div>
-      <div className="fee-line"><span>repo.ing<small>{selectedHook ? 'Additional protocol share; not deducted from creator revenue' : '25% of the creator fee'}</small></span><strong>{selectedHook ? 'Measured per trade' : platformCut(creatorFeeBps)}</strong></div>
+      <div className="fee-line"><span>You earn<small>{selectedHook ? 'Remainder after platform share, before configured author share' : '75% of the creator fee, in SOL'}</small></span><strong>{creatorCut(creatorFeeBps)}</strong></div>
+      <div className="fee-line"><span>repo.ing<small>{selectedHook ? 'floor(gross creator fee / 4), deducted from gross' : '25% of the creator fee'}</small></span><strong>{platformCut(creatorFeeBps)}</strong></div>
       <div className="fee-line"><span>{selectedHook ? 'Custom hook' : 'Max per wallet'}<small>{selectedHook ? 'Token fees, burns and custom SOL fees are checked before each trade approval' : 'Until the coin graduates'}</small></span><strong>{selectedHook ? 'Wallet limits set by hook' : percent(capBps)}</strong></div>
       <div className="fee-note"><Info size={18} aria-hidden="true"/><span>Hooks coins run on repo.ing’s Hook Lab programs, not as standard Solana tokens, so most wallets and explorers won’t list them yet. Buy and sell them on repo.ing.</span></div>
     </div>

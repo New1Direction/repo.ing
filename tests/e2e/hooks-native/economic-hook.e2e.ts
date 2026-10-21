@@ -126,13 +126,17 @@ async function checkedTrade(op: any, wallet: string, before: bigint, collectorBe
   const creator = big(quoteDeltas[0].amount), protocol = big(swap.protocol_fee)
   const ceil = (n: bigint, d: bigint) => (n + d - 1n) / d
   const pool = (await poolAccount(coin.pool)).value, share = BigInt(pool.protocol_share_bps)
-  const lpQuote = ceil((buy ? big(swap.received_in) : big(swap.amount_out)) * BigInt(swap.lp_fee_bps), 10000n)
-  const creatorShare = ceil(creator * share, 10000n)
-  // Preserve the existing additive creator quote-fee surcharge. Token cuts on
-  // either side have no SOL equivalent, surcharge, or pool reserve deduction.
+  const lpBps = BigInt(swap.lp_fee_bps)
+  const creatorBasis = buy ? big(swap.amount_in) : big(swap.amount_out) - ceil(big(swap.amount_out) * lpBps, 10000n)
+  const grossCreator = ceil(creatorBasis * BigInt((await launchAccount(coin.launch)).value.creator_fee_bps), 10000n)
+  const creatorShare = grossCreator * share / 10000n
+  const lpQuote = ceil((buy ? big(swap.amount_in) - grossCreator : big(swap.amount_out)) * lpBps, 10000n)
+  // Platform revenue comes from the existing gross creator budget, never an
+  // additional charge. Token tax remains a separate, conserved token split.
+  expect(share).toBe(2500n)
+  expect(creator + creatorShare).toBe(grossCreator)
+  expect(creator).toBe(grossCreator - creatorShare)
   expect(protocol).toBe(lpQuote + creatorShare)
-  const creatorBasis = buy ? big(swap.amount_in) : big(swap.amount_out) - lpQuote
-  expect(creator).toBe(ceil(creatorBasis * BigInt((await launchAccount(coin.launch)).value.creator_fee_bps), 10000n))
   expect(lamportDelta(tx, coin.launch)).toBe(creator)
   expect(native.quote_deltas.map((d: any) => [d.holding.toBase58(), big(d.amount)])).toEqual([[coin.launch, creator]])
   const delivered = big(swap.delivered_out), received = big(swap.received_in)
@@ -250,10 +254,12 @@ describe(`local unreviewed economic ${role} hook lifecycle`, { serial: true }, (
     await screen.getByLabel('Token burn rules', { exact: true }).selectOption({ value: 'configure' })
     await screen.getByLabel('Buy token burn', { exact: false }).fill(String(BURN_BUY))
     await screen.getByLabel('Sell token burn', { exact: false }).fill(String(BURN_SELL))
-    await screen.getByRole('group', { name: 'Creator fee' }).getByRole('button', { name: '1%', exact: true }).tap()
+    await screen.getByLabel('Creator fee (bps)', { exact: true }).fill('137')
     await app.screenshot('economic-creator-configuration')
     await screen.getByRole('button', { name: 'Review your launch' }).tap(); await signInForLaunch(screen)
     const review = screen.getByRole('region', { name: 'Check your launch' })
+    await expect(review).toContainText('1.37%')
+    await expect(review).toContainText('floor(gross / 4)')
     await expect(review).toContainText('Unconfigured (hook defaults)')
     await expect(review).toContainText('2500 bps')
     await expect(review).toContainText('Buy 37 bps · Sell 83 bps')

@@ -1,9 +1,26 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { selectedLaunchFixture,selectedLaunchCollectorFixture,selectedLaunchSettlementFixture } from './fixtures/selected-hook-launch.mjs'
 import { compileSelectedHookLaunchReview,parseMaxWalletLaunchRequest,launchPreparationRequest } from '../src/hooklab-max-wallet-launch.mjs'
 import { deriveOpenLaunchPostconditions,collectOpenLaunchSettlement } from '../src/hooklab-max-wallet-launch-settlement.mjs'
 import { collectOpenLaunchReview } from '../src/hooklab-max-wallet-launch-collector.mjs'
+test('selected compiler and collector admit exact non-menu and zero fees', async()=>{
+ const sha=b=>createHash('sha256').update(b).digest('hex')
+ for(const creatorFeeBps of [0,137,200]){
+  const f=selectedLaunchCollectorFixture(),r=f.request
+  r.creatorFeeBps=creatorFeeBps
+  const account=f.accounts.get(r.selectedConfig),bytes=Buffer.from(account.dataBase64,'base64'),c=f.coders.launch.accounts.decode('LaunchConfig',bytes)
+  c.creator_fee_bps=creatorFeeBps
+  f.coders.launch.types.encode('LaunchConfig',c).copy(bytes,8);account.dataBase64=bytes.toString('base64')
+  const intent=launchPreparationRequest(r)
+  f.preparation.preparedRequest=intent
+  f.preparation.preparationIntentSha256=sha(JSON.stringify(intent))
+  f.preparation.preparedAccountHashes.selectedConfig=sha(bytes)
+  const result=await collectOpenLaunchReview(f)
+  assert.equal(result.settlementContext.compilationInput.request.creatorFeeBps,creatorFeeBps)
+ }
+})
 test('selected launch uses the open lifecycle and exact nongate remaining accounts',()=>{
  const {input,addresses}=selectedLaunchFixture(),plan=compileSelectedHookLaunchReview(input)
  assert.deepEqual(parseMaxWalletLaunchRequest(input.request),input.request)

@@ -254,21 +254,22 @@ function verifyShareTrade({ci,plan,tx,fee,events,swapAt,createAt,graduateAt,code
  const validTargets=ds=>{check(new Set(ds.map(d=>d.holding)).size===ds.length);for(const d of ds)check(d.amount>0n&&![a.baseVault,a.traderBase,r.trader,a.pool].includes(d.holding)&&plan.review.accounts.some(x=>x.address===d.holding&&x.writable&&!x.signer))}
  validTargets(quotePaid);validTargets(basePaid)
  const sum=ds=>ds.reduce((v,d)=>v+d.amount,0n),quoteCuts=sum(quotePaid)
- const inputShare=buy?shareProtocol(quoteCuts,share):0n
- const lpQuote=shareProtocol(buy?received:out,lp),curveInput=buy?received-lpQuote-inputShare:received
+ const cut=shareCreatorCuts({amount:buy?amount:out-shareProtocol(out,lp),creatorFeeBps:BigInt(r.creatorFeeBps),quoteCutBps:BigInt(economics.quoteCutBps??0)})
+ const creatorShare=cut.total*share/10000n,creatorNet=cut.total-creatorShare
+ const inputShare=buy?creatorShare:0n
+ const lpQuote=shareProtocol(buy?amount-cut.total:out,lp),curveInput=buy?received-lpQuote-inputShare:received
  check(curveInput>0n&&burnIn>=0n&&burnOut>=0n&&(buy?burnIn===0n:burnOut===0n))
- const held=buy?0n:shareProtocol(quoteCuts,share),baseCuts=buy?out-burnOut-delivered:amount-burnIn-received
+ const held=buy?0n:creatorShare,baseCuts=buy?out-burnOut-delivered:amount-burnIn-received
  check(baseCuts>=0n)
- const outputShare=buy?0n:shareProtocol(quoteCuts,share)
+ const outputShare=buy?0n:creatorShare
  const protocol=lpQuote+inputShare+outputShare
- const cut=shareCreatorCuts({amount:buy?amount:out-lpQuote-inputShare,creatorFeeBps:BigInt(r.creatorFeeBps),quoteCutBps:BigInt(economics.quoteCutBps??0)})
  // Only the canonical launch self-CPI event decoded above can attest a callback cut.
  // Logs and a calculated cut alone are not payout evidence (the quote deltas still must agree).
  const custom=at(P.launch,'QuoteCutTaken')
  check(custom.length<2&&custom.every(({data:e})=>e.launch.toBase58()===a.launch&&e.actor.toBase58()===r.trader&&e.direction===(buy?1:0)
   &&e.bps===Number(economics.quoteCutBps??0)&&e.answered_bps>=e.bps&&e.answered_bps<=65535&&B(e.amount)===cut.custom&&cut.custom>0n))
- // Pinned quote_cut appends to the launch's creator destination; it is not a platform fee.
- check(quoteCuts===cut.total&&isDeepStrictEqual(quotePaid,cut.total?[{holding:a.launch,amount:cut.total}]:[]))
+ // Custom quote revenue joins the gross creator budget; only its residual is paid to the launch.
+ check(quoteCuts===creatorNet&&isDeepStrictEqual(quotePaid,creatorNet?[{holding:a.launch,amount:creatorNet}]:[]))
  check(B(s.protocol_fee)===protocol&&B(s.cuts_in)===(buy?quoteCuts:baseCuts)&&B(s.cuts_out)===(buy?baseCuts:quoteCuts))
  check(received===(buy?amount-quoteCuts:received)&&delivered===(buy?delivered:out-protocol-quoteCuts))
  const pre={baseReserve:B(s.base_reserve)+(buy?out:-received),quoteReserve:B(s.quote_reserve)+(buy?-curveInput:out)+outputShare-held,
@@ -310,7 +311,7 @@ function verifyShareTrade({ci,plan,tx,fee,events,swapAt,createAt,graduateAt,code
  const deltas={[r.trader]:buy?-(fee+amount+rent):delivered-fee,[a.pool]:buy?received:-(delivered+quoteCuts),...(plan.createsHolding?{[a.traderBase]:rent}:{})}
  for(const d of quotePaid)deltas[d.holding]=(deltas[d.holding]??0n)+d.amount
  return {curveAsReviewed:B(s.virtual_base)===B(reviewed.virtual_base)&&B(s.virtual_quote)===B(reviewed.virtual_quote),lamportDeltas:Object.fromEntries(Object.entries(deltas).map(([k,v])=>[k,String(v)])),
-  quote:{...q,amountIn:String(amount),requestedInput:String(requested),unspentInput:String(requested-amount),minAmountOut:String(minimum),delivered:String(delivered),grossCreatorFee:String(cut.creator),netCreatorFee:String(cut.creator),customQuoteCut:String(cut.custom),protocolFee:String(protocol),platformCollector:config.fee_collector.toBase58(),
+  quote:{...q,amountIn:String(amount),requestedInput:String(requested),unspentInput:String(requested-amount),minAmountOut:String(minimum),delivered:String(delivered),grossCreatorFee:String(cut.total),netCreatorFee:String(creatorNet),customQuoteCut:String(cut.custom),protocolFee:String(protocol),platformCollector:config.fee_collector.toBase58(),
    burnedToken:String(burnIn+burnOut),hookTokenFee:String(baseCuts),hookQuoteFee:String(cut.custom),feeBreakdown:Object.fromEntries(Object.entries(actual.fees).map(([k,v])=>[k,String(v)])),
    priceImpactBps:String(actual.priceImpactBps),priceImpactReviewBoundExceeded:actual.priceImpactBps>BigInt(r.maxPriceImpactBps),protocolFeesQuoteAccrued:String(protocol),
    after:{baseReserve:graduation?.baseReserve??n(s.base_reserve),quoteReserve:n(s.quote_reserve),protocolFeesQuote:null,swapCount:n(s.swap_count),traderBase:String(traderAfter)}},

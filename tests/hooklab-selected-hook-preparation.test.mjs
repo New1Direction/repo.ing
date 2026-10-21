@@ -34,10 +34,16 @@ for (const [name, mutate] of [
   ['wrong flags', f => { f.request.selectedHook.flags = 1 }],
   ['debit cap', f => { f.limits.maxTotalDebitLamports = '11999' }],
   ['network fee cap', f => { f.limits.maxNetworkFeeLamports = '9999' }],
-  ['unoffered creator fee', f => { f.request.creatorFeeBps = 99 }],
+  ['above creator fee ceiling', f => { f.request.creatorFeeBps = 1001 }],
   ['mint already exists', f => { for (const o of f.observations) o.accounts[6].account = { ...o.accounts[8].account, address: f.request.mint } }],
   ['separate fee payer adds a signer', f => { f.request.feePayer = f.request.mint }],
 ]) test(`planner rejects ${name}`, () => { const f = fixture(); mutate(f); assert.throws(() => planSelectedHookPreparation(f)) })
+test('selected preparation accepts arbitrary integer fees including zero without a profile menu', () => {
+  for (const creatorFeeBps of [0, 99, 137]) {
+    const f = fixture(); f.request.creatorFeeBps = creatorFeeBps
+    assert.doesNotThrow(() => planSelectedHookPreparation(f))
+  }
+})
 test('missing registry explicitly requires creator initialization without mint replacement', async () => {
   const f = fixture(); for (const o of f.observations) o.accounts[5].account = null
   assert.throws(() => planSelectedHookPreparation(f), { code: 'SELECTED_HOOK_REGISTRY_REQUIRED' })

@@ -1,5 +1,5 @@
 // Complete server composition, opt-in only. No credentials or endpoint discovery.
-import { isApprovedLaunchChoice } from './hooklab-launch-menus.mjs'
+import { isApprovedLaunchChoice,isOpenCreatorFeeChoice } from './hooklab-launch-menus.mjs'
 import { nativeSignerCustodyStore } from './hooklab-native-signer-custody-store.mjs'
 import { nativeCustodySigningAdapter } from './hooklab-native-custody-signing.mjs'
 import { nativeSigningLifecycle } from './hooklab-native-signing.mjs'
@@ -102,7 +102,7 @@ export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustod
    try{
     // Creator rate is an explicit immutable approved profile/configuration input; an open launch's comes from the chain.
     const reviewedProfile=JSON.parse(profile.json)
-    if(openLaunches){const chain=await openCreation();if(!chain.native||!chain.open||chain.paused||!chain.creatorFeeBps.includes(input.creatorFeeBps)||(input.selectedHook?input.capBps!==0:!chain.capBps.includes(input.capBps)))throw Error()}
+    if(openLaunches){const chain=await openCreation();if(!chain.native||!chain.open||chain.paused||!isOpenCreatorFeeChoice(input,chain)||(input.selectedHook?input.capBps!==0:!chain.capBps.includes(input.capBps)))throw Error()}
     else if(reviewedProfile.capability.creatorFeeBpsChoices?!isApprovedLaunchChoice(reviewedProfile,input):input.creatorFeeBps!==config.economics.creatorFeeBps)throw Error()
     let publication
     if(input.selectedHook){

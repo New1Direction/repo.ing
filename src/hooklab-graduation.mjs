@@ -3,7 +3,7 @@
 // graduation_topup, initial_lp, max_swap_in) and graduate.rs/finalize_curve; tests/fixtures/hooklab-graduation-vectors.json
 // pins every function to the Rust. Display and estimates only: nothing here signs or sends.
 import { inclusiveCreatorFee } from './hooklab-inclusive-fee-quote.mjs'
-import { shareCreatorCuts, shareProtocol } from './hooklab-share-fee-quote.mjs'
+import { shareCreatorCuts } from './hooklab-share-fee-quote.mjs'
 
 const BPS = 10000n, MINIMUM_LIQUIDITY = 1000n, WAD = 10n ** 18n, U64 = (1n << 64n) - 1n
 const u64 = v => { const n = BigInt(v); if (n < 0n || n > U64) throw Error('INVALID_U64'); return n }
@@ -78,11 +78,11 @@ export function finalFillLamports(market) {
   const target = max(reaches, swapInForOut(1n, p.quoteReserve, p.virtualQuote, p.baseReserve, p.virtualBase) ?? 1n)
   if (shareModel) {
     // An unmeasured display estimate: custom callback cuts and token deductions
-    // are still measured before signing. Model 1 pays its protocol share on top.
+    // are still measured before signing. Platform share comes from the gross fee.
     const net = amount => {
       const cuts = shareCreatorCuts({ amount, creatorFeeBps: BigInt(feeBps) })
       const received = amount - cuts.total
-      return received - ceilDiv(received * BigInt(market.lpFeeBps ?? 0), BPS) - shareProtocol(cuts.total, BigInt(market.protocolShareBps))
+      return received - ceilDiv(received * BigInt(market.lpFeeBps ?? 0), BPS)
     }
     let low = 0n, high = target
     while (net(high) < target) {

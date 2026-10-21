@@ -6,12 +6,21 @@ import { createHash } from 'node:crypto'
 import { BorshCoder } from '@anchor-lang/core'
 import { planInclusiveMaxWalletPreparation } from '../src/hooklab-inclusive-max-wallet-preparation.mjs'
 import { inclusiveMaxWalletProfileSchema } from '../src/hooklab-inclusive-max-wallet-profile.mjs'
-import { CREATOR_FEE_BPS_CHOICES,DEFAULT_CREATOR_FEE_BPS,WALLET_CAP_BPS_CHOICES,DEFAULT_WALLET_CAP_BPS,CREATOR_FEE_CEILING_BPS,isApprovedLaunchChoice } from '../src/hooklab-launch-menus.mjs'
+import { CREATOR_FEE_BPS_CHOICES,DEFAULT_CREATOR_FEE_BPS,WALLET_CAP_BPS_CHOICES,DEFAULT_WALLET_CAP_BPS,CREATOR_FEE_CEILING_BPS,isApprovedLaunchChoice,isOpenCreatorFeeChoice } from '../src/hooklab-launch-menus.mjs'
 import { inclusiveMaxWalletPreparationFixture } from './fixtures/hooklab-inclusive-max-wallet-preparation.mjs'
 import { missingInclusiveArtifacts } from './fixtures/hooklab-generated-artifact.mjs'
 const inclusiveVector = missingInclusiveArtifacts(['inclusive-builder-vector.json'])
 
 const menus={creatorFeeBpsChoices:[...CREATOR_FEE_BPS_CHOICES],capBpsChoices:[...WALLET_CAP_BPS_CHOICES],defaultCapBps:DEFAULT_WALLET_CAP_BPS}
+test('selected fees use the live ceiling while gates retain their discrete menu',()=>{
+ const chain={creatorFeeBps:[50,100,200],maxCreatorFeeBps:200}
+ for(const creatorFeeBps of [0,1,99,137,200])assert.ok(isOpenCreatorFeeChoice({creatorFeeBps,selectedHook:{}},chain))
+ for(const creatorFeeBps of ['',null,-1,1.5,201,1000,NaN])assert.equal(isOpenCreatorFeeChoice({creatorFeeBps,selectedHook:{}},chain),false)
+ assert.equal(isOpenCreatorFeeChoice({creatorFeeBps:0,selectedHook:{}},{...chain,maxCreatorFeeBps:undefined}),false)
+ assert.equal(isOpenCreatorFeeChoice({creatorFeeBps:137,selectedHook:{}},{...chain,maxCreatorFeeBps:136}),false)
+ for(const creatorFeeBps of [0,99,137])assert.equal(isOpenCreatorFeeChoice({creatorFeeBps},chain),false)
+ for(const creatorFeeBps of chain.creatorFeeBps)assert.ok(isOpenCreatorFeeChoice({creatorFeeBps},chain))
+})
 function withMenus(f,{creatorFeeBps,capBps,ceiling}={}){
  const profile=JSON.parse(f.profile.json);profile.capability={...profile.capability,...menus,creatorFeeBps:DEFAULT_CREATOR_FEE_BPS}
  const json=JSON.stringify(profile);f.profile={...f.profile,json,expectedSha256:createHash('sha256').update(json).digest('hex')}

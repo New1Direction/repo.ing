@@ -68,7 +68,7 @@ export function createLaunchRequestsHandler({env=process.env,configuration=walle
    let launchRequest
    if(input.action==='create'&&open&&!(chain?.native&&chain.open&&!chain.paused))return reply({error:'Launches are paused right now. Try again later.'},409)
    if(input.action==='create')launchRequest=await approvals.createRequest(owner.wallet,{id:input.requestId,name:input.name,symbol:input.symbol,uri:(input.selectedHook?selectedCoinMetadataUri:coinMetadataUri)(config.origin,input.requestId),creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,...(input.selectedHook?{selectedHook:input.selectedHook,hookPublication:input.hookPublication,...Object.fromEntries(['quoteCut','authorShareBps','rules'].filter(k=>input[k]!==undefined).map(k=>[k,input[k]]))}:{})},profile,
-    open?{source:'open',menus:{creatorFeeBps:chain.creatorFeeBps,capBps:chain.capBps}}:{})
+    open?{source:'open',menus:{creatorFeeBps:chain.creatorFeeBps,maxCreatorFeeBps:chain.maxCreatorFeeBps,capBps:chain.capBps}}:{})
    else if(input.action==='cancel')launchRequest=await approvals.cancelRequest(owner.wallet,input.requestId)
    else launchRequest=await approvals.requestFor(owner.wallet)
    return reply({status:'available',request:launchRequest,...(open?{open:true,openCreation:publicOpenCreation(chain)}:await approvals.availability())})

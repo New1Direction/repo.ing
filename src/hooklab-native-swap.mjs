@@ -144,7 +144,7 @@ export function selectedNativeMeasuredQuote(r, pool, tokenDeltas, a, economics =
     const q = shareNativeQuote({ ...parameters, burnOut, tokenOutputTax })
     if (buy && tokenDeltas && !r.graduate) check(-BigInt(tokenDeltas[a.baseVault]) === q.grossOutput, 'Selected vault debit differs')
     const x = buy ? pool.quoteReserve + pool.virtualQuote : pool.baseReserve + pool.virtualBase
-    return { ...q, traderDebit: debit, fees: { ...q.fees, grossQuote: q.fees.creatorQuote,
+    return { ...q, traderDebit: debit, fees: { ...q.fees,
       platformQuote: q.fees.protocolQuote }, priceImpactBps: (q.curveInput * 10000n + x + q.curveInput - 1n) / (x + q.curveInput) }
   }
   let fees = inclusiveCreatorFee(buy ? amount : 0n, r.creatorFeeBps)
@@ -300,7 +300,7 @@ export function compileNativeSwapReview(input) {
     cap = n(policy.initial_supply) * BigInt(r.capBps) / 10000n
     check(cap > 0n && registry.equals(Buffer.concat([Buffer.from('02daf6662c38c0cd01020000000000', 'hex'), kb(a.policy), Buffer.from([0, 0]), kb(a.launch)])), 'Cap or exact max-wallet registry differs')
   } else {
-    check(approvedCreatorFees(profile).includes(r.creatorFeeBps) && accounts.get(a.policy) === null && accounts.get(a.registry) === null, 'Selected hook must not use gate policy')
+    check(accounts.get(a.policy) === null && accounts.get(a.registry) === null, 'Selected hook must not use gate policy')
     check(hookEvidence.programData && raw(hookEvidence.programData.dataBase64, 10485805).readBigUInt64LE(4) <= BigInt(Math.min(...obs.map(o => o.slot))), 'Selected hook deploy slot differs')
     check(hookPlan.extras.every(x => !roles.includes(x.address) && x.address !== r.trader && x.address !== a.traderBase), 'Selected extra aliases a principal')
   }
@@ -470,7 +470,7 @@ export function compileNativeSwapReview(input) {
   const canonical = instructions.map(ix => ({ program: str(ix.programId), dataHex: ix.data.toString('hex'), accounts: ix.keys.map(m => review.accounts.find(x => x.address === str(m.pubkey))) }))
   check(isDeepStrictEqual(inspected.instructions, canonical), 'Effective swap envelope metas differ')
   // Exact lamport movement of every account the trade pays or is paid by; nothing else may change.
-  const consumed = q.traderDebit ?? amount, launchCredit = creator + (q.fees.customQuote ?? 0n)
+  const consumed = q.traderDebit ?? amount, launchCredit = creator
   const lamportDeltas = { [r.trader]: buy ? -(fee + consumed + rentNow) : q.delivered - fee, [a.launch]: launchCredit, [a.pool]: buy ? consumed - launchCredit : -(q.delivered + launchCredit),
     ...(createsHolding ? { [a.traderBase]: rentNow } : {}) }
   return freeze({ schema: 'repoing/native-swap-review/1', status: nongate ? selectedTokenDeltas ? 'measured-review-not-authorization' : 'simulation-required-not-authorization' : 'deterministic-review-not-authorization', provenance, request: r, releaseProfileSha256: envelope.expectedSha256,

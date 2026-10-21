@@ -40,12 +40,23 @@ test('custom hook configuration and review never advertise a signing-ready gate 
   assert.doesNotMatch(text(review), /No wallet holding limit|no maximum holding per wallet/i)
   assert.doesNotMatch(review, /Sign and launch|Approve twice|<input/)
   const ready=html(h(OpenLaunchReview,{coin:custom,openCreation:{...openCreation,selectedHooksEnabled:true},onSign(){}}))
-  assert.match(text(ready),/additional protocol charges/)
+  assert.match(text(ready),/same quote fee budget/)
   assert.match(text(ready),/approve three times/)
   assert.doesNotMatch(text(ready),/Registry setup is separate|Inclusive fee policy \(model 2\)/)
   const setup=html(h(OpenLaunchSigning,{symbol:'CSTM',stage:'hook-setup',selectedHook:custom.selectedHook,review:{messageSha256:'a'.repeat(64),maxNativeDebitLamports:'15000'},canRetry:true}))
   assert.match(text(setup),/Approve hook setup.*Approve launch configuration.*Approve the launch/)
   assert.match(text(setup),/15000 lamports/)
+})
+
+test('selected creator fee accepts zero and non-menu values with the live ceiling, not presets', () => {
+  for (const creatorFeeBps of [0, 137, '']) {
+    const custom = { ...coin, creatorFeeBps, hookKind: 'selected', capBps: 0, selectedHook: { program: 'So11111111111111111111111111111111111111112', flags: 129 } }
+    const markup = html(h(HookOpenLaunch, { genesisHash, initial: { availability, coin: custom } }), { wallet: true })
+    assert.match(markup, /id="selected-creator-fee"/)
+    assert.match(markup, /min="0" max="200" step="1"/)
+    assert.match(markup, new RegExp(`value="${creatorFeeBps}"`))
+    assert.doesNotMatch(text(markup), /additional protocol charges|not deducted from creator revenue/i)
+  }
 })
 
 test('the review screen pays out only the essentials, every figure from the chain or server', () => {

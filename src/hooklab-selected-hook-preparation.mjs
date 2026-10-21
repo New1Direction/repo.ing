@@ -9,7 +9,6 @@ import { parseInclusiveMaxWalletProfile } from './hooklab-inclusive-max-wallet-p
 import { selectedHookSchema, selectedHookAccountPlan } from './hooklab-selected-hook.mjs'
 import { selectedHookAuthorityEvidenceSchema } from './hooklab-selected-hook-compatibility.mjs'
 import { parseLaunchConfigReserved } from './hooklab-launch-config-reserved.mjs'
-import { approvedCreatorFees } from './hooklab-launch-menus.mjs'
 import { profileRolesDistinct, otherPrograms, kitOf } from './hooklab-stack.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
 const check = (v, m) => { if (!v) throw Error(m) }
@@ -139,7 +138,7 @@ export function planSelectedHookPreparation(input) {
     assertSelectedHookRuleBounds(r, c)
     check(launchConfigBytes.length === 250 && canonical.equals(launchConfigBytes) && c.version === 1
       && c.bump === PublicKey.findProgramAddressSync([Buffer.from('config')], pk(L))[1] && menu, 'Launch configuration layout differs')
-    check(menu.native && menu.open && !c.paused && menu.creatorFeeBps.includes(r.creatorFeeBps) && approvedCreatorFees(p).includes(r.creatorFeeBps)
+    check(menu.native && menu.open && !c.paused
       && r.creatorFeeBps <= c.max_creator_fee_bps && r.creatorFeeBps <= c.rule_bounds.max_rules_fee_bps
       && c.quote_mint.toBase58() === p.quoteMint && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0
       && BigInt(c.supply.toString()) > 0n, 'Selected-hook launch economics or native/open menu differs')

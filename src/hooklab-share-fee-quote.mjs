@@ -1,6 +1,6 @@
-// Pure source-candidate model 1 math, pinned Bordrless 7fde54001d7f0c88b17c87babf73fb40be07b3cb.
-// Mirrors core creator_and_holder_fees, quote_cut_fee, swap_amounts_shared,
-// output_share, launch_fill and the native run_swap accounting. Does not authorize a trade.
+// Pure independent native model 1 math. Creator quote deltas are gross budgets:
+// platform share rounds down inside that budget; creator receives the remainder.
+// Mirrors creator_and_holder_fees, quote_cut_fee, launch_fill and native settlement.
 const U64 = (1n << 64n) - 1n, U128 = (1n << 128n) - 1n, BPS = 10000n
 const check = (ok, code) => { if (!ok) throw Error(code) }
 const amount = n => { check(typeof n === 'bigint' && n >= 0n && n <= U64, 'INVALID_U64'); return n }
@@ -9,7 +9,7 @@ const ceil = (n, d) => { check(d > 0n, 'ZERO_DENOMINATOR'); return (n + d - 1n) 
 const fee = (n, bps) => amount(ceil(n * bps, BPS))
 const positive = (n, code) => { check(n > 0n, code); return amount(n) }
 
-/** All arguments are BigInts. Share is additional to (never deducted from) creator revenue. */
+/** Ceiling-rounded rate primitive, also used for the separate LP fee. */
 export function shareProtocol(value, bps) {
   return fee(amount(value), rate(bps))
 }
@@ -72,9 +72,9 @@ export function shareNativeQuote(input) {
   }
   const cuts = n => shareCreatorCuts({ amount: n, creatorFeeBps, quoteCutBps })
   const buyLeg = n => {
-    const cut = cuts(n), received = n - cut.total
-    const lp = fee(received, lpFeeBps), share = shareProtocol(cut.total, shareBps)
-    return { cut, received, lp, share, net: received - lp - share }
+    const cut = cuts(n), share = cut.total * shareBps / BPS
+    const priced = n - cut.total, lp = fee(priced, lpFeeBps)
+    return { cut, received: priced + share, lp, share, net: priced - lp }
   }
   let amountIn = requested, filled = false
   if (buy && allowPartialFill && pool.baseReserve > 0n && curve(requested) >= pool.baseReserve) {
@@ -114,11 +114,12 @@ export function shareNativeQuote(input) {
   const protocolIn = amount(lpProtocolQuote + inputShareQuote)
   const amountOutBeforeHooks = positive(grossOutput - (buy ? 0n : protocolIn), 'FEES_EXCEED_OUTPUT')
   if (!buy) cut = cuts(amountOutBeforeHooks)
-  const heldBack = buy ? 0n : shareProtocol(cut.total, shareBps)
-  const delivered = positive(amountOutBeforeHooks - (buy ? burnOut + input.tokenOutputTax : cut.total + heldBack), 'FEES_EXCEED_OUTPUT')
+  const creatorShare = cut.total * shareBps / BPS, creatorNet = cut.total - creatorShare
+  const heldBack = buy ? 0n : creatorShare
+  const delivered = positive(amountOutBeforeHooks - (buy ? burnOut + input.tokenOutputTax : cut.total), 'FEES_EXCEED_OUTPUT')
   const cutsIn = amount(amountIn - burnIn - receivedIn)
   const cutsOut = amount(amountOutBeforeHooks - burnOut - heldBack - delivered)
-  const outputShareQuote = buy ? 0n : shareProtocol(cutsOut, shareBps)
+  const outputShareQuote = buy ? 0n : creatorShare
   const minAmountOut = input.minAmountOut * amountIn / requested
   check(delivered >= minAmountOut, 'MIN_OUTPUT')
   const protocolQuote = amount(protocolIn + outputShareQuote)
@@ -128,12 +129,12 @@ export function shareNativeQuote(input) {
     protocolFeesQuote: amount(pool.protocolFeesQuote + protocolQuote),
   })
   amount(after.quoteReserve + after.protocolFeesQuote)
-  const fees = Object.freeze({ creatorQuote: cut.creator, customQuote: cut.custom, lpFee: 0n,
+  const fees = Object.freeze({ grossQuote: cut.total, creatorQuote: creatorNet, customQuote: cut.custom, lpFee: 0n,
     lpProtocolQuote, inputShareQuote, outputShareQuote, protocolQuote })
   return Object.freeze({ kind: 'source-candidate-share-quote/1', feeModel: 1,
     protocolShareBps: shareBps, requestedInput: requested, amountIn, unspentInput: requested - amountIn,
     filled, receivedIn, curveInput, grossOutput, amountOutBeforeHooks, delivered, cutsIn, cutsOut,
     burnIn, burnOut, minAmountOut, fees, after,
-    quoteVaultDelta: buy ? receivedIn : -(delivered + cut.total),
+    quoteVaultDelta: buy ? receivedIn : -(delivered + creatorNet),
     executable: false, sbfValidated: false, artifactAdopted: false, canSign: false, canSubmit: false })
 }

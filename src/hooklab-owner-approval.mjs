@@ -4,7 +4,7 @@
 import { createHash,createPublicKey,randomUUID,verify } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { z } from 'zod'
-import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES } from './hooklab-launch-menus.mjs'
+import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES,isOpenCreatorFeeChoice } from './hooklab-launch-menus.mjs'
 import { UNSAFE_TEXT,coinProfileFields } from './hooklab-coin-profile.mjs'
 import { STANDARD_VIRTUAL_QUOTE,checkLaunchPricing } from './hooklab-launch-pricing.mjs'
 import { checkLiveBounds } from './hooklab-launch-bounds.mjs'
@@ -28,11 +28,12 @@ export const launchIntentSchema=z.object({name:text(32),symbol:text(10),uri:z.st
  creatorFeeBps:z.number().int().refine(x=>CREATOR_FEE_BPS_CHOICES.includes(x)),capBps:z.number().int().refine(x=>WALLET_CAP_BPS_CHOICES.includes(x))}).strict()
 
 const parseIntent=intent=>{try{return launchIntentSchema.parse(intent)}catch{throw fail('Choose a name, symbol, an approved creator fee (0.5%, 1% or 2%) and an approved wallet cap (1%, 2%, 3% or 5%)')}}
-// An open request chooses from the chain's menus, not the release code's.
+// Open gate requests use chain menus; selected-hook fees use the current chain ceiling.
 const openIntentSchema=menus=>z.object({name:text(32),symbol:text(10),uri:z.string().refine(x=>Buffer.byteLength(x)<=200),
- creatorFeeBps:z.number().int().refine(x=>menus.creatorFeeBps.includes(x)),capBps:z.number().int(),selectedHook:selectedHookSchema.optional(),hookPublication:hookPublicationSelectionSchema.optional(),...economicsSchema.shape}).strict()
+ creatorFeeBps:z.number().int().min(0),capBps:z.number().int(),selectedHook:selectedHookSchema.optional(),hookPublication:hookPublicationSelectionSchema.optional(),...economicsSchema.shape}).strict()
+ .refine(x=>isOpenCreatorFeeChoice(x,menus))
  .refine(x=>x.selectedHook?x.capBps===0:menus.capBps.includes(x.capBps)&&x.capBps>0&&Object.keys(economics(x)).length===0)
-const parseOpenIntent=(intent,menus)=>{try{return openIntentSchema(menus).parse(intent)}catch{throw fail('Choose a name, a symbol, and a creator fee and max per wallet from the current list')}}
+const parseOpenIntent=(intent,menus)=>{try{return openIntentSchema(menus).parse(intent)}catch{throw fail(intent.selectedHook?'Choose a name, a symbol, and an integer creator fee within the current chain ceiling; selected hooks require cap zero':'Choose a name, a symbol, and a creator fee and max per wallet from the current list')}}
 
 export function verifyEd25519(signerAddress,message,signature){
  try{
@@ -220,7 +221,7 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
   async bindOpenLaunch(db,creator,custodyOperationId,{virtualQuote,pricing,...intent}){
    check(openLaunches,'Open launches are not enabled')
    if(intent.selectedHook&&!selectedHooksEnabled)refuseUnsupportedSelectedHook()
-   const value=parseOpenIntent(intent,{creatorFeeBps:[intent.creatorFeeBps],capBps:[intent.capBps]}),fixed=checkLaunchPricing(pricing)
+   const value=parseOpenIntent(intent,{creatorFeeBps:[intent.creatorFeeBps],maxCreatorFeeBps:intent.creatorFeeBps,capBps:[intent.capBps]}),fixed=checkLaunchPricing(pricing)
    check(String(virtualQuote)===fixed.virtualQuote,'The opening price differs from the price repo.ing fixed')
    const {rows:[row]}=await db.query("select * from hook_lab_launch_requests where creator_wallet=$1 and source='open' and status in ('queued','launching') for update",[address.parse(creator)])
    check(row,'Create your coin first')

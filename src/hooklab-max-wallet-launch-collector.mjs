@@ -133,7 +133,7 @@ function openLaunchState(config,request){
  if(config.paused)throw launchesPaused()
  if(!reserved?.native)throw refuse(openLaunchErrorText(6103))
  if(!reserved.open)throw refuse(openLaunchErrorText(6120))
- if(!reserved.creatorFeeBps.includes(request.creatorFeeBps)||request.creatorFeeBps>openCreatorFeeCeiling(config)||(request.policyKind!=='selected-hook'&&!reserved.capBps.includes(request.capBps)))throw refuse(openLaunchErrorText(6121))
+ if((request.policyKind!=='selected-hook'&&!reserved.creatorFeeBps.includes(request.creatorFeeBps))||request.creatorFeeBps>openCreatorFeeCeiling(config)||(request.policyKind!=='selected-hook'&&!reserved.capBps.includes(request.capBps)))throw refuse(openLaunchErrorText(6121))
 }
 async function collectLaunchReview({config,profile,dossierJson,connections,preparation,request,selectedAuthorityEvidence,supplementalTable,limits,expectedReview,clock=Date.now,nativeLaunches=false,open=false}){
  const {config:c,profile:p,dossier:d}=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections})
