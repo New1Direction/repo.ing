@@ -11,7 +11,7 @@ const economics = { quoteCut: { maxBuyBps: 123, maxSellBps: 0 }, authorShareBps:
 function nodes(node) { return !node || typeof node !== 'object' ? [] : [node, ...[node.props?.children].flat(Infinity).flatMap(nodes)] }
 
 test('approval copy keeps costs and permanent effects visible while diagnostics start collapsed', () => {
-  const review = { maxNativeDebitLamports: '5740040', messageSha256: 'a'.repeat(64), supplementalTableCost: {
+  const review = { baseFeeLamports: '5000', maxFeeLamports: '10000', maxNativeDebitLamports: '5740040', messageSha256: 'a'.repeat(64), supplementalTableCost: {
     address: selected.selectedHook.program, rentLamports: '5735040', permanentFreeze: true,
   } }
   const doc = new JSDOM(html(h(OpenLaunchSigning, { symbol: 'CSTM', stage: 'hook-setup', selectedHook: selected.selectedHook,
@@ -25,6 +25,8 @@ test('approval copy keeps costs and permanent effects visible while diagnostics 
   const visible = doc.body.textContent
   assert.match(visible, /5735040 lamports/)
   assert.match(visible, /5740040 lamports/)
+  assert.match(visible, /Base network fee: 5000 lamports/)
+  assert.match(visible, /Network fee limit: 10000 lamports/)
   assert.match(visible, /rent cannot be reclaimed/)
   assert.match(visible, /permanently freezes/)
   assert.match(visible, /wallet approval/i)

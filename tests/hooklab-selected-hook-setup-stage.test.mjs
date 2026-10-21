@@ -11,13 +11,13 @@ import { nativeCustodySigningAdapter } from '../src/hooklab-native-custody-signi
 import { nextOpenLaunchAction, sameLaunchHook } from '../app/lib/hooklab-open-launch.mjs'
 const key = n => Keypair.fromSeed(Buffer.alloc(32,n)).publicKey.toBase58()
 const sha = b => createHash('sha256').update(b).digest('hex')
-function fixture() {
+function fixture(withAuthority=false) {
  const signer=Keypair.fromSeed(Buffer.alloc(32,1)),creator=key(1),mint=key(2),selectedHook={program:key(3),flags:65},selectedConfig=key(12)
  const manifest=taxHookSetupManifest(selectedHook),configuration={feeBps:'100',maxWalletBps:'0',collector:key(4)}
  const programData=PublicKey.findProgramAddressSync([new PublicKey(selectedHook.program).toBuffer()],new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111'))[0].toBase58()
  const pb=Buffer.alloc(36);pb.writeUInt32LE(2);new PublicKey(programData).toBuffer().copy(pb,4)
  const db=Buffer.alloc(49);db.writeUInt32LE(3);Buffer.from([127,69,76,70]).copy(db,45)
- const hookPin={program:selectedHook.program,elfSha256:sha(db.subarray(45))}
+ const hookPin={program:selectedHook.program,elfSha256:sha(db.subarray(45)),...(withAuthority?{elfLength:4}:{})}
  const publication={schema:'repoing/hook-publication/1',publisher:key(11),name:'Synthetic hook',version:'1',selectedHook,manifest,behavior:'Test',fees:'Test',risks:'Test',evidence:{hookPin,authority:{kind:'immutable'}}}
  const digest=hookPublicationDigest(publication),selection={digest,manifest,configuration}
  const request=materializeHookSetup(manifest,configuration,{creator,mint})
@@ -25,6 +25,12 @@ function fixture() {
  const account=(address,owner,data,executable=false)=>({address,owner,dataBase64:data.toString('base64'),executable,lamports:'100000'})
  const snapshots=[...new Set([creator,selectedHook.program,programData,'ComputeBudget111111111111111111111111111111',...request.instructions[0].accounts.map(a=>a.address)])].map(address=>({address,account:address===creator?account(address,'11111111111111111111111111111111',Buffer.alloc(0)):address===selectedHook.program?account(address,'BPFLoaderUpgradeab1e11111111111111111111111',pb,true):address===programData?account(address,'BPFLoaderUpgradeab1e11111111111111111111111',db):null}))
  const input={request,programs:{token:key(5),swap:key(6),launch:key(7),gate:key(8)},hookPin,snapshots,context:{genesisHash:key(9),profileSha256:'a'.repeat(64),recentBlockhash:key(10),observedSlot:40,validUntilSlot:90,observedAtMs:1000,reviewExpiresAtMs:2000,lastValidBlockHeight:150,baseFeeLamports:'5000'},limits:{computeUnits:200000,maxRentLamports:'10000',maxNetworkFeeLamports:'5000',maxTotalDebitLamports:'15000'}}
+ if(withAuthority){
+  const identity=address=>{const {lamports,...rest}=snapshots.find(a=>a.address===address).account;return rest}
+  input.selectedAuthorityEvidence={schema:'repoing/selected-hook-authority-evidence/2',genesisHash:key(9),policySha256:'b'.repeat(64),hookPin,
+   programAccount:identity(selectedHook.program),programData:identity(programData),authority:{kind:'immutable',upgradeAuthority:null},
+   programSha256:sha(pb),programDataSha256:sha(db),executableSha256:hookPin.elfSha256,observedSlot:40,providers:['one','two']}
+ }
  const plan=planSelectedHookSetup(input),tx=new VersionedTransaction(VersionedMessage.deserialize(Buffer.from(plan.review.messageBase64,'base64')));tx.sign([signer])
  const wire=Buffer.from(tx.serialize()).toString('base64'),signature=bs58.encode(tx.signatures[0])
  let finalized=false,missingRegistry=false,badFee=false,differentWire=false,liveSlot=42
@@ -46,7 +52,7 @@ function fixture() {
  let row
  const pool={async query(sql,args){if(sql.includes('select publication'))return {rows:[{publication}]};if(sql.includes('from hook_lab_launch_requests'))return {rows:[{creator_wallet:creator,selected_hook:selectedHook,hook_publication:selection,status:'launching'}]};if(sql.startsWith('insert into hook_lab_selected_hook_setup_intents')){row??={custody_operation_id:args[0],owner_wallet:args[1],profile_sha256:args[2],mint:args[3],selected_config:args[4],hook_publication:args[5],setup_request:args[6]};return {rows:[]}};if(sql.includes('hook_lab_selected_hook_setup_intents'))return {rows:row?[row]:[]};throw Error(sql)}}
  const binding={custodyOperationId:randomUUID(),owner:creator,profileSha256:'a'.repeat(64),mint,selectedConfig,selectedHook,hookPublication:selection}
- const settings={enabled:true,releaseVerified:true,connections,collectPlan:async()=>structuredClone(input),observe:async()=>publication.evidence,authorize:async()=>({owner:creator,profileSha256:'a'.repeat(64),mint,selectedConfig}),clock:()=>1200}
+ const settings={enabled:true,releaseVerified:true,connections,collectPlan:async()=>structuredClone(input),observe:async()=>publication.evidence,authorize:async()=>({owner:creator,profileSha256:'a'.repeat(64),mint,selectedConfig,...(withAuthority?{selectedAuthorityEvidence:input.selectedAuthorityEvidence}:{})}),clock:()=>1200}
  return {creator,mint,selection,selectedHook,publication,pool,binding,settings,plan,wire,signature,connections,input,advance:()=>{liveSlot++},finalize:()=>{finalized=true},mutate:kind=>{missingRegistry=kind==='registry';badFee=kind==='fee';differentWire=kind==='wire'}}
 }
 test('catalog-bound setup survives resolver restart, refresh and duplicate reserve without replacing configuration or mint',async()=>{
@@ -69,6 +75,17 @@ test('setup settles only exact wire on two finalized providers with fee/debit an
  assert.equal((await collectSelectedHookSetupSettlement(args)).status,'unresolved')
  f.finalize();assert.equal((await collectSelectedHookSetupSettlement(args)).status,'finalized-success')
  for(const kind of ['registry','fee','wire']){f.mutate(kind);await assert.rejects(collectSelectedHookSetupSettlement(args))}
+})
+test('setup recovery refuses live authority changes against the original durable evidence',async()=>{
+ const f=fixture(true);await bindSelectedHookSetupIntent(f.pool,f.binding)
+ const identity={sessionToken:'synthetic',custodyOperationId:f.binding.custodyOperationId,owner:f.creator}
+ const first=await selectedHookSetupResolver(f.pool,f.settings).resolve(identity)
+ const args={...identity,configurationSha256:first.configurationSha256,settlementContext:JSON.parse(JSON.stringify(first.settlementContext)),review:first.review,signedTransactionBase64:f.wire,signature:f.signature}
+ const restarted=selectedHookSetupResolver(f.pool,{...f.settings,observe:async({stage,expectedEvidence})=>{
+  assert.equal(stage,'recovery');assert.deepEqual(expectedEvidence,f.input.selectedAuthorityEvidence)
+  throw Error('Synthetic changed executor authority')
+ }})
+ await assert.rejects(restarted.reconcile(args),/changed executor authority/)
 })
 test('custody hook-setup transitions never decrypt or reseal mint/config keys; intent tampering fails',async()=>{
  const f=fixture();await bindSelectedHookSetupIntent(f.pool,f.binding)

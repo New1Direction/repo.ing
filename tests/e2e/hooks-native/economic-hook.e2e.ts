@@ -8,14 +8,20 @@ import { taxHookSetupManifest } from '../../../src/hooklab-hook-catalog.mjs'
 import { connection, control, db, freshWallet, stack, until } from './support/stack.ts'
 import { approveSignatures } from './support/wallets.ts'
 import { finalizedOperations, operations } from './support/db.ts'
-import { accountKeys, authenticatedEvents, big, coinBalance, holdingAddress, lamportDelta, launchAccount, launchAddress, one, poolAccount, receipt, verifySignatures } from './support/chain.ts'
+import { accountKeys, authenticatedEvents, big, coders, coinBalance, holdingAddress, lamportDelta, launchAccount, launchAddress, one, poolAccount, receipt, verifySignatures } from './support/chain.ts'
 import { openLaunchPage, signInForLaunch, type OpenLaunched } from './support/open-flows.ts'
 import { freshBuyerOnCoinPage, prepareTrade, tradeResult } from './support/flows.ts'
 import { claimable, claimViaUi } from './support/claims.ts'
 import { expectSettlementIsReceipt } from './support/settlement.ts'
 import { SiteClient } from './support/site-client.ts'
 
-const SYMBOL = 'TAXV1', TAX_BPS = 200n
+// Run the same public lifecycle for both independently pinned implementations.
+// These hooks implement token callbacks, not the quote-cut callback: positive SOL
+// cut limits correctly make simulation refuse them. Exercise supported nonzero
+// burns instead. A separate author recipient is outside the V1 creator UI too.
+for (const role of ['selected', 'alternate'] as const) {
+const SYMBOL = role === 'selected' ? 'TAXV1' : 'RCPTV1', TAX_BPS = role === 'selected' ? 200n : 0n
+const BURN_BUY = 37n, BURN_SELL = 83n, AUTHOR_SHARE = 2500
 let coin: OpenLaunched, collector: string, creatorAccrued = 0n, platformAccrued = 0n
 let graduationSeen = false
 const hooks = () => {
@@ -23,8 +29,17 @@ const hooks = () => {
   if (!['127.0.0.1', 'localhost'].includes(new URL(stack.validator.url).hostname)) throw Error('Loopback chain required')
   return stack.selectedHooks
 }
+const activeHook = () => hooks().find(h => h.role === role)!
 const taxAddress = () => PublicKey.findProgramAddressSync([Buffer.from('tax'), new PublicKey(coin.mint).toBuffer()], new PublicKey(hooks()[0].program))[0]
 async function collected() {
+  if (role === 'alternate') {
+    const address = PublicKey.findProgramAddressSync([Buffer.from('receipts'), new PublicKey(coin.mint).toBuffer()], new PublicKey(activeHook().program))[0]
+    const a = await connection.getAccountInfo(address, 'finalized')
+    expect(a?.owner.toBase58()).toBe(activeHook().program)
+    expect(a!.data.length).toBe(82)
+    expect(Buffer.from(a!.data).subarray(42, 74).equals(new PublicKey(coin.mint).toBuffer())).toBe(true)
+    return Buffer.from(a!.data).readBigUInt64LE(74)
+  }
   const a = await connection.getAccountInfo(taxAddress(), 'finalized')
   expect(a?.owner.toBase58()).toBe(hooks()[0].program)
   // TaxConfig: discriminator, bump, mint, authority, fee/cap u16, two pubkeys, collected u64.
@@ -51,12 +66,13 @@ async function checkedTrade(op: any, wallet: string, before: bigint, collectorBe
   expect(tx.meta?.err).toBeNull(); verifySignatures(tx, wallet)
   const keys = accountKeys(tx)
   const invoked = (tx.meta?.innerInstructions ?? []).flatMap(g => g.instructions.map(ix => keys[ix.programIdIndex]))
-  expect(invoked.includes(hooks()[0].program)).toBe(true)
+  expect(invoked.includes(activeHook().program)).toBe(true)
+  expect(invoked.includes(hooks().find(h => h.role !== role)!.program)).toBe(false)
   expect(invoked.includes(stack.programs!.gate)).toBe(false)
   expect(tx.transaction.message.compiledInstructions.some(ix => keys[ix.programIdIndex] === stack.programs!.gate)).toBe(false)
   const paid = await collected() - before
   expect(paid > 0n).toBe(true)
-  expect(await coinBalance(coin.mint, collector) - collectorBefore).toBe(paid)
+  if (role === 'selected') expect(await coinBalance(coin.mint, collector) - collectorBefore).toBe(paid)
   const evidence = authenticatedEvents(tx), swaps = evidence.filter(e => e.program === 'swap')
   expect(evidence.some(e => e.name === 'InclusiveCreatorFeeAccrued')).toBe(false)
   const swap = one(swaps, 'Swapped'), native = one(swaps, 'SwappedNative'), buy = swap.direction === 1
@@ -69,19 +85,21 @@ async function checkedTrade(op: any, wallet: string, before: bigint, collectorBe
   const main = transfers.filter(e => e.index === swapEvent.index)
   expect(main.length).toBe(1); expect(main[0].caller).toBe(stack.programs!.swap)
   const transfer = main[0].data, gross = big(buy ? swap.amount_out : swap.amount_in)
-  expect(big(transfer.amount)).toBe(gross)
+  const burn = gross * (buy ? BURN_BUY : BURN_SELL) / 10000n
+  expect(big(transfer.amount)).toBe(gross - burn)
   expect(transfer[buy ? 'destination_owner' : 'source_owner'].toBase58()).toBe(wallet)
-  expect(big(buy ? swap.cuts_out : swap.cuts_in)).toBe((gross * TAX_BPS + 9999n) / 10000n)
-  expect(big(buy ? swap.burn_out : swap.burn_in)).toBe(0n)
+  expect(big(buy ? swap.cuts_out : swap.cuts_in)).toBe(((gross - burn) * TAX_BPS + 9999n) / 10000n)
+  expect(big(buy ? swap.burn_out : swap.burn_in)).toBe(burn)
+  expect(burn > 0n).toBe(true)
   // Graduation can transfer reserve top-up too. Check ceil tax per actual token transfer,
   // not once on their sum or only on the swap output.
   let tokenPaid = 0n
   for (const { data: t } of transfers) {
     const tax = (big(t.amount) * TAX_BPS + 9999n) / 10000n
-    expect(t.deltas.map((d: any) => [d.holding.toBase58(), big(d.amount)])).toEqual([[holdingAddress(coin.mint, collector), tax]])
+    expect(t.deltas.map((d: any) => [d.holding.toBase58(), big(d.amount)])).toEqual(role === 'selected' ? [[holdingAddress(coin.mint, collector), tax]] : [])
     tokenPaid += tax
   }
-  expect(paid).toBe(tokenPaid)
+  expect(paid).toBe(role === 'selected' ? tokenPaid : BigInt(transfers.length * 2))
   expect(big(buy ? transfer.destination_post : transfer.source_post)).toBe(await coinBalance(coin.mint, wallet))
   const quoteDeltas = buy ? swap.deltas_in : swap.deltas_out
   expect(quoteDeltas.length).toBe(1)
@@ -126,7 +144,7 @@ async function checkedTrade(op: any, wallet: string, before: bigint, collectorBe
   return tx
 }
 
-describe('local unreviewed economic selected-hook candidate', { serial: true }, () => {
+describe(`local unreviewed economic ${role} hook lifecycle`, { serial: true }, () => {
   test('both distinct catalogue candidates are genuinely immutable exact ELFs on the disposable chain', async () => {
     expect((await control('GET', '/health')).agent).toBe(false)
     const loader = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111')
@@ -143,14 +161,14 @@ describe('local unreviewed economic selected-hook candidate', { serial: true }, 
     }
   })
 
-  test('developer publishes distinct compatible hooks through the app; creator configures tax and signs journaled setup', { timeout: 900_000 }, async ({ app, screen, browser }) => {
+  test('developer publishes both hooks; creator selects this implementation and reviews nonzero economics', { timeout: 900_000 }, async ({ app, screen, browser }) => {
     const creator = await freshWallet(20); collector = (await freshWallet(1)).publicKey.toBase58()
     await openLaunchPage({ app, screen, browser }, creator)
     const approvals = await approveSignatures(browser)
     await app.open('/hooks/publish'); await signInForLaunch(screen)
     for (const h of hooks()) {
       const selectedHook = { program: h.program, flags: h.flags }
-      // Alternate receipt is discovery-only regression, not economic evidence.
+      // Both publications are exercised by the same launch/trade/claim lifecycle.
       const derived = (seed: string) => ({ kind: 'pda', program: 'selectedHook', seeds: [{ kind: 'bytes', hex: Buffer.from(seed).toString('hex') }, { kind: 'mint' }] })
       const manifest = h.role === 'selected' ? taxHookSetupManifest(selectedHook) : {
         schema: 'repoing/hook-setup-manifest/1', selectedHook, fields: [], instructions: [{
@@ -177,14 +195,28 @@ describe('local unreviewed economic selected-hook candidate', { serial: true }, 
       (await screen.getByRole('option', { name: h.name, exact: false }).count()) >= 1)
     const client = new SiteClient(creator); await client.signIn()
     const catalog = await fetch(new URL('/api/hook-lab/hook-catalog', stack.origin)).then(r => r.json())
-    const publication = catalog.publications.find((p: any) => p.selectedHook.program === hooks()[0].program && p.publisher === creator.publicKey.toBase58())
+    const publication = catalog.publications.find((p: any) => p.selectedHook.program === activeHook().program && p.publisher === creator.publicKey.toBase58())
     expect(!!publication).toBe(true)
     await screen.getByLabel('Published hook version').selectOption({ value: publication.digest })
-    await screen.getByLabel('Transfer fee (basis points)').fill(String(TAX_BPS))
-    await screen.getByLabel('Wallet cap (basis points; 0 disables)').fill('0'); await screen.getByLabel('Collector wallet').fill(collector)
+    if (role === 'selected') {
+      await screen.getByLabel('Transfer fee (basis points)').fill(String(TAX_BPS))
+      await screen.getByLabel('Wallet cap (basis points; 0 disables)').fill('0'); await screen.getByLabel('Collector wallet').fill(collector)
+    }
+    await screen.getByText('Advanced economics (optional)', { exact: true }).tap()
+    await screen.getByLabel('Author share of creator revenue', { exact: true }).selectOption({ value: 'configure' })
+    await screen.getByLabel('Author share (0–5000 bps)', { exact: true }).fill(String(AUTHOR_SHARE))
+    await screen.getByLabel('Token burn rules', { exact: true }).selectOption({ value: 'configure' })
+    await screen.getByLabel('Buy token burn', { exact: false }).fill(String(BURN_BUY))
+    await screen.getByLabel('Sell token burn', { exact: false }).fill(String(BURN_SELL))
     await screen.getByRole('group', { name: 'Creator fee' }).getByRole('button', { name: '1%', exact: true }).tap()
     await app.screenshot('economic-creator-configuration')
     await screen.getByRole('button', { name: 'Review your launch' }).tap(); await signInForLaunch(screen)
+    const review = screen.getByRole('region', { name: 'Check your launch' })
+    await expect(review).toContainText('Unconfigured (hook defaults)')
+    await expect(review).toContainText('2500 bps')
+    await expect(review).toContainText('Buy 37 bps · Sell 83 bps')
+    await expect(review).toContainText('It does not go to a separate recipient.')
+    await app.screenshot('economic-nonzero-launch-review')
     await screen.getByRole('button', { name: /^(Sign and launch|Check hook availability)$/ }).tap()
     const address = creator.publicKey.toBase58()
     for (const stage of ['hook-setup', 'preparation', 'launch']) {
@@ -240,6 +272,7 @@ describe('local unreviewed economic selected-hook candidate', { serial: true }, 
     const packetBytes = 1 + 64 * launchTx.transaction.message.header.numRequiredSignatures + launchTx.transaction.message.serialize().length
     expect(packetBytes <= 1232).toBe(true)
     expect(launchTx.transaction.message.addressTableLookups.some(t => t.accountKey.toBase58() === cost.address)).toBe(true)
+    if (role === 'selected') {
     const creations = authenticatedEvents(launchTx).filter(e => e.program === 'token' && e.name === 'HoldingCreated' && e.data.holding.toBase58() === holding)
     const created = one(creations, 'HoldingCreated'), launchKeys = accountKeys(launchTx)
     const launchIndex = launchTx.transaction.message.compiledInstructions.findIndex(ix => launchKeys[ix.programIdIndex] === stack.programs!.launch)
@@ -250,15 +283,33 @@ describe('local unreviewed economic selected-hook candidate', { serial: true }, 
     expect((await connection.getAccountInfo(new PublicKey(holding), 'finalized'))?.owner.toBase58()).toBe(stack.programs!.token)
     expect(await coinBalance(mint, collector)).toBe(0n)
     expect(lamportDelta(launchTx, holding) > 0n).toBe(true)
+    }
     expect(big((await poolAccount(pool)).value.protocol_fees_quote)).toBe(0n)
     expect((await poolAccount(pool)).value.fee_model).toBe(1)
     expect((await launchAccount(launch)).value.author_share_bps).toBe(0)
+    // V1 binds config author to the creator, so the effective on-chain share is
+    // deliberately zero even when a nonzero share was requested in the UI.
+    expect(launchOp.resolved_request.authorShareBps).toBe(AUTHOR_SHARE)
+    expect(launchOp.resolved_request.quoteCut).toBeUndefined()
+    const configInfo = await connection.getAccountInfo(new PublicKey(launchOp.resolved_request.selectedConfig), 'finalized')
+    expect(configInfo?.owner.toBase58()).toBe(stack.programs!.launch)
+    const config = coders.launch.accounts.decode('LaunchConfig', configInfo!.data)
+    expect(config.creator.toBase58()).toBe(address)
+    expect(config.author_share_bps).toBe(AUTHOR_SHARE)
+    expect(Buffer.from(config.reserved).readUInt16LE(1)).toBe(0)
+    expect(Buffer.from(config.reserved).readUInt16LE(3)).toBe(0)
+    expect((await launchAccount(launch)).value.rules.burn_buy_bps).toBe(Number(BURN_BUY))
+    expect((await launchAccount(launch)).value.rules.burn_sell_bps).toBe(Number(BURN_SELL))
     expect(await claimable(launch)).toBe(0n)
-    expect(await collected()).toBe(0n)
+    const launchTransfers = authenticatedEvents(launchTx).filter(e => e.program === 'token' && e.name === 'Transferred' && e.data.mint.toBase58() === mint)
+    expect(launchTransfers.length > 0).toBe(true)
+    // Launch seeds the reserve through token transfers too. The receipt hook
+    // records both callbacks even though the tax hook exempts this reserve seed.
+    expect(await collected()).toBe(role === 'alternate' ? BigInt(launchTransfers.length * 2) : 0n)
     await approvals.off()
   })
 
-  test('taxed curve buy/sell, reload and server restart retain receipts and pay the actual collector', { timeout: 900_000 }, async ({ app, screen, browser }) => {
+  test('asymmetric-burn curve buy/sell, reload and restart retain actual hook receipts', { timeout: 900_000 }, async ({ app, screen, browser }) => {
     const buyer = await freshBuyerOnCoinPage({ app, screen, browser }, coin.mint), approvals = await approveSignatures(browser)
     let before = await collected(), balance = await coinBalance(coin.mint, collector)
     await control('POST', '/rpc/faults', { holdNextSendMs: 8000 })
@@ -276,7 +327,7 @@ describe('local unreviewed economic selected-hook candidate', { serial: true }, 
     await app.screenshot('economic-curve-tax-payout'); await approvals.off()
   })
 
-  test('graduate via app exact buys, then tax postgraduation trades and claim real quote fees', { timeout: 3_600_000 }, async ({ app, screen, browser }) => {
+  test('graduate via exact app buys, burn postgraduation trades and claim real quote fees', { timeout: 3_600_000 }, async ({ app, screen, browser }) => {
     // No historical deterministic curve/model2 fill helper: every fill is estimated,
     // reviewed and signed through the current app. Fail boundedly if graduation stalls.
     for (let i = 0; i < 100 && (await launchAccount(coin.launch)).value.status === 0; i++) {
@@ -298,7 +349,7 @@ describe('local unreviewed economic selected-hook candidate', { serial: true }, 
     }
     await app.screenshot('economic-postgraduation-tax-payout'); await approvals.off()
     expect(creatorAccrued > 0n).toBe(true)
-    // No author share or donations in this fixture: claim all actual launch credits above rent,
+    // Same-wallet author configuration folds the share away: claim all launch credits above rent,
     // not a model2 creator remainder or a second split of model1's gross creator cut.
     expect(await claimable(coin.launch)).toBe(creatorAccrued)
     const claim = await claimViaUi({ app, screen, browser }, coin.creator, { ...coin, symbol: SYMBOL }, creatorAccrued)
@@ -323,8 +374,9 @@ describe('local unreviewed economic selected-hook candidate', { serial: true }, 
   test('server rejects browser-supplied executable assertions before any new signing', async () => {
     const client = new SiteClient(coin.creator); await client.signIn()
     const before = (await operations(coin.address)).map(op => [op.id, op.signature])
-    const response = await client.post('/api/hook-lab/hook-catalog', { action: 'select', digest: coin.reviewText, selectedHookPin: hooks()[0].pin })
+    const response = await client.post('/api/hook-lab/hook-catalog', { action: 'select', digest: coin.reviewText, selectedHookPin: activeHook().pin })
     expect(response.status >= 400 && response.status < 500).toBe(true)
     expect((await operations(coin.address)).map(op => [op.id, op.signature])).toEqual(before)
   })
 })
+}

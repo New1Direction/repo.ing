@@ -167,13 +167,14 @@ export async function collectSelectedHookSetupSettlement({ plan, expected, signe
  * observe must revalidate the catalog executable/authority against its original evidence.
  * authorize is the runtime's custody + principal accessor, returning owner/profile/mint/config.
  */
-export function selectedHookSetupResolver(pool, { enabled = false, releaseVerified = false, connections, profile, collectPlan, observe, authorize, clock = Date.now } = {}) {
+export function selectedHookSetupResolver(pool, { enabled = false, releaseVerified = false, requireAuthorityEvidence = false, connections, profile, collectPlan, observe, authorize, clock = Date.now } = {}) {
   const collect = collectPlan ?? (input => collectSelectedHookSetupPlanInput({ ...input, connections, profile, clock }))
   async function bound(input) {
     check(enabled && releaseVerified && typeof authorize === 'function')
     const custody = await authorize(input.sessionToken, input.custodyOperationId)
     const { rows: [row] } = await pool.query('select * from hook_lab_selected_hook_setup_intents where custody_operation_id=$1', [input.custodyOperationId])
     check(row && custody.owner === row.owner_wallet && (!input.owner || input.owner === row.owner_wallet) && custody.mint === row.mint && custody.selectedConfig === row.selected_config && custody.profileSha256 === row.profile_sha256)
+    check(!requireAuthorityEvidence || custody.selectedAuthorityEvidence)
     return { ...row, ...(custody.selectedAuthorityEvidence ? { selectedAuthorityEvidence: custody.selectedAuthorityEvidence } : {}) }
   }
   return Object.freeze({
@@ -207,6 +208,7 @@ export function selectedHookSetupResolver(pool, { enabled = false, releaseVerifi
       check(s?.schema === 'repoing/selected-hook-setup-settlement/1' && input.configurationSha256 === hash(row.hook_publication))
       const plan=JSON.parse(s.planJson)
       check(equal(plan.request, row.setup_request) && equal(plan.review, input.review) && equal(plan.selectedAuthorityEvidence, row.selectedAuthorityEvidence))
+      if(row.selectedAuthorityEvidence)await observe({program:plan.request.selectedHook.program,stage:'recovery',expectedEvidence:row.selectedAuthorityEvidence})
       return collectSelectedHookSetupSettlement({ plan, expected: s.simulation, signedTransactionBase64: input.signedTransactionBase64, signature: input.signature, connections })
     },
   })

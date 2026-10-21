@@ -127,6 +127,7 @@ export function OpenLaunchSigning({ symbol, stage, status, busy, error, canRetry
     })}</ol>
     {selectedHook && review && <div className="inner-card fee-breakdown" aria-label="Exact selected-hook transaction review">
       <p>Maximum wallet debit: <strong>{review.maxNativeDebitLamports} lamports</strong> (includes network fee).</p>
+      {review.baseFeeLamports && <p>Base network fee: <strong>{review.baseFeeLamports} lamports</strong>. Network fee limit: <strong>{review.maxFeeLamports} lamports</strong>, including any priority fee.</p>}
       {tableCost && <div role="note" aria-label="Permanent supplemental table cost">
         <p>Address table cost (rent): <strong>{tableCost.rentLamports} lamports</strong>, separate from the network fee and included in the maximum wallet debit above.</p>
         <p>This table lets your complete launch fit in one transaction. Your coin and its required accounts are created together.</p>

@@ -62,12 +62,13 @@ export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustod
   if(existing){if(existing.profileSha256!==hash)throw Error('Selected profile differs');return existing}
   return custody.reserveNewCandidate(token,id,hash)
  }}
- const observeSelectedHookCompatibility=({program,expectedEvidence})=>{
+ const observeSelectedHookCompatibility=({program,expectedEvidence,stage})=>{
   if(!observeSelectedHook)refuseUnsupportedSelectedHook()
-  return observeSelectedHook(program,{stage:expectedEvidence?'revalidation':'initial',expectedEvidence})
+  return observeSelectedHook(program,{stage:stage??(expectedEvidence?'revalidation':'initial'),expectedEvidence})
  }
  const parsedProfile=JSON.parse(profile.json)
  const setupResolver=selectedHookSetupResolver(pool,{enabled:selectedHooksEnabled,releaseVerified:selectedHooksEnabled&&config.selectedHookRelease?.schema==='repoing/selected-hook-release/2',
+  requireAuthorityEvidence:config.selectedHookRelease?.schema==='repoing/selected-hook-release/2',
   profile:{programs:parsedProfile.programs,genesisHash:parsedProfile.genesisHash,profileSha256:profile.expectedSha256,envelope:profile},connections,observe:observeSelectedHookCompatibility,authorize:selectedIdentity,clock})
  const ensurePreparation=async({sessionToken,custodyOperationId,request})=>{
   const original=await selectedIdentity(sessionToken,custodyOperationId)

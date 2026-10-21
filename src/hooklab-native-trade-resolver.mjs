@@ -17,6 +17,7 @@ import {loadNativeArtifacts} from './hooklab-native-pins.mjs'
 import {refuseUnsupportedSelectedHook} from './hooklab-selected-hook.mjs'
 import {collectSelectedHookSimulation,simulateSelectedHookAccounts} from './hooklab-selected-hook-simulation.mjs'
 import {isLocalExecutionDossier,localAcceptanceNetwork} from './hooklab-local-acceptance.mjs'
+import {isSelectedTradeQuoteStore} from './hooklab-selected-trade-quotes.mjs'
 const check=v=>{if(!v)throw Error('Native trade state, intent or operator pins changed')}
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x)
 const integer=x=>{check(Number.isSafeInteger(x)&&x>=0);return x}
@@ -26,11 +27,12 @@ const SIGNING_WINDOW_SLOTS=100
 // carries the exact amount, this only bounds it.
 export const HOLDING_RENT_CEILING_LAMPORTS=4000000n
 // reviewedProfiles: the reconcile allowlist (src/hooklab-reviewed-profiles.mjs); tests pass their own synthetic ones.
-export function nativeTradeResolver({config,profile,dossierJson,connections,limits,selectedHookPin=config?.selectedHookPin??null,selectedNativeTradingEnabled=false,clock=Date.now,reviewedProfiles=REVIEWED_PROFILE_SHA256}){
+export function nativeTradeResolver({config,profile,dossierJson,connections,limits,selectedHookPin=config?.selectedHookPin??null,selectedNativeTradingEnabled=false,quoteStore=null,clock=Date.now,reviewedProfiles=REVIEWED_PROFILE_SHA256}){
  const policyRelease=config?.selectedHookRelease?.schema==='repoing/selected-hook-release/2'
  check(!policyRelease||selectedHookPin===null)
  const selectedSettings=selectedHookPin===null?null:selectedNativeHookPinSchema.parse(selectedHookPin)
  const selectedOpen=selectedNativeTradingEnabled===true&&(policyRelease||selectedSettings!==null)
+ if(selectedOpen&&policyRelease&&!isSelectedTradeQuoteStore(quoteStore))throw Error('Durable selected authority quote store required')
  if(selectedOpen){
   const local=localAcceptanceNetwork()
   if(local)check(isLocalExecutionDossier(JSON.parse(dossierJson))&&connections.every(x=>local.endpoints.includes(x.connection.rpcEndpoint)))
@@ -157,11 +159,24 @@ export function nativeTradeResolver({config,profile,dossierJson,connections,limi
    estimating.add(quoteId)
    try{
     const result=await collect({owner,stage,intent:{...intent,minAmountOut:'1'},quoteOnly:true})
-    estimates.set(quoteId,{owner,intent:{...intent,minAmountOut:undefined},...result})
+    if(policyRelease)await quoteStore.retain({id:quoteId,owner,stage,configurationSha256,intent,selectedAuthorityEvidence:result.selectedAuthorityEvidence,expiresAtMs:result.expiresAtMs})
+    else estimates.set(quoteId,{owner,intent:{...intent,minAmountOut:undefined},...result})
     return {quote:result.quote,canSign:false,canSubmit:false}
    }finally{estimating.delete(quoteId)}
   },
   async prepare(args){
+   if(args.intent?.policyKind==='selected-hook'&&policyRelease){
+    check(args.custodyOperationId)
+    let retainedAuthority
+    if(args.refreshContext){
+     const s=args.refreshContext,{quote,...request}=args.intent
+     check(args.configurationSha256===configurationSha256&&s.configurationSha256===configurationSha256
+      &&isDeepStrictEqual(s.compilationInput?.request,request)&&request.trader===args.owner&&args.stage===`native-${request.side}`
+      &&s.selectedAuthorityEvidence&&isDeepStrictEqual(s.selectedAuthorityEvidence,s.compilationInput.selectedAuthorityEvidence))
+     retainedAuthority=s.selectedAuthorityEvidence
+    }else retainedAuthority=await quoteStore.authorityFor({id:args.custodyOperationId,owner:args.owner,stage:args.stage,configurationSha256,intent:args.intent})
+    return collect({...args,retainedAuthority})
+   }
    if(args.intent?.policyKind!=='selected-hook'||!args.custodyOperationId)return collect(args)
    const prior=estimates.get(args.custodyOperationId)
    check(prior&&prior.owner===args.owner&&prior.expiresAtMs>clock()&&Object.keys(prior.intent).every(key=>key==='minAmountOut'||isDeepStrictEqual(prior.intent[key],args.intent[key])))

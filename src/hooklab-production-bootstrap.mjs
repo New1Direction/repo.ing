@@ -13,6 +13,7 @@ import { localAcceptanceNetwork } from './hooklab-local-acceptance.mjs'
 import { selectedHookPinSchema } from './hooklab-max-wallet-launch.mjs'
 import { validateSelectedHookReleaseBindings } from './hooklab-max-wallet-launch-collector.mjs'
 import { validateLocalSelectedHookPolicy } from './hooklab-selected-hook-compatibility.mjs'
+import { selectedTradeQuoteStore, readySelectedTradeQuoteStore } from './hooklab-selected-trade-quotes.mjs'
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const refuse=message=>{throw Object.assign(Error(message),{code:'PRODUCTION_BOOTSTRAP_REFUSED'})}
 const need=(ok,message)=>{if(!ok)refuse(message)}
@@ -120,7 +121,7 @@ export async function productionSettings({env=process.env,readBundle=path=>readF
   ...productionKeyRing(env)}
 }
 
-export function selectedHookSettings({env=process.env,stack,open,connections=stack?.connections}){
+export function selectedHookSettings({env=process.env,stack,open,connections=stack?.connections,tradeQuoteStore}){
  const local=env.HOOK_LOCAL_SELECTED_HOOKS_ENABLED==='true',production=env.HOOK_SELECTED_HOOKS_ENABLED==='true'
  if(!local&&!production)return {selectedHooksEnabled:false,selectedHookPin:null}
  need(!(local&&production),'local and production selected-hook switches cannot be combined')
@@ -135,10 +136,11 @@ export function selectedHookSettings({env=process.env,stack,open,connections=sta
  }
  need(!localAcceptanceNetwork(env),'production selected hooks cannot use local acceptance')
  const bound=validateSelectedHookReleaseBindings({...stack,connections})
- // The policy/evidence unit is not an execution adapter. Never advertise enabled while
- // downstream custody/compilers still require a singleton and immutable-only account plan.
- need(bound.config.selectedHookRelease.schema!=='repoing/selected-hook-release/2','selected-hook policy requires durable authority-evidence integration before runtime enablement')
- return {selectedHooksEnabled:true,selectedHookPin:bound.config.selectedHookPin}
+ // Policy releases require the durable estimate adapter and its verified database
+ // migration, in addition to per-operation custody/compiler/recovery authority checks.
+ const policy=bound.config.selectedHookRelease.schema==='repoing/selected-hook-release/2'
+ need(!policy||readySelectedTradeQuoteStore(tradeQuoteStore),'selected-hook policy requires durable authority-evidence integration before runtime enablement')
+ return {selectedHooksEnabled:true,selectedHookPin:policy?null:bound.config.selectedHookPin}
 }
 
 export async function bootstrapProductionHooks({env=process.env}={}){
@@ -160,7 +162,9 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  const launchLookupTable=remoteLaunchLookupTable(pool,{envelope:s.bundle.profile,connections:s.connections,adminAddress:s.bundle.config.reviewer})
  // Open launches use the bundle's one shared launch table and need no admin co-signature; the owner's Mac is not involved.
  const open=openLaunchesEnabled(env)
- const {selectedHooksEnabled,selectedHookPin}=selectedHookSettings({env,stack:own,open,connections:s.connections})
+ const tradeQuoteStore=selectedTradeQuoteStore(pool)
+ if(env.HOOK_SELECTED_HOOKS_ENABLED==='true'&&own?.config.selectedHookRelease?.schema==='repoing/selected-hook-release/2')await tradeQuoteStore.verifySchema()
+ const {selectedHooksEnabled,selectedHookPin}=selectedHookSettings({env,stack:own,open,connections:s.connections,tradeQuoteStore})
  if(selectedHooksEnabled){need(own&&open,'selected hooks require our open-launch stack');if(selectedHookPin)own.config={...own.config,selectedHookPin}}
  const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,...(open?{...own,openLaunches:true}:{launchLookupTable}),selectedHooksEnabled,reviewTiming:s.reviewTiming,nativeLaunches:env.HOOK_NATIVE_LAUNCHES_ENABLED==='true',...await s.launchLimits()})
  const native=await launchRuntime()

@@ -56,6 +56,11 @@ test('updates preserve public config fields, skip matching economics, bind live 
     assert.equal(decoded.data.args.admin.toBase58(), roles.admin)
     assert.equal(decoded.data.args.treasury.toBase58(), roles.treasury)
     if (r === 'launch') { assert.equal(decoded.data.args.curve_bps, 7500); assert.equal(decoded.data.args.supply.toString(), '1000000000000000') }
+    if (name === 'launch-config') {
+      assert.equal(decoded.data.args.rule_bounds.max_burn_bps, 200)
+      assert.equal(decoded.data.args.rule_bounds.max_rules_fee_bps, 200, 'burns do not increase the total rules-fee ceiling')
+      assert.equal(decoded.data.args.rule_bounds.max_holder_fee_bps, config.rule_bounds.max_holder_fee_bps)
+    }
     put(accounts, r, 'Config', { ...config, ...decoded.data.args })
     assert.equal(build(name, accounts).skipped, true)
     state.revision = state.revision.add(new BN(1))

@@ -14,7 +14,7 @@ test('the reviewed bootstrap is unchanged', () => {
 })
 
 test('coin-profiles is a separate migration for one new table', () => {
-  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles', 'wallet-funding', 'launch-pricing', 'coin-trades', 'native-stages', 'open-launches', 'selected-hook-requests', 'selected-hook-execution', 'hook-catalog', 'selected-hook-authority', 'selected-hook-setup', 'selected-hook-economics'])
+  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles', 'wallet-funding', 'launch-pricing', 'coin-trades', 'native-stages', 'open-launches', 'selected-hook-requests', 'selected-hook-execution', 'hook-catalog', 'selected-hook-authority', 'selected-hook-setup', 'selected-hook-economics', 'selected-trade-quotes'])
   const open = migrationSchema('open-launches')
   assert.deepEqual([open.tables, open.requires], [['hook_lab_coin_moderation'], ['hook_lab_launch_requests', 'hook_lab_launch_request_prices']])
   assert.match(open.sql, /where status in \('invited','launching'\) and source='owner-invite'/)

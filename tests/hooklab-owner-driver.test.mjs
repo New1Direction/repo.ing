@@ -52,6 +52,10 @@ test('approval refusals: per-decision approval and the explicit approval-flag st
     assert.deepEqual(unapproved(config, 'launch-config'), ['maxRulesFeeBps'])
     raw.decisions.maxRulesFeeBps.approved = true
     assert.doesNotThrow(() => assertExecutable(loadConfig(write(dir, 'c2.json', raw)), 'launch-config'))
+    raw.decisions.maxBurnBps = { value: 200, approved: false }
+    assert.throws(() => assertExecutable(loadConfig(write(dir, 'burn-unapproved.json', raw)), 'launch-config'), /maxBurnBps/)
+    raw.decisions.maxBurnBps.approved = true
+    assert.doesNotThrow(() => assertExecutable(loadConfig(write(dir, 'burn-approved.json', raw)), 'launch-config'))
     assert.deepEqual([...APPROVAL_FLAG_STAGES].sort(), ['canary-buy', 'canary-gates-open-creation', 'canary-sell', 'collect-native', 'fund', 'gate-finalize', 'launch-config-init', 'launch-fee',
       'launch-governance-init', 'launch-table', 'launch-usd-bounds', 'native-launches', 'open-creation', 'open-launches', 'open-trading', 'swap-config-init', 'swap-governance-init', 'trade-table'])
     raw.roles = { admin: MAINNET_ROLES.guardian }

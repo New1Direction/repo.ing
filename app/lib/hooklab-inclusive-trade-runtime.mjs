@@ -11,6 +11,7 @@ import {ownerApprovalStore} from '../../src/hooklab-owner-approval.mjs'
 import {hookActivityRpc} from '../../src/hooklab-coin-activity.mjs'
 import { isLocalExecutionDossier } from '../../src/hooklab-local-acceptance.mjs'
 import { coinStack, isStackProfile } from '../../src/hooklab-stack.mjs'
+import { selectedTradeQuoteStore } from '../../src/hooklab-selected-trade-quotes.mjs'
 const runtimeKey=Symbol.for('repo.ing.hooklab.inclusive-trade-runtime')
 // Withdrawing SOL from Hook Lab (unwrap) is always available, and every funding operation stays readable, so customers
 // can never be left with SOL they cannot take out. walletFundingEnabled only allows starting new deposits (wrap).
@@ -39,7 +40,7 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
  const nativeOpen=nativeTradingEnabled===true&&pinsNativeBuilds(nativeBundle.profile)
  const hookPin=selectedHookPin??nativeBundle.config.selectedHookPin??null
  const selectedNativeOpen=nativeOpen&&selectedNativeTradingEnabled===true&&(hookPin!==null||nativeBundle.config.selectedHookRelease?.schema==='repoing/selected-hook-release/2')
- const native=nativeTradeResolver({...nativeBundle,connections,limits,selectedHookPin:hookPin,selectedNativeTradingEnabled:selectedNativeOpen})
+ const native=nativeTradeResolver({...nativeBundle,connections,limits,selectedHookPin:hookPin,selectedNativeTradingEnabled:selectedNativeOpen,quoteStore:selectedTradeQuoteStore(pool)})
  const sender=nativeTransactionSender({enabled:true,connections})
  const lifecycle=nativeSigningLifecycle(pool,{enabled:true,origin,sender,custodyAdapter:null,...tradeLifecycleSettings({trade,funding,native,nativeOpen,selectedNativeOpen,connections})})
  // The coin's stack profile (programs, quote marker): server-side only, never sent to a customer.

@@ -13,7 +13,8 @@ const configRole = { 'launch-config': 'launch', 'swap-config': 'swap' }
 function wanted(ctx, role, current) {
   // Ceilings, not the canary's own fee: they bound every creator-selectable fee (0.5%, 1%, 2%).
   if (role === 'launch') return { ...current, max_creator_fee_bps: value(ctx.config, 'maxCreatorFeeBps'),
-    rule_bounds: { ...current.rule_bounds, max_rules_fee_bps: value(ctx.config, 'maxRulesFeeBps') } }
+    rule_bounds: { ...current.rule_bounds, max_rules_fee_bps: value(ctx.config, 'maxRulesFeeBps'),
+      ...(ctx.config.decisions.maxBurnBps ? { max_burn_bps: value(ctx.config, 'maxBurnBps') } : {}) } }
   return { ...current, protocol_fee_bps: value(ctx.config, 'protocolFeeBps'), launch_protocol_share_bps: value(ctx.config, 'launchProtocolShareBps') }
 }
 export async function governedSnapshot(ctx, role, extra = []) {

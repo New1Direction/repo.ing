@@ -90,7 +90,7 @@ export function buildSelectedStep8Stage({ name, abi, programs, roles, genesis, c
   }
   const before = role === 'launch' ? ix.launchConfigArgs(config) : ix.swapConfigArgs(config)
   const after = { ...before }
-  if (name === 'launch-config') { after.max_creator_fee_bps = 200; after.rule_bounds = { ...before.rule_bounds, max_rules_fee_bps: 200 } }
+  if (name === 'launch-config') { after.max_creator_fee_bps = 200; after.rule_bounds = { ...before.rule_bounds, max_rules_fee_bps: 200, max_burn_bps: 200 } }
   if (name === 'swap-config') { after.protocol_fee_bps = 0; after.launch_protocol_share_bps = 2500 }
   if (name === 'launch-fee') after.launch_fee_lamports = bn(20000000)
   if (name === 'launch-usd-bounds') { after.min_virtual_quote = bn('5625000000'); after.max_virtual_quote = bn('112500000000') }

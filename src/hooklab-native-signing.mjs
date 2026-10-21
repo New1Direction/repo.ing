@@ -128,7 +128,8 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
      check(transactionBytes(row.review,row.partial_transaction).signatures.every(s=>s.every(x=>x===0)));return row
     })
     check(resolver&&typeof resolver.prepare==='function')
-    const resolved=await resolver.prepare({sessionToken,owner:captured.owner_wallet,custodyOperationId:captured.custody_operation_id,stage:captured.stage,intent:structuredClone(captured.resolved_request)})
+    const resolved=await resolver.prepare({sessionToken,owner:captured.owner_wallet,custodyOperationId:captured.custody_operation_id,stage:captured.stage,intent:structuredClone(captured.resolved_request),
+     configurationSha256:captured.configuration_sha256,refreshContext:structuredClone(captured.settlement_context)})
     const review=inspectHookLabMessage(resolved.review).review,retainedContext=context(resolved)
     check(resolved.status==='operator-pins-and-state-verified'&&resolved.owner===captured.owner_wallet&&resolved.stage===captured.stage
      &&resolved.profileSha256===captured.profile_sha256&&resolved.configurationSha256===captured.configuration_sha256

@@ -17,6 +17,8 @@ export const configSchema = z.object({
   roles: z.object(Object.fromEntries(ROLE_NAMES.map(r => [r, key.optional()]))).strict().optional(),
   decisions: z.object({
     creatorFeeBps: decision(bps), maxCreatorFeeBps: decision(bps), maxRulesFeeBps: decision(bps), launchProtocolShareBps: decision(bps), protocolFeeBps: decision(bps),
+    // Omission preserves the observed bound; a change needs its own explicit approval.
+    maxBurnBps: decision(bps).optional(),
     // Owner-approved wallet-cap menu: 1%, 2% (default), 3% or 5%.
     capBps: decision(z.union([z.literal(100), z.literal(200), z.literal(300), z.literal(500)]).nullable()),
     grant: decision(z.object({ creator: key, maxLaunches: raw, expirySlots: raw }).strict()),
@@ -106,13 +108,14 @@ export function loadConfig(path) {
   return parsed
 }
 export function value(config, name) { return config.decisions[name].value }
+const stageDecisions = (config, stage) => [...(STAGE_DECISIONS[stage] ?? []), ...(stage === 'launch-config' && config.decisions.maxBurnBps ? ['maxBurnBps'] : [])]
 export function unapproved(config, stage) {
-  return (STAGE_DECISIONS[stage] ?? []).filter(name => !decisionOf(config, name)?.approved)
+  return stageDecisions(config, stage).filter(name => !decisionOf(config, name)?.approved)
 }
 // lookupTable may stay null: the alt stage records the table it created.
 const NULLABLE = new Set(['lookupTable'])
 export function missing(config, stage) {
-  return (STAGE_DECISIONS[stage] ?? []).filter(name => (decisionOf(config, name)?.value ?? null) === null && !NULLABLE.has(name))
+  return stageDecisions(config, stage).filter(name => (decisionOf(config, name)?.value ?? null) === null && !NULLABLE.has(name))
 }
 export function assertExecutable(config, stage) {
   const pending = unapproved(config, stage), absent = missing(config, stage)

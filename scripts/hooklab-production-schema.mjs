@@ -50,6 +50,7 @@ export const MIGRATIONS = Object.freeze({
     inspect: "select pg_get_constraintdef(oid) as stage_check from pg_constraint where conname='hook_lab_native_signing_operations_stage_check'" }),
   'selected-hook-economics': Object.freeze({ files: ['hooklab-selected-hook-economics-schema.sql'], requires: ['hook_lab_launch_requests'],
     inspect: "select column_name from information_schema.columns where table_name='hook_lab_launch_requests' and column_name='selected_economics'" }),
+  'selected-trade-quotes': Object.freeze({ files: ['hooklab-selected-trade-quotes-schema.sql'], requires: [] }),
 })
 export function productionSchema(files = SCHEMA_FILES) {
   const parts = files.map(name => ({ name, sql: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8') }))

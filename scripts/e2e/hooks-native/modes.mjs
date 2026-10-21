@@ -12,7 +12,7 @@ export const CREATION_FEE_LAMPORTS = 20_000_000n
 export const MODES = Object.freeze({
   // Unreviewed local candidate only. Never falls back to historical receipt ELFs.
   'economic-hook': Object.freeze({ set: () => 'legacy-bundle-2', own: true, economic: true, ownerAgent: false, suites: ['economic-hook'], decisions: {},
-    ownDecisions: { openCreationMenus: { creatorFeeBps: [...OWNER_MENUS.creatorFeeBps], capBps: [...OWNER_MENUS.capBps] }, stackCustodyDigest: '5a'.repeat(32) },
+    ownDecisions: { maxBurnBps: 200, openCreationMenus: { creatorFeeBps: [...OWNER_MENUS.creatorFeeBps], capBps: [...OWNER_MENUS.capBps] }, stackCustodyDigest: '5a'.repeat(32) },
     env: { HOOK_OPEN_LAUNCHES: 'true', HOOK_OWNER_APPROVED_LAUNCHES: 'false', HOOK_WALLET_FUNDING_ENABLED: 'false', HOOK_LOCAL_SELECTED_HOOKS_ENABLED: 'true' } }),
   'selected-hook': Object.freeze({ set: () => 'legacy-bundle-2', own: true, selected: true, ownerAgent: false, suites: ['selected-hook'], decisions: {},
     ownDecisions: { openCreationMenus: { creatorFeeBps: [...OWNER_MENUS.creatorFeeBps], capBps: [...OWNER_MENUS.capBps] }, stackCustodyDigest: '5a'.repeat(32) },
