@@ -11,13 +11,13 @@ import { localChromium } from './support/local-chromium.ts'
 
 const stateFile = process.env.HOOKS_E2E_STACK
 if (!stateFile) throw new Error('HOOKS_E2E_STACK is not set: run the suite with `node scripts/e2e/hooks-native-stack.mjs test`')
-const stack = JSON.parse(readFileSync(stateFile, 'utf8')) as { origin: string; tls: { spki: string } }
+const stack = JSON.parse(readFileSync(stateFile, 'utf8')) as { root: string; origin: string; tls: { spki: string } }
 
 export default {
   projectId: 'repoing-hooks-native-e2e',
   tests: ['**/*.e2e.ts'], // relative to this directory, the project root
   output: '.e2e',
-  targets: [{ name: 'chromium-local', engine: web({ browser: localChromium({ spki: stack.tls.spki }), viewport: { width: 1280, height: 900 } }), app: { url: stack.origin } }],
+  targets: [{ name: 'chromium-local', engine: web({ browser: localChromium({ spki: stack.tls.spki, root: stack.root }), viewport: { width: 1280, height: 900 } }), app: { url: stack.origin } }],
   // One ordered flow on one chain: serial, no retries (a retry would re-spend), long timeouts for finalized reads.
   workers: 1,
   retries: 0,

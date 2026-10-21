@@ -148,6 +148,18 @@ describe(`local unreviewed economic ${role} hook lifecycle`, { serial: true }, (
   test('both distinct catalogue candidates are genuinely immutable exact ELFs on the disposable chain', async () => {
     expect((await control('GET', '/health')).agent).toBe(false)
     const loader = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111')
+    for (const [dependency, expected] of [
+      ['token', '5fbbb2ebca32ed3df4c0299da3376141969ac6088700c86390d8b05d0c451dab'],
+      ['gate', '0f3261b6420f20a3c9feb1d5ead5e8cb432ce972e8716d61dda995fe78c1697b'],
+    ] as const) {
+      const program = new PublicKey(stack.programs![dependency]), pd = PublicKey.findProgramAddressSync([program.toBuffer()], loader)[0]
+      const [p, d] = await connection.getMultipleAccountsInfo([program, pd], 'finalized')
+      expect(p?.executable).toBe(true); expect(p?.owner.toBase58()).toBe(loader.toBase58())
+      expect(Buffer.from(p!.data).subarray(4).equals(pd.toBuffer())).toBe(true)
+      expect(d?.owner.toBase58()).toBe(loader.toBase58())
+      expect(createHash('sha256').update(d!.data.subarray(45)).digest('hex')).toBe(expected)
+      console.log('ECONOMIC_DEPENDENCY_PIN', JSON.stringify({ dependency, program: program.toBase58(), sha256: expected }))
+    }
     for (const h of hooks()) {
       const program = new PublicKey(h.program), pd = PublicKey.findProgramAddressSync([program.toBuffer()], loader)[0]
       const [p, d] = await connection.getMultipleAccountsInfo([program, pd], 'finalized')
@@ -158,6 +170,7 @@ describe(`local unreviewed economic ${role} hook lifecycle`, { serial: true }, (
       expect(bytes.readUInt32LE()).toBe(3); expect(bytes[12]).toBe(0)
       expect(bytes.length).toBe(45 + h.pin.elfLength)
       expect(createHash('sha256').update(bytes.subarray(45)).digest('hex')).toBe(h.pin.elfSha256)
+      console.log('ECONOMIC_HOOK_PIN', JSON.stringify({ ...h.pin, immutable: true, genesis: stack.genesisHash }))
     }
   })
 
@@ -306,6 +319,9 @@ describe(`local unreviewed economic ${role} hook lifecycle`, { serial: true }, (
     // Launch seeds the reserve through token transfers too. The receipt hook
     // records both callbacks even though the tax hook exempts this reserve seed.
     expect(await collected()).toBe(role === 'alternate' ? BigInt(launchTransfers.length * 2) : 0n)
+    console.log('ECONOMIC_LAUNCH', JSON.stringify({ hook: activeHook().program, mint, launch, pool,
+      packetBytes, table: cost.address, permanentlyLockedTableRentLamports: cost.rentLamports,
+      setupSignature: setup.signature, launchSignature: launchOp.signature, collector }))
     await approvals.off()
   })
 
@@ -324,6 +340,8 @@ describe(`local unreviewed economic ${role} hook lifecycle`, { serial: true }, (
     const [sell] = await finalizedOperations(buyer.address, 'native-sell', 1)
     await checkedTrade(sell, buyer.address, before, balance); await tradeResult(screen, 'sell')
     expect(await coinBalance(coin.mint, buyer.address)).toBe(0n)
+    console.log('ECONOMIC_RECOVERY', JSON.stringify({ hook: activeHook().program, mint: coin.mint,
+      reloadDuringSignedBuy: buy.signature, sellAfterSiteRestart: sell.signature, sendOnceVerified: true }))
     await app.screenshot('economic-curve-tax-payout'); await approvals.off()
   })
 
@@ -369,6 +387,10 @@ describe(`local unreviewed economic ${role} hook lifecycle`, { serial: true }, (
     expect(lamportDelta(collection, recipient)).toBe(platformAccrued - collectionFee)
     expect(lamportDelta(collection, coin.pool)).toBe(-platformAccrued)
     expect(big((await poolAccount(coin.pool)).value.protocol_fees_quote)).toBe(0n)
+    console.log('ECONOMIC_LIFECYCLE', JSON.stringify({ hook: activeHook().program, mint: coin.mint,
+      graduated: graduationSeen, postgraduationBuySellVerified: true, creatorClaimLamports: String(creatorAccrued),
+      protocolCollectedLamports: String(platformAccrued), taxCollectedBaseUnits: String(await collected()),
+      claimSignature: claim.tx.transaction.signatures[0], protocolCollectionSignature: signature }))
   })
 
   test('server rejects browser-supplied executable assertions before any new signing', async () => {

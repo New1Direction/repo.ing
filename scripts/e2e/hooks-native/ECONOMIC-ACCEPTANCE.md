@@ -10,9 +10,24 @@ Do not run with the old receipt launch/swap builds. Supply
 `HOOKS_E2E_ECONOMIC_INVENTORY=/absolute/path/to/inventory.json`, then:
 
 ```
-HOOKS_E2E_MODES=economic-hook HOOKS_E2E_KEEP=1 \
+HOOKS_E2E_MODES=economic-hook \
   node scripts/e2e/hooks-native-stack.mjs test
 ```
+
+Normal success and failure teardown stops owned sites/browser workers and the
+validator, archives logs and public owner plans/receipts under
+`.amp/in/artifacts/hooks-native-runs/<run-directory>/`, then removes scratch
+ledgers, synthetic keys and browser profiles. Browser reports/screenshots and
+release packets are outside that root and are not removed. Set
+`HOOKS_E2E_ARTIFACT_DIR` to change the diagnostic archive location.
+
+Use `HOOKS_E2E_KEEP=1` **only for debugging**: it retains the whole scratch root
+(including synthetic keys and potentially multi-GB ledgers), but still stops
+processes. `HOOKS_E2E_HOLD_ON_FAILURE=1` deliberately holds a startup failure
+until Ctrl-C. Signals during startup wait for the current startup operation to
+settle before teardown; SIGKILL/power loss cannot run cleanup. Cleanup/archive
+failures preserve the root rather than lose evidence or delete files still in
+use. `suite STACK_JSON` borrows an existing stack and does not tear it down.
 
 The inventory schema is exported by `economic-fixture.mjs`. Shape:
 

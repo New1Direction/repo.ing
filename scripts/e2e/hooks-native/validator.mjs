@@ -44,16 +44,22 @@ export async function startValidator({ root, roles, set, own = null, log }) {
     ...Object.values(elfs).flatMap(elf => ['--upgradeable-program', elf.programId, elf.path, upgrade]), ...ownArgs]
   const output = createWriteStream(path.join(root, 'logs', 'validator.log'))
   const child = spawn(VALIDATOR, args, { stdio: ['ignore', 'pipe', 'pipe'], detached: false })
-  child.stdout.pipe(output); child.stderr.pipe(output)
+  child.stdout.pipe(output, { end: false }); child.stderr.pipe(output, { end: false })
+  let spawnError
+  child.once('error', error => { spawnError = error })
+  const closed = new Promise(resolve => child.once('close', resolve))
   const url = `http://127.0.0.1:${rpcPort}`, connection = new Connection(url, { commitment: 'finalized' })
   async function stop() {
-    if (child.exitCode !== null || child.signalCode) return
-    child.kill('SIGTERM')
+    if (child.pid && child.exitCode === null && !child.signalCode) child.kill('SIGTERM')
     for (let i = 0; i < 50 && child.exitCode === null && !child.signalCode; i++) await sleep(200)
     if (child.exitCode === null && !child.signalCode) child.kill('SIGKILL')
+    await Promise.race([closed, sleep(2000)])
+    if (child.pid && child.exitCode === null && !child.signalCode) throw Error('validator did not stop')
+    if (!output.writableFinished) await new Promise(resolve => output.end(resolve))
   }
   try {
     for (let i = 0; ; i++) {
+      if (spawnError) throw spawnError
       if (child.exitCode !== null) throw Error(`solana-test-validator exited ${child.exitCode}; see ${path.join(root, 'logs', 'validator.log')}`)
       try { if (await connection.getSlot('finalized') > 2) break } catch { /* still starting */ }
       if (i > 480) throw Error('The validator did not finalize a slot within 120 s')

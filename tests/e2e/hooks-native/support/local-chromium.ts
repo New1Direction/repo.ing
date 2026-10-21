@@ -5,7 +5,6 @@
 // basic password store, so it never touches the macOS Keychain, and a fresh profile directory that release deletes.
 import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import type { BrowserLease, BrowserProvider } from '@e2e-dev/web'
@@ -14,13 +13,14 @@ const require = createRequire(import.meta.url)
 
 interface LocalLease extends BrowserLease { readonly pid: number; readonly profile: string }
 
-export function localChromium({ spki }: { spki: string }): BrowserProvider {
+export function localChromium({ spki, root }: { spki: string; root: string }): BrowserProvider {
   return {
     name: 'local-chromium',
     scope: 'worker',
     async acquire(request) {
       const { chromium } = require('playwright-core') as typeof import('playwright-core')
-      const profile = mkdtempSync(path.join(tmpdir(), 'hooks-native-e2e-chrome-'))
+      // Root teardown also catches failed acquisition or a forcibly stopped runner.
+      const profile = mkdtempSync(path.join(root, 'chrome-'))
       const child = spawn(chromium.executablePath(), ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
         '--no-first-run', '--no-default-browser-check', '--use-mock-keychain', '--password-store=basic', '--enable-automation',
         '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-default-apps', '--metrics-recording-only',

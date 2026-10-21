@@ -38,10 +38,15 @@ export const economicInventorySchema = z.object({
     gate: artifact, selected: artifact, alternate: artifact }).strict(),
   idls: z.object({ launch: candidateIdl, swap: candidateIdl, gate: candidateIdl }).strict(),
   hooks: z.tuple([
-    z.object({ role: z.literal('selected'), program: z.literal('8KoeKiwydKzdH65uD4Z6uJgR9uKnj2w22HXRSdCXGhF2'), flags: z.literal(65), name: z.literal('Economic transfer tax') }).strict(),
+    z.object({ role: z.literal('selected'), program: z.enum(['8KoeKiwydKzdH65uD4Z6uJgR9uKnj2w22HXRSdCXGhF2', '8WpjE7zTWWhLyzXnenjn3P1iXriTZTfgaiKSmf2kugau']), flags: z.literal(65), name: z.literal('Economic transfer tax') }).strict(),
     z.object({ role: z.literal('alternate'), program: z.literal('4P9UnqR2FgD1XjkcpyWzabQCrhPDTQkZy8631jvTnYqL'), flags: z.literal(3), name: z.literal('Transfer receipt (no economic fee)') }).strict(),
   ]),
 }).strict().refine(v => v.hooks[0].program !== v.hooks[1].program, 'Distinct hook programs required')
+  .refine(v => v.hooks[0].program !== '8WpjE7zTWWhLyzXnenjn3P1iXriTZTfgaiKSmf2kugau' ||
+    (v.pins.selected[0] === 'target/creator-selected-v1-candidate/tax_hook_proposed.so' &&
+      v.pins.selected[1] === '35dc99b93c474fdbc8d0961c04bc96f28058533e53beba5e1be7d6f2096dc182' &&
+      v.pins.gate[1] === '0f3261b6420f20a3c9feb1d5ead5e8cb432ce972e8716d61dda995fe78c1697b'),
+  'Proposed tax identity requires its exact ELF and unchanged deployed gate')
 
 export function economicFixtureStack({ upgradeAuthority, inventoryFile = process.env.HOOKS_E2E_ECONOMIC_INVENTORY } = {}) {
   if (!inventoryFile) throw Error('Economic acceptance BLOCKED: HOOKS_E2E_ECONOMIC_INVENTORY must name the build-owner pinned inventory; receipt/tester ELFs are not V1 evidence')

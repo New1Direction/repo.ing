@@ -5,7 +5,7 @@
 // Everything lives under one temporary root that teardown deletes, keys included.
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -26,6 +26,7 @@ import { siteEnvironment, startSite } from './site.mjs'
 import { startOwnerAgent } from './owner-agent.mjs'
 import { startControl } from './control.mjs'
 import { httpsClient } from './https-client.mjs'
+import { createRunCleanup } from './retention.mjs'
 
 // Child processes get only what they need, never this shell's credentials or RPC URLs. Captured before the owner driver
 // enters its in-process local scope (it sets HOOK_LOCAL_ACCEPTANCE* on process.env).
@@ -42,17 +43,13 @@ function runChild(command, args, { cwd, env, timeoutMs }) {
   })
 }
 
-export async function up({ keep = false, mode: modeName = 'native' } = {}) {
+export async function up({ keep = false, mode: modeName = 'native', signal } = {}) {
   const mode = MODES[modeName]
   if (!mode) throw Error(`unknown stack mode ${modeName}; known: ${Object.keys(MODES).join(', ')}`)
   const log = stageLog(`stack ${modeName}`), cleanups = []
   const root = mkdtempSync(path.join(process.env.HOOKS_E2E_ROOT ?? tmpdir(), 'hooks-native-e2e-'))
   mkdirSync(path.join(root, 'logs'), { mode: 0o700 })
-  const down = async () => {
-    for (const cleanup of cleanups.reverse()) { try { await cleanup.run() } catch (error) { console.error(`teardown ${cleanup.name}: ${error.message}`) } }
-    if (!keep) rmSync(root, { recursive: true, force: true })
-    log(keep ? `stopped; kept ${root}` : `stopped; removed ${root}`)
-  }
+  const down = createRunCleanup({ root, keep, cleanups, log })
   try {
     log(`root ${root}`)
     const tls = makeLocalCertificate(path.join(root, 'tls'))
@@ -195,10 +192,13 @@ export async function up({ keep = false, mode: modeName = 'native' } = {}) {
     return { state, stateFile, down, log }
   } catch (error) {
     // HOOKS_E2E_HOLD_ON_FAILURE=1 keeps whatever is running for debugging until Ctrl-C, then tears it all down.
-    if (process.env.HOOKS_E2E_HOLD_ON_FAILURE === '1') {
+    if (process.env.HOOKS_E2E_HOLD_ON_FAILURE === '1' && !signal?.aborted) {
       log(`FAILED, holding for debugging (Ctrl-C tears down; root ${root}): ${error.stack ?? error.message}`)
-      await new Promise(resolve => { process.once('SIGINT', resolve); process.once('SIGTERM', resolve) })
+      await new Promise(resolve => {
+        if (signal) signal.addEventListener('abort', resolve, { once: true })
+        else { process.once('SIGINT', resolve); process.once('SIGTERM', resolve) }
+      })
     }
-    await down(); throw error
+    await down({ status: 'startup-failed' }); throw error
   }
 }
