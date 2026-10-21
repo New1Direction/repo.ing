@@ -42,8 +42,11 @@ export async function selectedLoaderPlan({ program, payer, authority, seed, elf,
   const loader = (tag, keys, rest = Buffer.alloc(0)) => new TransactionInstruction({ programId: LOADER, keys, data: Buffer.concat([u32(tag), rest]) })
   if (elf.length > capacity) {
     check(amount(extensionRent) > 0n, 'extension rent quote required')
-    step('extend-program', [loader(6, [meta(D, true), meta(P, true), meta(SystemProgram.programId), meta(F, true, true)], u32(elf.length - capacity))],
-      { kind: 'extend', expectedDebitLamports: extensionRent, expectedCapacity: elf.length }, 1400000)
+    // The active loader rejects increments below 10 KiB unless reaching its maximum.
+    // Rent must be quoted for this allocation, not just the ELF's exact byte length.
+    const expectedCapacity = Math.min(10485760 - 45, capacity + Math.max(10240, elf.length - capacity))
+    step('extend-program', [loader(6, [meta(D, true), meta(P, true), meta(SystemProgram.programId), meta(F, true, true)], u32(expectedCapacity - capacity))],
+      { kind: 'extend', expectedDebitLamports: extensionRent, expectedCapacity }, 1400000)
   } else check(extensionRent === '0', 'unnecessary extension debit prohibited')
   step('create-buffer', [SystemProgram.createAccountWithSeed({ fromPubkey: F, basePubkey: F, newAccountPubkey: B, seed,
     lamports: Number(amount(bufferRent)), space: elf.length + 37, programId: LOADER }), loader(0, [meta(B, true), meta(A)])],

@@ -41,9 +41,40 @@ metadata across both models, zero/one/two atomic holdings and one/32 hook extras
 produces 12 launch packets of 920–1055 bytes, below the 1232-byte limit. Exact-message,
 table identity/inventory, warm-up, settlement and per-message approval checks remain.
 
-The full product boxes above remain unchecked because local evidence is narrower:
-holder/Kit/hook-vault parity is incomplete, and the tested local token ELF differs
-from the recorded deployed-token dependency. No token upgrade is authorized.
-The corrected offline release packet must bind committed source, exact build
-features, ELF hashes and current test evidence; it must not reuse the withdrawn
-receipt-only budget or represent local simulations as production approval.
+The deployed dependency mismatch is resolved without a token upgrade. V1 requires
+the retained token hash `5fbbb2ebca32ed3df4c0299da3376141969ac6088700c86390d8b05d0c451dab`,
+not the differing same-sized local rebuild. Two fresh public observations agree.
+Launch/swap remain the only upgrade targets; fixture hooks are not platform
+deployment requirements. The gate remains unchanged and immutable.
+
+The fresh corrected-token economic browser lifecycle passes 5/5 tests with no
+skips (731.37 seconds), including the final approval wording, atomic launch,
+restart/reload, taxed trades, graduation and claims. Refreshed UI/setup/runtime,
+approval, dependency and loader checks pass 102/102. Evidence and exact run/hash
+bindings are in the corrected offline packet.
+
+Corrected-token contract verification passes 52 tests, including actual config
+creation and guarded model1 launch with asymmetric burns, capped custom SOL cut,
+author share, partial fill/atomic graduation, postgraduate trading and claims.
+No created economic account is rewritten. Custom hooks plus Kit holder-reward
+or max-wallet modules are refused; burns alone work. Positive custom-hook/Kit
+combinations are not supported parity cases. Native hook-vault trading is
+unreachable through its legacy bridged swap entry point; enabling native vault
+trading/exemptions would expand scope. Alternate-hook launch and nonzero-economics
+browser lifecycles remain untested, not implied by contract evidence.
+
+The full product boxes remain unchecked: production release2 bootstrap still
+requires durable authority-evidence integration before runtime enablement. This
+application gate is preserved. Local two-proxy evidence does not establish
+independent-provider trust or production integration. No model/tool safeguard
+blocked these local tests; no production safeguard was bypassed.
+
+The refreshed offline packet binds committed source, features, ELF hashes,
+corrected dependency evidence and current costs. Its 1897-step unsigned local
+rehearsal passes, including separate activation rehearsal; no activation is
+approved. Observed net cost is 453863760 lamports, peak payer balance 4913494240,
+and arithmetic minimum top-up 691450451 at the observed balance. Creator-specific
+canary spend and external funding-wallet fees are excluded until exact messages
+exist. Source/roles, funding, upgrades, setup, irreversible table freezes and
+activation each retain their required approval/review boundaries. Historical
+receipt-only budgets remain withdrawn; local rehearsal is not production consent.

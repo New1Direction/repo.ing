@@ -18,9 +18,13 @@ test('economic candidate inventory requires separately pinned candidate IDLs, ne
       { role: 'alternate', program: '4P9UnqR2FgD1XjkcpyWzabQCrhPDTQkZy8631jvTnYqL', flags: 3, name: 'Transfer receipt (no economic fee)' },
     ],
   }
+  const rebuiltToken = structuredClone(candidate)
+  assert.throws(() => economic.economicInventorySchema.parse(rebuiltToken), 'V1 cannot silently substitute a rebuilt token')
+  candidate.pins.token = ['.amp/in/elf-deployed-token/bordrless_token.so', '5fbbb2ebca32ed3df4c0299da3376141969ac6088700c86390d8b05d0c451dab']
   assert.deepEqual(economic.economicInventorySchema.parse(candidate), candidate)
   for (const mutate of [v => delete v.idls, v => delete v.idls.swap,
     v => { v.idls.launch[0] = 'idl/independent/bordrless_launch.json' },
+    v => { v.pins.token[1] = 'a9670ffa6a9a5289de39aa40292ced307781ddf260d350e31ae90f17808fcd89' },
     v => { v.idls.launch[1] = '' }, v => { v.idls.gate[0] = 'target/creator-selected-v1-candidate/../gate.json' }]) {
     const invalid = structuredClone(candidate); mutate(invalid)
     assert.throws(() => economic.economicInventorySchema.parse(invalid))

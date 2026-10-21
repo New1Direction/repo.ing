@@ -23,7 +23,7 @@ The inventory schema is exported by `economic-fixture.mjs`. Shape:
   "pins": {
     "launch": ["target/creator-selected-v1-candidate/bordrless_launch.so", "<full ELF sha256>"],
     "swap": ["target/creator-selected-v1-candidate/bordrless_swap.so", "<full ELF sha256>"],
-    "token": ["target/creator-selected-v1-candidate/bordrless_token.so", "<full ELF sha256>"],
+    "token": [".amp/in/elf-deployed-token/bordrless_token.so", "5fbbb2ebca32ed3df4c0299da3376141969ac6088700c86390d8b05d0c451dab"],
     "gate": ["target/creator-selected-v1-candidate/hook_max_wallet.so", "<full ELF sha256>"],
     "selected": ["target/creator-selected-v1-candidate/tax_hook.so", "<full ELF sha256>"],
     "alternate": ["target/creator-selected-v1-candidate/transfer_receipt_hook.so", "<full ELF sha256>"]
@@ -219,8 +219,51 @@ also inspected. These static fixtures are not extra validator execution.
 
 The corrected packet is
 `.amp/in/artifacts/creator-selected-v1-release-packet/OWNER-REVIEW.md`, with source,
-ELF/IDL and evidence hashes in `manifest.json` and `SHA256SUMS`. It is **NOT
-SIGNABLE**. In particular, the tested local token ELF differs from the historical
-deployed-token dependency; no token upgrade is approved and no production-parity
-claim follows from these local runs. Historical receipt-only budgets remain
-withdrawn. The new packet does not fabricate production fees or owner approval.
+ELF/IDL and evidence hashes in `manifest.json` and `SHA256SUMS`. It remains **NOT
+SIGNABLE**. Historical receipt-only budgets remain withdrawn.
+
+## Corrected dependency and required parity
+
+V1 upgrades launch/swap only. Two fresh public RPC observations at slots
+459498104 and 459498112 agree on the unchanged token payload hash
+`5fbbb2ebca32ed3df4c0299da3376141969ac6088700c86390d8b05d0c451dab`.
+The earlier local rebuild has hash
+`a9670ffa6a9a5289de39aa40292ced307781ddf260d350e31ae90f17808fcd89`.
+Both are 326384 bytes, but differ at 13694 bytes in executable/read-only sections,
+not just padding. The historical build cause is not established. Economic mode
+now requires the retained deployed-token path and hash; it rejects the rebuild.
+Neither token nor immutable gate is a release upgrade or freeze target. Tax,
+receipt and tester programs identify local fixtures, not new platform deployments.
+
+The fresh corrected-token browser run `01a15cc0-898b-7fdb-86d9-0c2ee06999ca`
+passed **5/5 tests, zero skipped**, in 731.37 seconds. It covers publication and
+discovery, setup and permanent table freeze, atomic launch/holding, taxed curve
+trades, reload/server restart, graduation, postgraduate trades, creator claim,
+protocol collection and browser executable-assertion refusal. Evidence:
+`.amp/in/artifacts/v1-deployed-token-economic.log`. This run includes the final
+creator wording. Refreshed UI/setup/runtime/approval/dependency/loader checks pass
+**102/102**; the corrected-token Rust suites pass **52/52**, zero ignored.
+
+The missing real config-to-guarded-launch model1 case now executes with the
+unchanged token: asymmetric 173/319-bps burns, 137/293-bps quote-cut caps,
+3333-bps author share, wrong-account and minimum-output refusals, callback rollback,
+partial fill, atomic graduation, postgraduation trades and author/creator/protocol
+payouts. Launch/Pool/Mint/LaunchConfig economics are not rewritten. The only
+injected state is the test-only quote callback. Kit holder-reward/max-wallet
+combinations with custom hooks are explicitly refused; burns alone remain valid.
+The old non-gate model2 success expectation is replaced with its actual admission
+refusal; positive lifecycle and guard checks execute through model1.
+
+Hook-vault native trading is not reachable: its slot sell uses the legacy
+bridged-SOL entry point, which native pools reject with `NativePoolNeedsSwapV2`.
+Enabling that path or adding native vault exemptions would expand this V1 scope.
+No native-vault or positive custom-hook-plus-Kit parity is claimed. Alternate-hook
+launch lifecycle and a nonzero-economics browser run also remain untested; the
+browser tax lifecycle and contract economic lifecycle are separate evidence.
+
+Production release2 bootstrap still refuses enablement with
+`selected-hook policy requires durable authority-evidence integration before runtime enablement`.
+This is an application gate, not a tool/model refusal, and has not been removed.
+Local acceptance does not prove production bootstrap integration or independent
+provider trust. Fresh observed costs and a zero-signature public-snapshot local
+rehearsal are recorded in the packet; they do not authorize production actions.

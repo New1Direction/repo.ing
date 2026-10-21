@@ -18,7 +18,8 @@ test('loader plan preserves every upload byte and refunds only to the payer with
   assert.ok(decoded.every(t => t.serialize({ requireAllSignatures: false }).length <= 1232))
   const ext = decoded[0].instructions.at(-1)
   assert.equal(ext.data.readUInt32LE(0), 6)
-  assert.equal(ext.data.readUInt32LE(4), 409)
+  assert.equal(ext.data.readUInt32LE(4), 10240)
+  assert.equal(p.steps[0].expectedCapacity, 11440)
   assert.equal(ext.keys[3].pubkey.toBase58(), input.payer)
   const create = SystemInstruction.decodeCreateWithSeed(decoded[1].instructions[2])
   assert.equal(create.basePubkey.toBase58(), input.payer)
@@ -43,6 +44,15 @@ test('no extension when capacity fits; invalid sizes and ELF are refused', async
   assert.equal(p.steps[0].kind, 'create-buffer')
   for (const patch of [{ elf: Buffer.alloc(4) }, { capacity: -1 }, { bufferRent: '-1' }, { seed: 'x'.repeat(33) }]) {
     await assert.rejects(selectedLoaderPlan({ ...input, ...patch }))
+  }
+})
+
+test('loader extension rounds only increments below the 10 KiB minimum', async () => {
+  for (const [required, expected] of [[10239, 10240], [10240, 10240], [10241, 10241]]) {
+    const elf = Buffer.concat([Buffer.from([127, 69, 76, 70]), Buffer.alloc(1200 + required - 4)])
+    const p = await selectedLoaderPlan({ ...input, elf })
+    assert.equal(p.steps[0].expectedCapacity, 1200 + expected)
+    assert.equal(Transaction.from(Buffer.from(p.steps[0].unsignedTransactionBase64, 'base64')).instructions.at(-1).data.readUInt32LE(4), expected)
   }
 })
 

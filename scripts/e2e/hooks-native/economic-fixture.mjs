@@ -31,7 +31,11 @@ const artifact = z.tuple([z.string().regex(/^target\/creator-selected-v1-candida
 const candidateIdl = z.tuple([z.string().regex(/^target\/creator-selected-v1-candidate\/[a-z0-9_]+\.json$/), z.string().regex(/^[a-f0-9]{64}$/)])
 export const economicInventorySchema = z.object({
   schema: z.literal('repoing/local-economic-candidate/1'), sourceCommit: z.string().regex(/^[a-f0-9]{40}$/),
-  pins: z.object({ launch: artifact, swap: artifact, token: artifact, gate: artifact, selected: artifact, alternate: artifact }).strict(),
+  // V1 upgrades launch/swap, not token. Exercise the retained deployed dependency,
+  // even when a same-sized locally rebuilt token happens to pass the lifecycle.
+  pins: z.object({ launch: artifact, swap: artifact,
+    token: z.tuple([z.literal('.amp/in/elf-deployed-token/bordrless_token.so'), z.literal('5fbbb2ebca32ed3df4c0299da3376141969ac6088700c86390d8b05d0c451dab')]),
+    gate: artifact, selected: artifact, alternate: artifact }).strict(),
   idls: z.object({ launch: candidateIdl, swap: candidateIdl, gate: candidateIdl }).strict(),
   hooks: z.tuple([
     z.object({ role: z.literal('selected'), program: z.literal('8KoeKiwydKzdH65uD4Z6uJgR9uKnj2w22HXRSdCXGhF2'), flags: z.literal(65), name: z.literal('Economic transfer tax') }).strict(),
