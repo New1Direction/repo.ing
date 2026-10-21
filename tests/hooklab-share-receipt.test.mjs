@@ -117,6 +117,20 @@ for(const change of ['missing transfer','duplicate burn','ancestry','authority',
  assert.throws(f.verify)
 })
 for(const side of ['buy','sell']){
+ test(`model1 ${side}: two authenticated token-tax recipients do not add a SOL charge`,()=>{
+  const f=fixture(side),platform=pk(Buffer.alloc(32,96)).toBase58()
+  f.tx.keys.push(platform);f.tx.pre.push(0);f.tx.post.push(0)
+  f.plan.review.accounts.push({address:platform,writable:true,signer:false})
+  const collector=f.e.Transferred.deltas[0].holding
+  const [platformAmount,collectorAmount]=side==='buy'?[25,78]:[175,526]
+  f.e.Transferred.deltas=[{holding:pk(platform),amount:new BN(platformAmount)},{holding:collector,amount:new BN(collectorAmount)}]
+  f.rebuild()
+  const v=f.verify()
+  assert.equal(v.quote.hookTokenFee,side==='buy'?'103':'701')
+  assert.equal(v.quote.feeBreakdown[side==='buy'?'outputShareQuote':'inputShareQuote'],'0')
+  assert.equal(v.lamportDeltas[platform]??'0','0')
+  assert.equal(v.lamportDeltas[collector.toBase58()]??'0','0')
+ })
  test(`model1 ${side}: authenticated asymmetric tax, burn, custom quote and LP share`,()=>{
   const f=fixture(side),v=f.verify()
   assert.equal(v.quote.protocolFee,String(f.q.fees.protocolQuote))

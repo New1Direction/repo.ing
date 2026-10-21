@@ -108,8 +108,8 @@ export function shareNativeQuote(input) {
   check(grossOutput > 0n && grossOutput <= reserveOut, 'INSUFFICIENT_LIQUIDITY')
   if (!buy) {
     lpProtocolQuote = fee(grossOutput, lpFeeBps)
-    // Nested ceilings matter: quote_value first, protocol_share second.
-    inputShareQuote = shareProtocol(amount(ceil(input.tokenInputTax * grossOutput, curveInput)), shareBps)
+    // Token-hook fees are split in tokens by the hook, never converted to a SOL charge.
+    inputShareQuote = 0n
   }
   const protocolIn = amount(lpProtocolQuote + inputShareQuote)
   const amountOutBeforeHooks = positive(grossOutput - (buy ? 0n : protocolIn), 'FEES_EXCEED_OUTPUT')
@@ -118,8 +118,7 @@ export function shareNativeQuote(input) {
   const delivered = positive(amountOutBeforeHooks - (buy ? burnOut + input.tokenOutputTax : cut.total + heldBack), 'FEES_EXCEED_OUTPUT')
   const cutsIn = amount(amountIn - burnIn - receivedIn)
   const cutsOut = amount(amountOutBeforeHooks - burnOut - heldBack - delivered)
-  const outputShareQuote = shareProtocol(buy
-    ? amount(ceil(cutsOut * curveInput, grossOutput)) : cutsOut, shareBps)
+  const outputShareQuote = buy ? 0n : shareProtocol(cutsOut, shareBps)
   const minAmountOut = input.minAmountOut * amountIn / requested
   check(delivered >= minAmountOut, 'MIN_OUTPUT')
   const protocolQuote = amount(protocolIn + outputShareQuote)

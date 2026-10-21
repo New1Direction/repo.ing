@@ -254,12 +254,12 @@ function verifyShareTrade({ci,plan,tx,fee,events,swapAt,createAt,graduateAt,code
  const validTargets=ds=>{check(new Set(ds.map(d=>d.holding)).size===ds.length);for(const d of ds)check(d.amount>0n&&![a.baseVault,a.traderBase,r.trader,a.pool].includes(d.holding)&&plan.review.accounts.some(x=>x.address===d.holding&&x.writable&&!x.signer))}
  validTargets(quotePaid);validTargets(basePaid)
  const sum=ds=>ds.reduce((v,d)=>v+d.amount,0n),quoteCuts=sum(quotePaid)
- const inputShare=shareProtocol(buy?quoteCuts:((amount-burnIn-received)*out+received-1n)/received,share)
+ const inputShare=buy?shareProtocol(quoteCuts,share):0n
  const lpQuote=shareProtocol(buy?received:out,lp),curveInput=buy?received-lpQuote-inputShare:received
  check(curveInput>0n&&burnIn>=0n&&burnOut>=0n&&(buy?burnIn===0n:burnOut===0n))
  const held=buy?0n:shareProtocol(quoteCuts,share),baseCuts=buy?out-burnOut-delivered:amount-burnIn-received
  check(baseCuts>=0n)
- const outputShare=shareProtocol(buy?(baseCuts*curveInput+out-1n)/out:quoteCuts,share)
+ const outputShare=buy?0n:shareProtocol(quoteCuts,share)
  const protocol=lpQuote+inputShare+outputShare
  const cut=shareCreatorCuts({amount:buy?amount:out-lpQuote-inputShare,creatorFeeBps:BigInt(r.creatorFeeBps),quoteCutBps:BigInt(economics.quoteCutBps??0)})
  // Only the canonical launch self-CPI event decoded above can attest a callback cut.

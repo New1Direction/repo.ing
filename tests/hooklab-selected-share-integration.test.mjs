@@ -10,14 +10,14 @@ import { key, pk } from './fixtures/selected-hook-preparation.mjs'
 
 // Expected amounts were independently checked against the pinned Bordrless Rust core.
 // A model-2 implementation deducts protocol from creator fees and fails these values.
-test('selected model-1 buy retains the full creator fee and accrues additional share on real token deductions', () => {
+test('selected model-1 buy retains the full creator fee without a token-tax SOL surcharge', () => {
   const request = { side: 'buy', amountIn: '10003', maxInput: '10003', minAmountOut: '28998', creatorFeeBps: 137, feeModel: 1, protocolShareBps: 3333 }
   const pool = { baseReserve: 50003n, quoteReserve: 7001n, virtualBase: 211n, virtualQuote: 101n, protocolFeesQuote: 9n }
   const q = selectedNativeMeasuredQuote(request, pool, { vault: '-29026', trader: '28998' }, { baseVault: 'vault', traderBase: 'trader' }, { lpFeeBps: 31, quoteCutBps: 43, burnOut: 11n })
   assert.equal(q.fees.creatorQuote, 138n)
-  assert.equal(q.fees.platformQuote, 94n)
+  assert.equal(q.fees.platformQuote, 92n)
   assert.equal(q.delivered, 28998n)
-  assert.deepEqual(q.after, { baseReserve: 20977n, quoteReserve: 16729n, protocolFeesQuote: 103n })
+  assert.deepEqual(q.after, { baseReserve: 20977n, quoteReserve: 16731n, protocolFeesQuote: 101n })
 })
 
 test('selected model-1 sale prices measured vault credit and accounts separately for burn, tax, creator and protocol', () => {
@@ -25,9 +25,9 @@ test('selected model-1 sale prices measured vault credit and accounts separately
   const pool = { baseReserve: 50003n, quoteReserve: 7001n, virtualBase: 211n, virtualQuote: 101n, protocolFeesQuote: 9n }
   const q = selectedNativeMeasuredQuote(request, pool, { vault: '1195', trader: '-1237' }, { baseVault: 'vault', traderBase: 'trader' }, { lpFeeBps: 31, quoteCutBps: 43, burnIn: 19n })
   assert.equal(q.fees.creatorQuote, 3n)
-  assert.equal(q.fees.platformQuote, 4n)
-  assert.equal(q.delivered, 158n)
-  assert.deepEqual(q.after, { baseReserve: 51198n, quoteReserve: 6836n, protocolFeesQuote: 13n })
+  assert.equal(q.fees.platformQuote, 2n)
+  assert.equal(q.delivered, 160n)
+  assert.deepEqual(q.after, { baseReserve: 51198n, quoteReserve: 6836n, protocolFeesQuote: 11n })
   assert.throws(() => selectedNativeMeasuredQuote(request, pool, { vault: '1219', trader: '-1237' }, { baseVault: 'vault', traderBase: 'trader' }, { burnIn: 19n }), /input|deduction|tax/i)
 })
 
@@ -68,7 +68,7 @@ test('a listed selected config preserves author economics and pool burn separate
   assert.equal(plan.quote.burnedToken, '561')
   assert.equal(plan.quote.hookTokenFee, '51')
   assert.equal(plan.quote.netCreatorFee, '1')
-  assert.equal(plan.quote.protocolFee, '2')
+  assert.equal(plan.quote.protocolFee, '1')
   assert.equal(plan.quote.authorShareBps, 1733)
   assert.ok(plan.review.accounts.find(x => x.address === f.request.mint).writable)
 })

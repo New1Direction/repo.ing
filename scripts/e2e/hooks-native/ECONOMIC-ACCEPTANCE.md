@@ -1,5 +1,54 @@
 # Economic selected-hook candidate (not reviewed release evidence)
 
+## Corrected token-fee split candidate
+
+The proposed tax identity `8WpjE7zTWWhLyzXnenjn3P1iXriTZTfgaiKSmf2kugau`
+now requires the exact split/exemption tax ELF and corrected swap ELF pinned in
+`economic-fixture.mjs`. Historical economic results below do **not** establish
+this candidate's economics or production costs. The current inventory uses
+`target/creator-selected-v1-split-candidate/{tax_hook,bordrless_swap}.so`, with
+unchanged deployed token and gate bytes. Prepare's account order is unchanged;
+the registry now includes config, collector holding and platform holding. Fresh
+TaxConfig accounts are 181 bytes; collected remains at offset 141 and the fixed
+platform holding is appended at 149. No existing 149-byte config migration is
+included.
+
+Ordinary transfers retain the ceil-rounded gross token fee. The fixed treasury
+receives floor(gross / 4); the collector receives the remainder. No extra SOL
+charge or SOL reserve deduction comes from token-hook taxes. Transfers both to
+and from treasury `FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i` are
+tax-exempt, as are the collector's existing transfers. Treasury destinations are
+wallet-cap exempt; outgoing transfers still enforce ordinary recipient caps.
+Creators cannot substitute the treasury. Creator SOL fee policy is unchanged
+and remains explicitly unapproved for production.
+
+The browser suite now runs both selected tax and alternate receipt hooks through
+the lifecycle, with asymmetric burns and nonzero requested author share (zero
+effective author share when author equals creator). It checks both atomically
+created tax holdings, each transfer's 25/75 split, exact SOL settlement and
+recovery. A passing run must be recorded against this exact inventory; never
+substitute historical hook browser results. Production collector selection,
+fresh costs and every production action remain separately gated.
+
+The corrected exact-inventory browser run passed **10/10**, zero skipped or
+retries, in 1401.73 seconds (run `01a15e31-af90-7db7-a950-4379a0328a42`). Both
+hooks completed publication/setup, launch, asymmetric-burn curve buys/sells,
+reload/restart send-once recovery, graduation, postgraduation trading, creator
+claims, protocol collection and executable-assertion refusals. The tax launch
+was **826/1232 bytes**, including both holdings; alternate was **754/1232**.
+The maximum-metadata/32-extra-account model1 matrix reaches **1053/1232**.
+The live tax setup disclosed **6180480 lamports** of permanently locked local
+table rent, not a production quote. Tax receipt checks authenticate floor25%
+platform and remainder collector credits per transfer, and no token-tax SOL
+payment or reserve carve-out. Effective author share remains zero for the same
+creator/author wallet. Real-SBF checks passed 40 tests plus 34 owning unit tests;
+application checks passed 226 with six historical native-ELF cases skipped.
+Inspected live screenshots show the exemption, split and irreversible setup
+terms. Evidence is retained in the corrected offline packet and
+`.amp/in/artifacts/tax-split-browser-run.log`. Owned scratch was automatically
+removed after logs/public receipts were archived. The historical results below
+remain historical; this is local evidence, not production approval.
+
 `selected-hook` remains the historical receipt/tester regression. The separate
 `economic-hook` mode runs `tests/e2e/hooks-native/economic-hook.e2e.ts` without the
 manual registry helper or model2 curve/native-trade expectation helpers.

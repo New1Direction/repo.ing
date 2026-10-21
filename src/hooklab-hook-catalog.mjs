@@ -56,8 +56,7 @@ export function materializePostMintHoldingOwners(selection, { creator, mint, sel
     if (owner.kind === 'field') return hookAddress.parse(s.configuration[owner.name])
     return owner.kind === 'fixed' ? owner.address : owner.kind === 'creator' ? creator : mint
   })
-  if (new Set(owners).size !== owners.length) throw Error('Duplicate post-mint holding owner')
-  return Object.freeze(owners)
+  return Object.freeze([...new Set(owners)])
 }
 const check = (ok, message) => { if (!ok) throw Error(message) }
 const key = value => new PublicKey(hookAddress.parse(value))
@@ -161,13 +160,13 @@ export async function bindHookPublication({ store, observe, selection, selectedH
   return freeze({ hookPublication: { digest: s.digest, manifest: p.manifest, configuration: structuredClone(s.configuration) }, selectedHook: p.selectedHook, request })
 }
 
-// Generic example of prepare in the pinned 7fde540 tax_hook; not an allowlist or deployment pin.
-// The collector's token holding MUST be created after the mint exists, otherwise fees are zero.
+// Prepare example for the reviewed split tax hook; not an allowlist or deployment pin.
+// Both recipient holdings MUST be created atomically after the mint's reserve seeding.
 export function taxHookSetupManifest(selectedHook) {
   const ctx = kind => ({ kind }), account = (source, writable = false, signer = false) => ({ source, writable, signer })
   const derived = text => ({ kind: 'pda', program: 'selectedHook', seeds: [{ kind: 'bytes', hex: Buffer.from(text).toString('hex') }, ctx('mint')] })
   return hookSetupManifestSchema.parse({ schema: 'repoing/hook-setup-manifest/1', selectedHook,
-    postMintHoldings: [{ owner: { kind: 'field', name: 'collector' } }],
+    postMintHoldings: [{ owner: { kind: 'field', name: 'collector' } }, { owner: { kind: 'fixed', address: 'FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i' } }],
     fields: [{ name: 'feeBps', label: 'Transfer fee (basis points)', type: 'u16', min: '0', max: '2000' }, { name: 'maxWalletBps', label: 'Wallet cap (basis points; 0 disables)', type: 'u16', min: '0', max: '10000' }, { name: 'collector', label: 'Collector wallet', type: 'address' }],
     instructions: [{ data: [{ kind: 'bytes', hex: createHash('sha256').update('global:prepare').digest().subarray(0, 8).toString('hex') }, { kind: 'field', name: 'feeBps' }, { kind: 'field', name: 'maxWalletBps' }],
       accounts: [account(ctx('creator'), true, true), account(ctx('mint')), account({ kind: 'field', name: 'collector' }), account(derived('tax'), true), account(derived('bordrless-hook-accounts'), true), account({ kind: 'fixed', address: '11111111111111111111111111111111' })] }] })

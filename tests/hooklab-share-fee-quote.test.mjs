@@ -35,24 +35,24 @@ test('native buy charges additional protocol share and LP revenue, not a creator
   assert.equal(q.cutsIn, 181n)
   assert.equal(q.cutsOut, 17n)
   assert.deepEqual(q.fees, { creatorQuote: 138n, customQuote: 43n, lpFee: 0n,
-    lpProtocolQuote: 31n, inputShareQuote: 61n, outputShareQuote: 2n, protocolQuote: 94n })
-  assert.deepEqual(q.after, { baseReserve: 20977n, quoteReserve: 16729n, protocolFeesQuote: 103n })
+    lpProtocolQuote: 31n, inputShareQuote: 61n, outputShareQuote: 0n, protocolQuote: 92n })
+  assert.deepEqual(q.after, { baseReserve: 20977n, quoteReserve: 16731n, protocolFeesQuote: 101n })
   assert.equal(q.quoteVaultDelta, 9822n)
   assert.equal(q.canSign, false)
 })
-test('native sell measures input tax, excludes burn, and uses nested ceiling conversion', () => {
+test('native sell measures input tax without charging its SOL equivalent', () => {
   const q = shareNativeQuote(input({ side: 'sell', amountIn: 1237n, burnIn: 19n,
     burnOut: 0n, tokenInputTax: 23n, tokenOutputTax: 0n }))
   assert.equal(q.receivedIn, 1195n)
   assert.equal(q.cutsIn, 23n)
   assert.equal(q.grossOutput, 165n)
-  assert.equal(q.amountOutBeforeHooks, 162n)
-  assert.equal(q.delivered, 158n)
+  assert.equal(q.amountOutBeforeHooks, 164n)
+  assert.equal(q.delivered, 160n)
   assert.equal(q.cutsOut, 3n)
   assert.deepEqual(q.fees, { creatorQuote: 3n, customQuote: 0n, lpFee: 0n,
-    lpProtocolQuote: 1n, inputShareQuote: 2n, outputShareQuote: 1n, protocolQuote: 4n })
-  assert.deepEqual(q.after, { baseReserve: 51198n, quoteReserve: 6836n, protocolFeesQuote: 13n })
-  assert.equal(q.quoteVaultDelta, -161n)
+    lpProtocolQuote: 1n, inputShareQuote: 0n, outputShareQuote: 1n, protocolQuote: 2n })
+  assert.deepEqual(q.after, { baseReserve: 51198n, quoteReserve: 6836n, protocolFeesQuote: 11n })
+  assert.equal(q.quoteVaultDelta, -163n)
 })
 test('burns do not accrue protocol share on either side', () => {
   const q = shareNativeQuote(input({ creatorFeeBps: 0n, quoteCutBps: 0n,
@@ -106,14 +106,20 @@ test('rejects quote reserve and protocol-accounting u64 overflows', () => {
   assert.throws(() => shareNativeQuote(input({ pool: { ...pool, protocolFeesQuote: (1n << 64n) - 1n } })), /U64/)
 })
 
-test('nested sell ceilings are not replaced with a single multiplied division', () => {
+test('token tax alone never accrues SOL protocol revenue or removes pool SOL', () => {
   const q = shareNativeQuote(input({ side: 'sell', amountIn: 10n, creatorFeeBps: 0n,
     quoteCutBps: 0n, lpFeeBps: 0n, tokenInputTax: 2n, tokenOutputTax: 0n, burnOut: 0n,
     pool: { ...pool, baseReserve: 100n, quoteReserve: 1000n, virtualBase: 0n,
       virtualQuote: 0n, protocolShareBps: 7000n } }))
-  // Curve 8*1000/108 floors to 74; ceil(2*74/8)=19; ceil(19*.7)=14, not 13.
-  assert.equal(q.fees.inputShareQuote, 14n)
-  assert.equal(q.delivered, 60n)
+  // Only the eight tokens reaching the pool price the trade: floor(8*1000/108)=74.
+  assert.equal(q.fees.inputShareQuote, 0n)
+  assert.equal(q.fees.protocolQuote, 0n)
+  assert.equal(q.delivered, 74n)
+  assert.equal(q.after.quoteReserve, 926n)
+  const buy = shareNativeQuote(input({ creatorFeeBps: 0n, quoteCutBps: 0n,
+    lpFeeBps: 0n, burnOut: 0n, tokenOutputTax: 19n }))
+  assert.equal(buy.fees.protocolQuote, 0n)
+  assert.equal(buy.after.quoteReserve, 17004n)
 })
 test('quote books reconcile to native vault movement on both sides', () => {
   for (const extra of [{}, { side: 'sell', amountIn: 1237n, burnOut: 0n,

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
-import { bindHookPublication, hookCatalogStore, hookPublicationInputSchema, hookSetupManifestSchema, materializeHookSetup, revalidateHookPublication, taxHookSetupManifest } from '../src/hooklab-hook-catalog.mjs'
+import { bindHookPublication, hookCatalogStore, hookPublicationInputSchema, hookSetupManifestSchema, materializeHookSetup, materializePostMintHoldingOwners, revalidateHookPublication, taxHookSetupManifest } from '../src/hooklab-hook-catalog.mjs'
 import { selectedHookSetupRequestSchema } from '../src/hooklab-selected-hook-setup.mjs'
 import { createHookCatalogHandler } from '../app/lib/hooklab-hook-catalog.mjs'
 
@@ -36,6 +36,13 @@ test('tax prepare template matches pinned discriminator, u16 layout, account ord
   assert.deepEqual(ix.accounts.filter(a => a.signer).map(a => a.address), [creator])
   assert.deepEqual(manifest, before)
   assert.throws(() => { result.instructions[0].accounts[0].address = collector }, TypeError)
+})
+test('tax launch creates both fee recipients atomically and merges an identical owner', () => {
+  const platform = 'FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i'
+  const manifest = taxHookSetupManifest({ program: H, flags: 65 })
+  const owners = configuration => materializePostMintHoldingOwners({ digest: 'a'.repeat(64), manifest, configuration }, { creator, mint, selectedHook: manifest.selectedHook })
+  assert.deepEqual(owners(config), [collector, platform])
+  assert.deepEqual(owners({ ...config, collector: platform }), [platform])
 })
 test('unsafe manifests/config cannot inject JS, programs, extra signers, writable mint or mixed program', () => {
   for (const mutate of [m => { m.javascript = 'fetch()' }, m => { m.instructions[0].program = J }, m => { m.instructions[0].accounts[2].signer = true }, m => { m.instructions[0].accounts[1].writable = true }, m => { m.instructions[0].data.push({ kind: 'field', name: 'unknown' }) }, m => { m.fields[0].max = '65536' }]) {

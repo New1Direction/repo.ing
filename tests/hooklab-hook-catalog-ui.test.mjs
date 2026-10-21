@@ -33,6 +33,10 @@ test('publisher renders wallet attribution, append-only warning and explicit dec
     assert.ok(doc.querySelector(`label[for="publish-${field}"]`)); assert.ok(doc.querySelector(`#publish-${field}`).required)
   }
   assert.match(doc.body.textContent, /append-only/)
-  assert.match(doc.body.textContent, /collector holding is created atomically with the mint/)
+  assert.match(doc.body.textContent, /both platform and collector token accounts are created atomically with the mint/)
+  assert.match(doc.body.textContent, /that split adds no SOL charge/)
+  assert.match(doc.body.textContent, /Transfers to and from the fixed platform treasury are tax-exempt/)
+  assert.match(doc.body.textContent, /FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i/)
+  assert.match(doc.body.textContent, /Creators cannot replace this exempt address/)
   assert.equal(doc.querySelector('button[type="submit"]').textContent, 'Publish immutable version')
 })

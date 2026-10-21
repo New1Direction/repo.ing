@@ -15,6 +15,8 @@ import { claimable, claimViaUi } from './support/claims.ts'
 import { expectSettlementIsReceipt } from './support/settlement.ts'
 import { SiteClient } from './support/site-client.ts'
 
+const PLATFORM_OWNER = 'FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i'
+const SELECTED_HOOK = '8WpjE7zTWWhLyzXnenjn3P1iXriTZTfgaiKSmf2kugau'
 // Run the same public lifecycle for both independently pinned implementations.
 // These hooks implement token callbacks, not the quote-cut callback: positive SOL
 // cut limits correctly make simulation refuse them. Exercise supported nonzero
@@ -23,10 +25,13 @@ for (const role of ['selected', 'alternate'] as const) {
 const SYMBOL = role === 'selected' ? 'TAXV1' : 'RCPTV1', TAX_BPS = role === 'selected' ? 200n : 0n
 const BURN_BUY = 37n, BURN_SELL = 83n, AUTHOR_SHARE = 2500
 let coin: OpenLaunched, collector: string, creatorAccrued = 0n, platformAccrued = 0n
+let platformTokensAccrued = 0n
+let quoteReserve = 0n
 let graduationSeen = false
 const hooks = () => {
   if (stack.mode !== 'economic-hook' || stack.selectedHooks?.length !== 2) throw Error('Explicit economic-hook stack with two pinned candidate hooks required')
   if (!['127.0.0.1', 'localhost'].includes(new URL(stack.validator.url).hostname)) throw Error('Loopback chain required')
+  expect(stack.selectedHooks.find(h => h.role === 'selected')?.program).toBe(SELECTED_HOOK)
   return stack.selectedHooks
 }
 const activeHook = () => hooks().find(h => h.role === role)!
@@ -42,8 +47,9 @@ async function collected() {
   }
   const a = await connection.getAccountInfo(taxAddress(), 'finalized')
   expect(a?.owner.toBase58()).toBe(hooks()[0].program)
-  // TaxConfig: discriminator, bump, mint, authority, fee/cap u16, two pubkeys, collected u64.
-  expect(a!.data.length).toBe(149)
+  // Split TaxConfig appends the fixed platform holding after the unchanged collected offset.
+  expect(a!.data.length).toBe(181)
+  expect(new PublicKey(Buffer.from(a!.data).subarray(149, 181)).toBase58()).toBe(holdingAddress(coin.mint, PLATFORM_OWNER))
   return Buffer.from(a!.data).readBigUInt64LE(141)
 }
 async function approveTrade(screen: any, amount: string, side: 'buy' | 'sell', app: any) {
@@ -72,7 +78,6 @@ async function checkedTrade(op: any, wallet: string, before: bigint, collectorBe
   expect(tx.transaction.message.compiledInstructions.some(ix => keys[ix.programIdIndex] === stack.programs!.gate)).toBe(false)
   const paid = await collected() - before
   expect(paid > 0n).toBe(true)
-  if (role === 'selected') expect(await coinBalance(coin.mint, collector) - collectorBefore).toBe(paid)
   const evidence = authenticatedEvents(tx), swaps = evidence.filter(e => e.program === 'swap')
   expect(evidence.some(e => e.name === 'InclusiveCreatorFeeAccrued')).toBe(false)
   const swap = one(swaps, 'Swapped'), native = one(swaps, 'SwappedNative'), buy = swap.direction === 1
@@ -93,13 +98,27 @@ async function checkedTrade(op: any, wallet: string, before: bigint, collectorBe
   expect(burn > 0n).toBe(true)
   // Graduation can transfer reserve top-up too. Check ceil tax per actual token transfer,
   // not once on their sum or only on the swap output.
-  let tokenPaid = 0n
+  let tokenPaid = 0n, platformTokens = 0n, collectorTokens = 0n
   for (const { data: t } of transfers) {
     const tax = (big(t.amount) * TAX_BPS + 9999n) / 10000n
-    expect(t.deltas.map((d: any) => [d.holding.toBase58(), big(d.amount)])).toEqual(role === 'selected' ? [[holdingAddress(coin.mint, collector), tax]] : [])
+    const platform = tax / 4n, remainder = tax - platform
+    const actual = t.deltas.map((d: any) => [d.holding.toBase58(), big(d.amount)]).sort((a: any, b: any) => a[0].localeCompare(b[0]))
+    const expected = role === 'selected' ? [[holdingAddress(coin.mint, PLATFORM_OWNER), platform], [holdingAddress(coin.mint, collector), remainder]].sort((a: any, b: any) => a[0].localeCompare(b[0])) : []
+    expect(actual).toEqual(expected)
     tokenPaid += tax
+    platformTokens += platform; collectorTokens += remainder
   }
   expect(paid).toBe(role === 'selected' ? tokenPaid : BigInt(transfers.length * 2))
+  if (role === 'selected') {
+    expect(await coinBalance(coin.mint, collector) - collectorBefore).toBe(collectorTokens)
+    platformTokensAccrued += platformTokens
+    expect(await coinBalance(coin.mint, PLATFORM_OWNER)).toBe(platformTokensAccrued)
+    // These are token credits, never native-SOL payments to either tax recipient.
+    expect(lamportDelta(tx, collector)).toBe(0n)
+    expect(lamportDelta(tx, PLATFORM_OWNER)).toBe(0n)
+    expect(lamportDelta(tx, holdingAddress(coin.mint, collector))).toBe(0n)
+    expect(lamportDelta(tx, holdingAddress(coin.mint, PLATFORM_OWNER))).toBe(0n)
+  }
   expect(big(buy ? transfer.destination_post : transfer.source_post)).toBe(await coinBalance(coin.mint, wallet))
   const quoteDeltas = buy ? swap.deltas_in : swap.deltas_out
   expect(quoteDeltas.length).toBe(1)
@@ -108,16 +127,20 @@ async function checkedTrade(op: any, wallet: string, before: bigint, collectorBe
   const ceil = (n: bigint, d: bigint) => (n + d - 1n) / d
   const pool = (await poolAccount(coin.pool)).value, share = BigInt(pool.protocol_share_bps)
   const lpQuote = ceil((buy ? big(swap.received_in) : big(swap.amount_out)) * BigInt(swap.lp_fee_bps), 10000n)
-  const inputShare = ceil((buy ? creator : ceil(big(swap.cuts_in) * big(swap.amount_out), big(swap.received_in))) * share, 10000n)
-  const curveInput = big(swap.received_in) - lpQuote - inputShare
-  const outputShare = ceil((buy ? ceil(big(swap.cuts_out) * curveInput, big(swap.amount_out)) : creator) * share, 10000n)
-  // The share is additive protocol revenue; it is never subtracted from the creator's cut.
-  expect(protocol).toBe(lpQuote + inputShare + outputShare)
-  const creatorBasis = buy ? big(swap.amount_in) : big(swap.amount_out) - lpQuote - inputShare
+  const creatorShare = ceil(creator * share, 10000n)
+  // Preserve the existing additive creator quote-fee surcharge. Token cuts on
+  // either side have no SOL equivalent, surcharge, or pool reserve deduction.
+  expect(protocol).toBe(lpQuote + creatorShare)
+  const creatorBasis = buy ? big(swap.amount_in) : big(swap.amount_out) - lpQuote
   expect(creator).toBe(ceil(creatorBasis * BigInt((await launchAccount(coin.launch)).value.creator_fee_bps), 10000n))
   expect(lamportDelta(tx, coin.launch)).toBe(creator)
   expect(native.quote_deltas.map((d: any) => [d.holding.toBase58(), big(d.amount)])).toEqual([[coin.launch, creator]])
   const delivered = big(swap.delivered_out), received = big(swap.received_in)
+  const mainTax = ((gross - burn) * TAX_BPS + 9999n) / 10000n
+  expect(received).toBe(buy ? big(swap.amount_in) - creator : gross - burn - mainTax)
+  expect(delivered).toBe(buy ? gross - burn - mainTax : big(swap.amount_out) - protocol - creator)
+  expect(big(swap.quote_reserve)).toBe(quoteReserve + (buy ? received - lpQuote - creatorShare : -big(swap.amount_out)))
+  quoteReserve = big(pool.quote_reserve)
   expect(big(native.quote_lamports)).toBe(buy ? received : delivered)
   expect(lamportDelta(tx, coin.pool)).toBe(buy ? received : -(delivered + creator))
   const holdingRent = lamportDelta(tx, holdingAddress(coin.mint, wallet))
@@ -176,9 +199,15 @@ describe(`local unreviewed economic ${role} hook lifecycle`, { serial: true }, (
 
   test('developer publishes both hooks; creator selects this implementation and reviews nonzero economics', { timeout: 900_000 }, async ({ app, screen, browser }) => {
     const creator = await freshWallet(20); collector = (await freshWallet(1)).publicKey.toBase58()
+    expect(collector).not.toBe(PLATFORM_OWNER)
+    expect(collector).not.toBe(creator.publicKey.toBase58())
     await openLaunchPage({ app, screen, browser }, creator)
     const approvals = await approveSignatures(browser)
     await app.open('/hooks/publish'); await signInForLaunch(screen)
+    await screen.getByText('Setup manifest format', { exact: true }).tap()
+    await screen.getByText(/both platform and collector token accounts are created atomically/).scrollIntoView()
+    await app.screenshot('economic-two-recipient-setup-disclosure')
+    await screen.getByText('Setup manifest format', { exact: true }).tap()
     for (const h of hooks()) {
       const selectedHook = { program: h.program, flags: h.flags }
       // Both publications are exercised by the same launch/trade/claim lifecycle.
@@ -192,8 +221,8 @@ describe(`local unreviewed economic ${role} hook lifecycle`, { serial: true }, (
         }],
       }
       for (const [label, value] of Object.entries({ 'Hook name': h.name, 'Immutable version': 'local-v1', 'Hook program address': h.program,
-        'Callback flags (1–255)': String(h.flags), 'Declared behavior': h.role === 'selected' ? 'Tax transfer destinations; collector exempt.' : 'Transfer callback receipt only.',
-        'Declared fees (including token fees)': h.role === 'selected' ? 'Configured 200 bps transfer tax, rounded up; app creates collector holding atomically with launch.' : 'No token fee.',
+        'Callback flags (1–255)': String(h.flags), 'Declared behavior': h.role === 'selected' ? `Tax transfer destinations; collector exempt. Transfers to and from fixed platform treasury ${PLATFORM_OWNER} are tax-exempt. Creators cannot replace this exempt address.` : 'Transfer callback receipt only.',
+        'Declared fees (including token fees)': h.role === 'selected' ? 'Configured 200 bps transfer tax, rounded up; platform receives floor(gross/4), collector receives remainder. App creates both holdings atomically with launch. No token-tax SOL surcharge.' : 'No token fee.',
         'Declared risks and restrictions': 'Local unreviewed candidate. No mainnet authorization.', 'Declarative setup manifest (JSON)': JSON.stringify(manifest) })) await screen.getByLabel(label, { exact: true }).fill(value)
       await screen.getByRole('button', { name: 'Publish immutable version' }).tap()
       await expect(screen.getByText('Published. Creators can discover this version in the hook selector.')).toBeVisible({ timeout: 60_000 })
@@ -280,24 +309,28 @@ describe(`local unreviewed economic ${role} hook lifecycle`, { serial: true }, (
     expect(lamportDelta(tx, cost.address)).toBe(BigInt(cost.rentLamports))
     const intents = await db.query('select mint, hook_publication from hook_lab_selected_hook_setup_intents where owner_wallet=$1', [address])
     expect(intents.rows.map(r => r.mint)).toEqual([mint]); expect(intents.rows[0].hook_publication.digest).toBe(publication.digest)
-    // No out-of-app repair: the launch transaction itself must create the collector holding.
-    const holding = holdingAddress(mint, collector), launchTx = await receipt(launchOp.signature!)
+    // No out-of-app repair: the launch transaction itself must create both holdings.
+    const launchTx = await receipt(launchOp.signature!)
     const packetBytes = 1 + 64 * launchTx.transaction.message.header.numRequiredSignatures + launchTx.transaction.message.serialize().length
     expect(packetBytes <= 1232).toBe(true)
     expect(launchTx.transaction.message.addressTableLookups.some(t => t.accountKey.toBase58() === cost.address)).toBe(true)
     if (role === 'selected') {
+    for (const owner of [collector, PLATFORM_OWNER]) {
+    const holding = holdingAddress(mint, owner)
     const creations = authenticatedEvents(launchTx).filter(e => e.program === 'token' && e.name === 'HoldingCreated' && e.data.holding.toBase58() === holding)
     const created = one(creations, 'HoldingCreated'), launchKeys = accountKeys(launchTx)
     const launchIndex = launchTx.transaction.message.compiledInstructions.findIndex(ix => launchKeys[ix.programIdIndex] === stack.programs!.launch)
     expect(launchIndex >= 0 && creations[0].index > launchIndex).toBe(true)
     expect(creations[0].caller).toBeNull()
-    expect(created.owner.toBase58()).toBe(collector); expect(created.mint.toBase58()).toBe(mint)
+    expect(created.owner.toBase58()).toBe(owner); expect(created.mint.toBase58()).toBe(mint)
     expect(created.payer.toBase58()).toBe(address)
     expect((await connection.getAccountInfo(new PublicKey(holding), 'finalized'))?.owner.toBase58()).toBe(stack.programs!.token)
-    expect(await coinBalance(mint, collector)).toBe(0n)
+    expect(await coinBalance(mint, owner)).toBe(0n)
     expect(lamportDelta(launchTx, holding) > 0n).toBe(true)
     }
+    }
     expect(big((await poolAccount(pool)).value.protocol_fees_quote)).toBe(0n)
+    quoteReserve = big((await poolAccount(pool)).value.quote_reserve)
     expect((await poolAccount(pool)).value.fee_model).toBe(1)
     expect((await launchAccount(launch)).value.author_share_bps).toBe(0)
     // V1 binds config author to the creator, so the effective on-chain share is
