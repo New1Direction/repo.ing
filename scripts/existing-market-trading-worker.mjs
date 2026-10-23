@@ -5,7 +5,7 @@ import custodyManifest from '../config/existing-market-custody.json'
 // Review/test-only successor to the accepted recovery wrapper. Keep the existing
 // PublicSite/PUBLIC_SITE/public-readonly migration identity. This module is not
 // a live activation mechanism: changing a binding to `live` fails closed.
-const pages = new Set(['/', '/launch', '/explore', '/builders', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks'])
+const pages = new Set(['/', '/launch', '/explore', '/find-repos', '/discoverers', '/referrals', '/agents', '/wallet', '/builders', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks'])
 const mint = '[1-9A-HJ-NP-Za-km-z]{32,44}'
 const tokenPage = new RegExp(`^/token/${mint}$`)
 const publicMarketApi = new RegExp(`^/api/market/${mint}/(trades|metrics|curve|traders|activity|pulse)$`)
@@ -54,9 +54,10 @@ async function tradeBoundary(request, bindings) {
   if (request.headers.has('upgrade')) return deny()
   const active = ['review', 'test'].includes(stage)
   const balance = url.pathname === '/api/wallet/balance' || marketBalance.test(url.pathname)
+  const search = url.pathname === '/api/repo-search'
   if (['GET', 'HEAD'].includes(request.method) && !(active && balance)) return null
-  if (!active || (!balance && url.pathname !== '/api/trade') || (balance && !['GET', 'HEAD'].includes(request.method))) return deny()
-  if (stage === 'test' && (!/^[a-f0-9]{64}$/.test(bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN ?? '') ||
+  if (!search && (!active || (!balance && url.pathname !== '/api/trade') || (balance && !['GET', 'HEAD'].includes(request.method)))) return deny()
+  if (!search && stage === 'test' && (!/^[a-f0-9]{64}$/.test(bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN ?? '') ||
     request.headers.get('authorization') !== `Bearer ${bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN}`)) return deny()
   let body
   if (!balance) {
@@ -71,7 +72,7 @@ async function tradeBoundary(request, bindings) {
         const { done, value } = await reader.read()
         if (done) break
         size += value.byteLength
-        if (size > 16384) { await reader.cancel(); return deny() }
+        if (size > (search ? 2048 : 16384)) { await reader.cancel(); return deny() }
         chunks.push(value)
       }
     } catch { return deny() } finally { reader.releaseLock() }
@@ -82,7 +83,7 @@ async function tradeBoundary(request, bindings) {
     try { payload = JSON.parse(new TextDecoder().decode(body)) } catch { return deny() }
     const actions = stage === 'test' ? ['prepare', 'status', ...(bindings.EXISTING_MARKET_TEST_SUBMISSION === 'true' ? ['submit'] : [])]
       : ['depth', 'quote', 'costs', 'prepare', 'status']
-    if (!payload || !actions.includes(payload.action)) return deny()
+    if (!payload || (!search && !actions.includes(payload.action))) return deny()
   }
   const headers = new Headers()
   // cf-connecting-ip is set by Cloudflare at ingress; never trust caller-supplied
@@ -90,7 +91,7 @@ async function tradeBoundary(request, bindings) {
   for (const name of ['accept', 'content-type', 'origin', 'cf-connecting-ip']) {
     if (request.headers.has(name)) headers.set(name, request.headers.get(name))
   }
-  if (stage === 'test') headers.set('authorization', request.headers.get('authorization'))
+  if (!search && stage === 'test') headers.set('authorization', request.headers.get('authorization'))
   return new Request(request.url, { method: request.method, headers, body, redirect: 'manual' })
 }
 
@@ -172,7 +173,7 @@ export default {
       const allowed = pages.has(url.pathname) || tokenPage.test(url.pathname)
         || publicMarketApi.test(url.pathname) || tokenImage.test(url.pathname)
         || /^\/api\/repo-logo\/\d+$/.test(url.pathname)
-        || url.pathname === '/api/growth'
+        || ['/api/growth', '/api/repo-search', '/api/wallet/overview'].includes(url.pathname)
         || ['/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png'].includes(url.pathname)
         || /^\/(art|badges|launch-icons|hook-icons|credits)\/[a-z0-9-]+\.(webp|png)$/.test(url.pathname)
         || ['/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4'].includes(url.pathname)

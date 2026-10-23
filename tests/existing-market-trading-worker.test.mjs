@@ -92,16 +92,41 @@ test('only the five explicit review actions and two balance routes reach the con
   assert.equal(f.runtime.calls.length, 9)
 })
 
-test('policy fallback retains the exact public GET/HEAD allowlist and rejects private/mutation routes', async () => {
+test('policy fallback serves public discovery and wallet reads but rejects private/mutation routes', async () => {
   const f = await fixture()
-  const allowed = ['/', '/launch', '/explore', '/builders', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks', `/token/${mint}`, ...['trades', 'metrics', 'curve', 'traders', 'activity', 'pulse'].map(s => `/api/market/${mint}/${s}`), `/api/token-image/${mint}`, '/api/repo-logo/123', '/api/growth', '/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png', ...['art', 'badges', 'launch-icons', 'hook-icons', 'credits'].map(s => `/${s}/test-image.webp`), '/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4', '/_next/static/chunks/test.js']
+  const allowed = ['/', '/launch', '/explore', '/find-repos', '/discoverers', '/referrals', '/agents', '/wallet', '/api/repo-search', '/api/wallet/overview', '/builders', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks', `/token/${mint}`, ...['trades', 'metrics', 'curve', 'traders', 'activity', 'pulse'].map(s => `/api/market/${mint}/${s}`), `/api/token-image/${mint}`, '/api/repo-logo/123', '/api/growth', '/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png', ...['art', 'badges', 'launch-icons', 'hook-icons', 'credits'].map(s => `/${s}/test-image.webp`), '/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4', '/_next/static/chunks/test.js']
   for (const path of allowed) for (const method of ['GET', 'HEAD']) assert.equal((await f.request(path, { method })).status, 200, `${method} ${path}`)
   const before = f.runtime.calls.length
-  for (const path of ['/api/trade', '/api/trade/', '/api/auth/session', '/api/wallet/overview', '/api/launch', '/api/hook-lab/native-launch', '/api/hook-lab/inclusive-trade', '/api/builders/claim', '/api/bundles', '/api/replay', '/api/actions/trade', '/api/mcp', '/builders?owner=x', '/admin/restart', '/api/market/not-a-mint/balance', `/api/market/${mint}/balance/`, '/stats/', '/art/image.svg']) {
+  for (const path of ['/api/trade', '/api/trade/', '/api/auth/session', '/api/launch', '/api/hook-lab/native-launch', '/api/hook-lab/inclusive-trade', '/api/builders/claim', '/api/bundles', '/api/replay', '/api/actions/trade', '/api/mcp', '/builders?owner=x', '/admin/restart', '/api/market/not-a-mint/balance', `/api/market/${mint}/balance/`, '/stats/', '/art/image.svg']) {
     for (const method of ['GET', 'HEAD', 'POST', 'OPTIONS', 'PUT', 'DELETE']) assert.equal((await f.request(path, { method })).status, 403, `${method} ${path}`)
   }
   assert.equal(f.runtime.calls.length, before)
   assert.equal((await f.request('/stats', { headers: { upgrade: 'websocket' } })).status, 403)
+})
+
+test('public repository search accepts bounded same-origin queries without forwarding credentials or enabling writes', async () => {
+  const f = await fixture()
+  const headers = { origin: 'https://repo.ing', 'content-type': 'application/json', cookie: 'private', authorization: 'Bearer private' }
+  const request = { method: 'POST', headers, body: JSON.stringify({ query: 'solana' }) }
+  assert.equal((await f.request('/api/repo-search', request)).status, 200)
+  const upstream = f.runtime.calls.at(-1)
+  assert.deepEqual(JSON.parse(upstream.body), { query: 'solana' })
+  assert.equal(upstream.request.headers.has('authorization'), false)
+  assert.equal(upstream.request.headers.has('cookie'), false)
+  for (const path of ['/api/resolve', '/api/wallet/overview', '/find-repos', '/api/claim', '/api/launch']) {
+    assert.equal((await f.request(path, request)).status, 403)
+  }
+  for (const overrides of [{ origin: 'https://elsewhere.example' }, { 'content-type': 'text/plain' }]) {
+    assert.equal((await f.request('/api/repo-search', { ...request, headers: { ...headers, ...overrides } })).status, 403)
+  }
+  const body = JSON.stringify({ query: 'solana' }).padEnd(2048, ' ')
+  assert.equal((await f.request('/api/repo-search', { ...request, body })).status, 200)
+  assert.equal((await f.request('/api/repo-search', { ...request, body: body + ' ' })).status, 403)
+  assert.equal((await f.trade('submit')).status, 403)
+  Object.assign(f.env, { EXISTING_MARKET_TRADING_STAGE: 'test', EXISTING_MARKET_TEST_PLAN: 'existing-markets-six-swaps-v1', EXISTING_MARKET_TEST_SUBMISSION: 'false', EXISTING_MARKET_TEST_ACCESS_TOKEN: 'a'.repeat(64) })
+  assert.equal((await f.request('/api/repo-search', request)).status, 200)
+  assert.equal(f.runtime.calls.at(-1).request.headers.has('authorization'), false)
+  assert.equal((await f.trade('prepare')).status, 403)
 })
 
 test('strips legacy credentials and spoofed forwarding headers, keeps trusted IP on trading requests', async () => {
