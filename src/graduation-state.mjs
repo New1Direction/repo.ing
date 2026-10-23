@@ -6,6 +6,7 @@ import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk
 import { isEarlyAccessMarket } from './early-access.mjs'
 import { decodeEarlyAccessConfig } from './early-access-config.mjs'
 import { createMarketConfigResolver } from './market-config.mjs'
+import { createCustodyRecovery } from './custody-recovery.mjs'
 import { createGraduatedFees, migrationPosition } from './graduated-fees.mjs'
 import { forgetFinalizedTransaction, loadFinalizedTransaction } from './finalized-transaction.mjs'
 import { readGenesisHash } from './rpc-usage.mjs'
@@ -90,7 +91,8 @@ export function createCurveReads({connection,verification,config,markets,maxAgeM
 // curveReads may supply both providers' pool/config reads from a batch at most 15 s old.
 // earlyAccess (EARLY_ACCESS_DBC_CONFIG): a contributor early access market is read from its transfer-hook pool and config, and after its
 // migration from its DAMM v2 pool (Token-2022 token A; docs/EARLY_ACCESS.md, step 7a).
-export async function readGraduationState({connection,verification,config,market,env=process.env,db=null,curveReads=null,earlyAccess=null}) {
+export async function readGraduationState({connection,verification,config,market,env=process.env,db=null,curveReads=null,earlyAccess=null,custodyRecovery=null}) {
+  const custody=createCustodyRecovery(custodyRecovery)
   if(!verification)throw Error('VERIFICATION_RPC_REQUIRED')
   const local=[connection,verification].every(c=>/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(c.rpcEndpoint))
   if(connection.rpcEndpoint===verification.rpcEndpoint&&!(local&&env.NODE_ENV!=='production'))throw Error('INDEPENDENT_RPC_REQUIRED')
@@ -118,7 +120,7 @@ export async function readGraduationState({connection,verification,config,market
     if(!decoded.transferHookProgram.equals(new PublicKey(market.transferHookProgram)))throw Error('CONFIG_OR_POOL_MISMATCH')
     fixed=decoded.config
   }else{state=coder.decode('virtualPool',reads[0].snapshot.value[0].data).poolState;fixed=coder.decode('poolConfig',reads[0].snapshot.value[1].data)}
-  if(!state.config.equals(configKey)||state.baseMint.toBase58()!==market.mint||state.creator.toBase58()!==market.creatorWallet||!fixed.quoteMint.equals(NATIVE_MINT))throw Error('CONFIG_OR_POOL_MISMATCH')
+  if(!state.config.equals(configKey)||state.baseMint.toBase58()!==market.mint||state.creator.toBase58()!==custody.creator(market,configKey)||!fixed.quoteMint.equals(NATIVE_MINT))throw Error('CONFIG_OR_POOL_MISMATCH')
   const value={...graduationProgress(state.quoteReserve.toString(),fixed.migrationQuoteThreshold.toString()),
     repoId:String(market.githubRepoId??market.repoId),config:configKey.toBase58(),curve:market.pool,mint:market.mint,
     checkedAt:new Date().toISOString(),chainTime:new Date(Math.min(...reads.map(r=>r.time))*1000).toISOString(),
@@ -127,7 +129,7 @@ export async function readGraduationState({connection,verification,config,market
   // A full curve waiting for its migration: when it filled, from the pool's own record (the monitor's MIGRATION_OVERDUE alert).
   if(!state.isMigrated&&BigInt(state.finishCurveTimestamp?.toString()??'0')>0n)value.curveFinishedAt=new Date(Number(state.finishCurveTimestamp.toString())*1000).toISOString()
   if(!state.isMigrated)return value
-  const snapshots=await Promise.all([connection,verification].map(c=>createGraduatedFees({connection:c,config,db,earlyAccess,earlyAccessGraduated:true}).read(market,{poolState:state},fixed)))
+  const snapshots=await Promise.all([connection,verification].map(c=>createGraduatedFees({connection:c,config,db,earlyAccess,earlyAccessGraduated:true,custodyRecovery}).read(market,{poolState:state},fixed)))
   if(snapshots.some(s=>!s))throw Error('GRADUATION_STATE_DISAGREEMENT')
   agreeGraduation(...snapshots.map(s=>({evidence:s.evidence,partner:s.partner.evidence})))
   const g=snapshots[0]

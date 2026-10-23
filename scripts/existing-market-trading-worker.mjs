@@ -225,7 +225,7 @@ export default {
           const notice = bindings.EXISTING_MARKET_TRADING_STAGE === 'test'
             ? `Authorized six-swap test only · ${bindings.EXISTING_MARKET_TEST_SUBMISSION === 'true' ? 'Operator-gated wallet test.' : 'Unsigned preparation only. Do not sign.'} Public trading, launches, claims and replay are paused.`
             : 'Existing-market trading review · Unsigned preparation only. Do not sign. Submission, launches, claims and replay are paused.'
-          body.append(`<aside role="note" id="recovery-notice" style="position:fixed;bottom:0;left:0;right:0;z-index:2147483647;padding:10px 16px;background:#fff3cd;color:#332500;border-top:1px solid #b89b46;font:600 13px/1.4 system-ui;text-align:center">${notice} Market history snapshot through Oct 22, 14:48 UTC — not live accounting.</aside>`, { html: true })
+          body.append(`<aside role="note" id="recovery-notice" style="position:fixed;bottom:0;left:0;right:0;z-index:2147483647;padding:10px 16px;background:#fff3cd;color:#332500;border-top:1px solid #b89b46;font:600 13px/1.4 system-ui;text-align:center">${notice} Charts use read-only finalized-chain indexing. Fee accounting and payouts remain under verification.</aside>`, { html: true })
         },
       }).transform(safe)
     }

@@ -1,4 +1,4 @@
-# Restoration checkpoint — 2026-10-23 19:45 UTC
+# Restoration checkpoint — 2026-10-23 20:15 UTC
 
 ## Delivery and instructions
 - Repository: New1Direction/repo.ing; working branch: repair/creator-selected-hooks.
@@ -13,12 +13,30 @@
 - LIVE 19:27 UTC: standalone container and `/api/health` (HTTP 200), exact image/12 JS assets verified; all 12 safety-boundary checks passed.
 - LIVE 19:40 UTC: `/api/mcp/readonly` and read-only `/api/mcp` alias; market lookup/totals work, unknown trade tool rejected, all 12 financial-denial checks passed again for this changed image.
 - LIVE: bounded discovery writer and restricted public/operational database readers; historical accounting repair accepted.
-- VERIFIED 18:52 UTC: homepage 200; trade submission, launch, claim and replay POSTs denied with 403.
+- LIVE 20:04 UTC: chart-only finalized-chain indexing and fresh graduation observations; all 77 markets passed one complete scan, 59 new swaps inserted on the initial pass. Curve and graduated charts rendered and screenshots inspected.
+- VERIFIED 20:14 UTC after safety rollback: `/api/health` reports ok, public submission returns 403, durable test run disabled/stopped with zero signed/broadcast/finalized swaps and zero reserved spending.
 - GATED: existing-market execution; six wallet-restricted swaps have not completed finalized acceptance.
 - GATED: ordinary launches, bundles, Hook Playground activation, beneficiary claims/payouts.
 - DISABLED: historical replay/general worker; do not restart it. Credits/inference restoration is deferred.
-- READ-ONLY GAPS: market/chart freshness and stale-data notice need acceptance. MCP currently inherits stale graduation labels; do not treat its recorded totals as fresh chain verification.
-- Production image is standalone ff52bd7a4f393fa5c821a5309b78419b73c030f12525d50241ca35e3210fd3c9; Worker 4c01e023-f640-4005-aa5f-af6e55d4915c; review mode still denies financial submission.
+- Public notice now distinguishes read-only finalized-chain charts from still-unverified fee accounting/payouts. Transient RPC failures can withhold individual progress after its five-minute freshness deadline; they never fabricate fresh timestamps.
+- Production image is standalone ff52bd7a4f393fa5c821a5309b78419b73c030f12525d50241ca35e3210fd3c9; Worker b4c3856c-d857-45b2-ab6b-33661ae406cb; test stage is unarmed and submission disabled. Active config: .amp/in/cloudflare-compatibility-20261022/trading-test-unarmed.jsonc.
+
+## Required owner decision: unintended unsigned first preparation
+- At 20:12:43 UTC, a local console security probe intended to test a forged Host header instead prepared swap 1. Node fetch ignored its Host override; this was a test-harness mistake, not a bypass of the server Host check.
+- No wallet was connected to the console; no signature, broadcast, settlement or swap spending occurred. Durable state: step 0, spent 0, history empty, pending signature null. Session 1e1ac587-13aa-4ee9-af41-e15fc86fe409 remains retained, never replaced.
+- At 20:13 UTC the run was disabled and marked stopped, preserving its pending message, and production automatically returned to the accepted unarmed Worker on the same healthy image. A subsequent native http GET probe verified forged Host denial without any mutating route.
+- The no-replacement rule requires an owner decision before replacing this expired unsigned message. Do not rearm/reset the run or prepare another swap under the existing authorization.
+- Evidence: unsigned-probe-stop.json, six-swap-console-events.jsonl, post-stop-safety.json, unsigned-probe-unarmed-rollback.log under the existing-market artifact directory.
+- Loopback console remains on port 3148, browser space 3 page p2; all signing is disabled. Sources .amp/in/six-swap-{console,client}.mjs; only the server holds the restricted API token, no private signing key. Owner's space 2 was untouched.
+
+## Read-only indexer and verification
+- scripts/recovery-chart-indexer.mjs uses independent finalized providers, canonical DBC/DAMM parsers and separate recovery_charts cursors/observations. It never advances accounting cursors or loads signing keys.
+- Scoped repoing_chart_recovery role and site_public observation projection are installed. Encrypted credential: neon-repoing-chart-recovery.age in the existing custody backup directory. Do not reprovision.
+- Persistent local LaunchAgent ing.repo.chart-recovery runs .amp/in/run-chart-recovery.mjs every 120 seconds without overlapping advisory-lock holders. It depends on this Mac/user LaunchAgent being available. Last report: chart-recovery-latest.json; transient failures retain only prior verified observations until expiry.
+- Browser acceptance found a missing dammVolume24hLamports field causing BigInt(undefined) in GraduationProgress. The indexer now supplies the real 24-hour sum scoped to the verified destination pool and migration slot. Both market variants rendered successfully afterward; no app-image rebuild was needed.
+- 19/19 targeted recovery/Worker tests passed. Restricted disposable PostgreSQL validation passed actual DBC/DAMM fixtures, sell amounts, idempotency, disagreement withholding and denied accounting writes.
+- Broader targeted run: 22 passed, 3 DB-dependent tests skipped, 1 migration test failed because its required dedicated DATABASE_URL was absent. That migration suite was not validated; no shared migration was run. Prior 82 custody tests were not repeated.
+- Unarmed production test-stage acceptance passed 19 checks with unchanged run/accounting counts; subsequent armed-stage gate checks passed before the probe mistake. Neither is six-swap acceptance.
 
 ## Image evidence and immediate next fix
 - Original test candidate: sha256:4a16b2bd8ed80fa7b2347cf737e78c0e0d69f9a60001629a8b106418567097ef; source 84cfe76.
@@ -30,7 +48,7 @@
 - Clean seven-layer repack c8325a3… preserves all 41,097 /app files, permissions/links and runtime config; five local denial checks passed.
 - That repack reached preparation READY at 19:08 UTC but was not deployed. It is still large and superseded by the standalone-image instruction.
 - Cloudflare support case 02393828 is open; do not wait on it to implement standalone packaging.
-- DONE: root multi-stage Dockerfile, default-deny build context and Next output:'standalone'. Image is 123,632,926 compressed bytes; runtime app is 147 MiB. Eleven custody/ABI/runtime file hashes matched, including .railwayignore.
+- DONE: root multi-stage Dockerfile, default-deny build context and Next output:'standalone'. Current image is 400,588,800 uncompressed layer bytes / 123,631,066 compressed bytes; runtime app is 147 MiB. Eleven custody/ABI/runtime file hashes matched, including .railwayignore.
 - Isolated rollout completed with ImagePulled/VMStarted on 4GB. Health, 12 JS hashes and forced binding-change restart passed. Production cutover accepted at 19:27:43 UTC; rollback armed but not needed.
 - Previous healthy image 7e0d18bcc0cffcea142c28a7fe88b98621bebb0ce9168ddeb725ea0b9814d050 and Worker 417ee713-06f3-4a45-9b0a-0daad504a7cc are retained as pre-cutover fallback. Reverting requires BOTH Worker and container rollout.
 - .railwayignore source audit found its explicit reader in tests/railway-upload.test.mjs, not application runtime. Kept it in tracing and verified its exact bytes; did not infer a missing app dependency.
@@ -54,8 +72,8 @@
 - No collector/request endpoint or transaction execution was enabled by this checkpoint.
 
 ## Open blockers and remaining owner actions
-- Image: standalone and read-only MCP accepted in production; packaging commit 1288e0d and subsequent MCP source are not yet pushed.
-- Read-only data: restore missing edge routes and a safe live reader/indexer without replay or rebroadcast; verify charts and timestamps before removing notice.
+- Image and read-only restoration are deployed; authorized backup-branch delivery includes packaging 1288e0d, MCP 2e5a0a2 and this chart recovery checkpoint. Verify the backup remote equals local HEAD after pushing; main stays untouched.
+- First unblock the unsigned-message replacement decision above; only then obtain human signatures and continue exact six-step acceptance. No automatic retry is authorized.
 - Trading: fresh exact messages, wallet signatures, six-step finality/fees/refunds/session/DAMM checks still required. Do not infer execution from an HTTP 200.
 - Owner accepted continued historical DBC fee-claimer exposure for reopening; moving pool custody did not revoke immutable fee-claimer/leftover rights.
 - New launches: choose/bind safe replacement configs and fee destinations under recovered custody; never exposed keys.
@@ -68,6 +86,10 @@
 - Railway notice names kikka's Projects; current CLI sees ares's Projects. Need notice/workspace ID and correct access after site restoration.
 - Surplus/inference keys, separate inference DB and internal secrets remain explicitly deferred, not revoked or cleared.
 - Completed main DB, Helius, GitHub App/OAuth, R2 backup and HF OAuth rotations must not be repeated. HF invalid-code probes were not independent revocation proof.
+
+## Railway follow-up, separate from site recovery
+- The incident notice concerns kikka's Projects but the current CLI identity can see ares's Projects only. Obtain the notice's workspace/project IDs and membership/token access to that exact workspace.
+- Then inventory every named service/environment and deployment credential there, map notice coverage to rotated versus still-live credentials, and verify revocations independently. Existing ares workspace checks do not establish kikka coverage. No Railway rotation is claimed complete for the inaccessible workspace.
 
 ## Budgets and safety gates
 - Six swaps: gross ceiling 0.021225960 SOL; human signatures; no replacement retries or sale-proceeds budget credits.
