@@ -1,4 +1,4 @@
-# Restoration checkpoint — 2026-10-23 19:10 UTC
+# Restoration checkpoint — 2026-10-23 19:45 UTC
 
 ## Delivery and instructions
 - Repository: New1Direction/repo.ing; working branch: repair/creator-selected-hooks.
@@ -10,13 +10,15 @@
 
 ## Live now / gated
 - LIVE: https://repo.ing public browsing, discovery, keyword search and fresh repository listings.
+- LIVE 19:27 UTC: standalone container and `/api/health` (HTTP 200), exact image/12 JS assets verified; all 12 safety-boundary checks passed.
+- LIVE 19:40 UTC: `/api/mcp/readonly` and read-only `/api/mcp` alias; market lookup/totals work, unknown trade tool rejected, all 12 financial-denial checks passed again for this changed image.
 - LIVE: bounded discovery writer and restricted public/operational database readers; historical accounting repair accepted.
 - VERIFIED 18:52 UTC: homepage 200; trade submission, launch, claim and replay POSTs denied with 403.
 - GATED: existing-market execution; six wallet-restricted swaps have not completed finalized acceptance.
 - GATED: ordinary launches, bundles, Hook Playground activation, beneficiary claims/payouts.
 - DISABLED: historical replay/general worker; do not restart it. Credits/inference restoration is deferred.
-- READ-ONLY GAPS: /api/health, /api/mcp/readonly, read-only /api/mcp, market/chart freshness and stale-data notice need current-route acceptance.
-- Production image remains the healthy trading-review image, not any failed candidate or diagnostic control.
+- READ-ONLY GAPS: market/chart freshness and stale-data notice need acceptance. MCP currently inherits stale graduation labels; do not treat its recorded totals as fresh chain verification.
+- Production image is standalone ff52bd7a4f393fa5c821a5309b78419b73c030f12525d50241ca35e3210fd3c9; Worker 4c01e023-f640-4005-aa5f-af6e55d4915c; review mode still denies financial submission.
 
 ## Image evidence and immediate next fix
 - Original test candidate: sha256:4a16b2bd8ed80fa7b2347cf737e78c0e0d69f9a60001629a8b106418567097ef; source 84cfe76.
@@ -28,8 +30,12 @@
 - Clean seven-layer repack c8325a3… preserves all 41,097 /app files, permissions/links and runtime config; five local denial checks passed.
 - That repack reached preparation READY at 19:08 UTC but was not deployed. It is still large and superseded by the standalone-image instruction.
 - Cloudflare support case 02393828 is open; do not wait on it to implement standalone packaging.
-- Implement root multi-stage Dockerfile + Next output:'standalone'; runtime includes must retain pinned vendor SDK/ABI/IDL and traced files.
-- Verify package inventory, health, isolated runtime identity/restart, then production cutover with automatic rollback on failed acceptance.
+- DONE: root multi-stage Dockerfile, default-deny build context and Next output:'standalone'. Image is 123,632,926 compressed bytes; runtime app is 147 MiB. Eleven custody/ABI/runtime file hashes matched, including .railwayignore.
+- Isolated rollout completed with ImagePulled/VMStarted on 4GB. Health, 12 JS hashes and forced binding-change restart passed. Production cutover accepted at 19:27:43 UTC; rollback armed but not needed.
+- Previous healthy image 7e0d18bcc0cffcea142c28a7fe88b98621bebb0ce9168ddeb725ea0b9814d050 and Worker 417ee713-06f3-4a45-9b0a-0daad504a7cc are retained as pre-cutover fallback. Reverting requires BOTH Worker and container rollout.
+- .railwayignore source audit found its explicit reader in tests/railway-upload.test.mjs, not application runtime. Kept it in tracing and verified its exact bytes; did not infer a missing app dependency.
+- MCP recovery fix passed 49/49 tests and isolated/production acceptance: SELECT-only-compatible quotas and read-only alias; launch preflight stays unavailable during recovery. Prior standalone image f960eb… and Worker 0a4f7396-9dc5-4271-92c6-3f3368adcd2f are the immediate rollback pair.
+- Read-only freshness audit covered all 77 markets: current cursors trail chain activity (many latest transactions are the completed custody moves, not new swaps). DAMM activity continues through Oct 23 19:19 UTC. Existing accounting cursors must not advance in a chart-only indexer.
 - Cloudflare CLI works with current containers/Workers OAuth scopes. Legacy cloudchamber curl demands an unnecessary extra scope; use native commands or scoped Containers API.
 - Isolated app: a032a61a-db51-460d-8658-55b962477bd4, repoing-candidate-acceptance.rebaserh-web.workers.dev.
 - Diagnostic resource app: a0388128-43f9-4f54-ac17-c229ed566946; production app: a03e52fe-2cc5-4c08-bab9-8f0ef05dbe58.
@@ -48,7 +54,7 @@
 - No collector/request endpoint or transaction execution was enabled by this checkpoint.
 
 ## Open blockers and remaining owner actions
-- Image: standalone build/complete runtime inventory, isolated boot/restart and production rollback acceptance outstanding.
+- Image: standalone and read-only MCP accepted in production; packaging commit 1288e0d and subsequent MCP source are not yet pushed.
 - Read-only data: restore missing edge routes and a safe live reader/indexer without replay or rebroadcast; verify charts and timestamps before removing notice.
 - Trading: fresh exact messages, wallet signatures, six-step finality/fees/refunds/session/DAMM checks still required. Do not infer execution from an HTTP 200.
 - Owner accepted continued historical DBC fee-claimer exposure for reopening; moving pool custody did not revoke immutable fee-claimer/leftover rights.

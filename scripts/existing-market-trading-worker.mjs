@@ -55,13 +55,14 @@ async function tradeBoundary(request, bindings) {
   const active = ['review', 'test'].includes(stage)
   const balance = url.pathname === '/api/wallet/balance' || marketBalance.test(url.pathname)
   const search = url.pathname === '/api/repo-search'
+  const mcp = url.pathname === '/api/mcp/readonly'
   if (['GET', 'HEAD'].includes(request.method) && !(active && balance)) return null
-  if (!search && (!active || (!balance && url.pathname !== '/api/trade') || (balance && !['GET', 'HEAD'].includes(request.method)))) return deny()
-  if (!search && stage === 'test' && (!/^[a-f0-9]{64}$/.test(bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN ?? '') ||
+  if (!search && !mcp && (!active || (!balance && url.pathname !== '/api/trade') || (balance && !['GET', 'HEAD'].includes(request.method)))) return deny()
+  if (!search && !mcp && stage === 'test' && (!/^[a-f0-9]{64}$/.test(bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN ?? '') ||
     request.headers.get('authorization') !== `Bearer ${bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN}`)) return deny()
   let body
   if (!balance) {
-    if (request.method !== 'POST' || request.headers.get('origin') !== url.origin
+    if (request.method !== 'POST' || (request.headers.get('origin') !== url.origin && !(mcp && !request.headers.has('origin')))
       || request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') return deny()
     const reader = request.body?.getReader()
     if (!reader) return deny()
@@ -83,7 +84,7 @@ async function tradeBoundary(request, bindings) {
     try { payload = JSON.parse(new TextDecoder().decode(body)) } catch { return deny() }
     const actions = stage === 'test' ? ['prepare', 'status', ...(bindings.EXISTING_MARKET_TEST_SUBMISSION === 'true' ? ['submit'] : [])]
       : ['depth', 'quote', 'costs', 'prepare', 'status']
-    if (!payload || (!search && !actions.includes(payload.action))) return deny()
+    if (!payload || (!search && !mcp && !actions.includes(payload.action))) return deny()
   }
   const headers = new Headers()
   // cf-connecting-ip is set by Cloudflare at ingress; never trust caller-supplied
@@ -91,7 +92,11 @@ async function tradeBoundary(request, bindings) {
   for (const name of ['accept', 'content-type', 'origin', 'cf-connecting-ip']) {
     if (request.headers.has(name)) headers.set(name, request.headers.get(name))
   }
-  if (!search && stage === 'test') headers.set('authorization', request.headers.get('authorization'))
+  if (mcp) {
+    if (request.headers.has('mcp-protocol-version')) headers.set('mcp-protocol-version', request.headers.get('mcp-protocol-version'))
+    if (request.headers.has('cf-connecting-ip')) headers.set('x-forwarded-for', request.headers.get('cf-connecting-ip'))
+  }
+  if (!search && !mcp && stage === 'test') headers.set('authorization', request.headers.get('authorization'))
   return new Request(request.url, { method: request.method, headers, body, redirect: 'manual' })
 }
 
@@ -159,6 +164,11 @@ export class PublicSite extends Container {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
+    // During recovery the legacy MCP path is an alias, never the launch-review handler.
+    if (url.pathname === '/api/mcp') {
+      url.pathname = '/api/mcp/readonly'
+      request = new Request(url, request)
+    }
     const headers = {
       'Cache-Control': 'no-store',
       'X-Repoing-Mode': 'existing-market-trading-review',
@@ -178,7 +188,7 @@ export default {
       const allowed = pages.has(url.pathname) || tokenPage.test(url.pathname)
         || publicMarketApi.test(url.pathname) || tokenImage.test(url.pathname)
         || /^\/api\/repo-logo\/\d+$/.test(url.pathname)
-        || ['/api/growth', '/api/repo-search', '/api/wallet/overview'].includes(url.pathname)
+        || ['/api/health', '/api/mcp/readonly', '/api/growth', '/api/repo-search', '/api/wallet/overview'].includes(url.pathname)
         || ['/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png'].includes(url.pathname)
         || /^\/(art|badges|launch-icons|hook-icons|credits)\/[a-z0-9-]+\.(webp|png)$/.test(url.pathname)
         || ['/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4'].includes(url.pathname)

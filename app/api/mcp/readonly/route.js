@@ -27,7 +27,11 @@ const shown = read => async () => { const result = await read(); return { ...res
 const fees = boundedRead(displayFeeStatus, { max: 2, waitMs: 8000, busy: { status: 'UNAVAILABLE' } })
 const sources = { origin: siteOrigin, markets: shown(listMarkets), race: shown(graduationRace), excluded: promotionExcluded,
   decision: maintainerDecision, fees, usdPerSol: () => solUsdPrice(), totals: platformTotals, modelsEnabled: () => hfMarketsEnabled(),
-  calendar, transparency: marketTransparency, preflight: async input => { const run = await publicPreflight(input); return run?.busy ? null : run } }
+  calendar, transparency: marketTransparency, preflight: async input => {
+    // Preflight consumes a database-backed GitHub quota; recovery has a SELECT-only reader and launches remain paused.
+    if (process.env.EXISTING_MARKET_TRADING_ONLY === 'true') return null
+    const run = await publicPreflight(input); return run?.busy ? null : run
+  } }
 
 // Rate limits, counting every POST that passes the origin rule. First in this process (the CSP report limiter): callers
 // choose their forwarded address, so this bounds what reaches the database however they rotate it. Then in
@@ -47,6 +51,9 @@ function sweep(pool) {
 async function quota(request) {
   const key = clientKey(request)
   if (!local(key)) return false
+  // The recovery deployment has one container and a SELECT-only projection. Keep
+  // its bounded in-process quotas without granting a public reader write access.
+  if (process.env.EXISTING_MARKET_TRADING_ONLY === 'true') return true
   // Without a database every tool answers that it is unavailable; the limit above still applies.
   const pool = database()
   if (!pool) return true

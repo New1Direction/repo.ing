@@ -236,6 +236,32 @@ test('route: live reads behind the site cache, the model-market flag, exclusions
   assert.equal(quotas.length, before + 120)
 })
 
+test('recovery MCP serves reads with a SELECT-only database and refuses launch or signing tools', async (t) => {
+  const saved = { mode: process.env.EXISTING_MARKET_TRADING_ONLY, url: process.env.DATABASE_URL, pool: globalThis.__gitfunPool }
+  process.env.EXISTING_MARKET_TRADING_ONLY = 'true'
+  process.env.DATABASE_URL = 'postgres://unused@127.0.0.1:1/unused'
+  const writes = []
+  globalThis.__gitfunPool = { query: async sql => {
+    if (!/^\s*select\b/i.test(sql)) { writes.push(sql); throw Error('read-only database') }
+    return { rows: [] }
+  } }
+  t.after(() => {
+    for (const [name, value] of [['EXISTING_MARKET_TRADING_ONLY', saved.mode], ['DATABASE_URL', saved.url]]) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value
+    }
+    globalThis.__gitfunPool = saved.pool
+  })
+  const { POST } = await import('../app/api/mcp/readonly/route.js')
+  const call = body => POST(post(body, { 'x-forwarded-for': '192.0.2.31' }))
+  const initialized = await call(init('2025-06-18'))
+  assert.equal(initialized.status, 200)
+  assert.equal((await initialized.json()).result.serverInfo.name, 'repo.ing')
+  const tools = (await (await call(rpc('tools/list'))).json()).result.tools
+  assert(tools.every(tool => tool.annotations.readOnlyHint))
+  assert.equal((await (await call(rpc('tools/call', { name: 'launch_token', arguments: {} }))).json()).error.code, -32602)
+  assert.deepEqual(writes, [])
+})
+
 // The official MCP client, against the repo.ing tools on fake reads: the plain handshake, and a dual-era client that probes
 // the per-request revision first and falls back.
 const MARKET = { ...REPO_ROW, tokenName: 'ONTO', source: 'github', indexedAt: '2026-09-01T00:00:00.000Z', earned: '1000000000', claimed: '0',

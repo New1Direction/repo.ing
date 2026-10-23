@@ -97,11 +97,36 @@ test('policy fallback serves public discovery and wallet reads but rejects priva
   const allowed = ['/', '/launch', '/explore', '/find-repos', '/discoverers', '/referrals', '/agents', '/wallet', '/api/repo-search', '/api/wallet/overview', '/builders', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks', `/token/${mint}`, ...['trades', 'metrics', 'curve', 'traders', 'activity', 'pulse'].map(s => `/api/market/${mint}/${s}`), `/api/token-image/${mint}`, '/api/repo-logo/123', '/api/growth', '/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png', ...['art', 'badges', 'launch-icons', 'hook-icons', 'credits'].map(s => `/${s}/test-image.webp`), '/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4', '/_next/static/chunks/test.js']
   for (const path of allowed) for (const method of ['GET', 'HEAD']) assert.equal((await f.request(path, { method })).status, 200, `${method} ${path}`)
   const before = f.runtime.calls.length
-  for (const path of ['/api/trade', '/api/trade/', '/api/auth/session', '/api/launch', '/api/hook-lab/native-launch', '/api/hook-lab/inclusive-trade', '/api/builders/claim', '/api/bundles', '/api/replay', '/api/actions/trade', '/api/mcp', '/builders?owner=x', '/admin/restart', '/api/market/not-a-mint/balance', `/api/market/${mint}/balance/`, '/stats/', '/art/image.svg']) {
+  for (const path of ['/api/trade', '/api/trade/', '/api/auth/session', '/api/launch', '/api/hook-lab/native-launch', '/api/hook-lab/inclusive-trade', '/api/builders/claim', '/api/bundles', '/api/replay', '/api/actions/trade', '/api/mcp/', '/builders?owner=x', '/admin/restart', '/api/market/not-a-mint/balance', `/api/market/${mint}/balance/`, '/stats/', '/art/image.svg']) {
     for (const method of ['GET', 'HEAD', 'POST', 'OPTIONS', 'PUT', 'DELETE']) assert.equal((await f.request(path, { method })).status, 403, `${method} ${path}`)
   }
   assert.equal(f.runtime.calls.length, before)
   assert.equal((await f.request('/stats', { headers: { upgrade: 'websocket' } })).status, 403)
+})
+
+test('health is a public read, never a mutation route', async () => {
+  const f = await fixture()
+  for (const method of ['GET', 'HEAD']) assert.equal((await f.request('/api/health', { method })).status, 200)
+  for (const method of ['POST', 'PUT', 'DELETE', 'OPTIONS']) assert.equal((await f.request('/api/health', { method })).status, 403)
+})
+
+test('both MCP paths reach only the read-only handler with bounded bodies and no credentials', async () => {
+  const f = await fixture()
+  for (const path of ['/api/mcp', '/api/mcp/readonly']) {
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    const headers = { 'content-type': 'application/json', 'mcp-protocol-version': '2025-06-18', cookie: 'private', authorization: 'Bearer private', 'cf-connecting-ip': '192.0.2.17', 'x-forwarded-for': 'spoofed' }
+    assert.equal((await f.request(path, { method: 'POST', headers, body })).status, 200)
+    const upstream = f.runtime.calls.at(-1).request
+    assert.equal(new URL(upstream.url).pathname, '/api/mcp/readonly')
+    assert.equal(upstream.headers.get('mcp-protocol-version'), '2025-06-18')
+    assert.equal(upstream.headers.get('x-forwarded-for'), '192.0.2.17')
+    assert.equal(upstream.headers.has('authorization'), false)
+    assert.equal(upstream.headers.has('cookie'), false)
+    assert.equal((await f.request(path, { method: 'POST', headers: { ...headers, origin: 'https://evil.example' }, body })).status, 403)
+    assert.equal((await f.request(path, { method: 'POST', headers, body: body.padEnd(16384, ' ') })).status, 200)
+    assert.equal((await f.request(path, { method: 'POST', headers, body: body.padEnd(16385, ' ') })).status, 403)
+    for (const method of ['PUT', 'DELETE', 'OPTIONS']) assert.equal((await f.request(path, { method, headers, body })).status, 403)
+  }
 })
 
 test('public repository search accepts bounded same-origin queries without forwarding credentials or enabling writes', async () => {
