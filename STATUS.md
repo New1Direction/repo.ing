@@ -1,4 +1,4 @@
-# Restoration checkpoint — 2026-10-23 20:43 UTC
+# Restoration checkpoint — 2026-10-23 agent execution approved
 
 ## Delivery and instructions
 - Repository: New1Direction/repo.ing; working branch: repair/creator-selected-hooks.
@@ -31,13 +31,15 @@
 - Loopback console on port 3148 was STOPPED after owner said they do not possess the assumed Backpack wallet. Browser space 3 was handed off; do not reclaim it. Owner's space 2 was untouched. Sources .amp/in/six-swap-{console,client}.mjs are historical, not the new signing path.
 - Evidence: unsigned-replacement-verification.json, one-unsigned-replacement-authorization.json, one-replacement-stage-readiness.json and wallet-control-handoff-stopped.json.
 
-## Agent signer investigation: funding obligations are the remaining decision
+## Agent signer investigation: funding approved, exact-message execution pending
 - Latest owner requests agent execution, not a Backpack handoff. No new trade preparation or signature may rely on assumed owner browser-wallet control.
 - DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9 is the locally created controlled-test-identities-v1/dedicated-creator, selected from historical canary pins. Existing encrypted custody verifier successfully authenticated/decrypted and derived its public address without exporting keys or signing. Its 0.017862160 SOL is the remainder of a 0.05 SOL Hook canary transfer from the operational payer; do not silently reallocate it.
 - DrAhCGXsHLNdJ9ihhRBkyKZSzY446qKg1Dcx6zEm9dmi is the separate locally created agent-test-wallet-v1/test-wallet. Its custody verifier also passed. Both finalized providers observed 0.1 SOL; complete history contains only the Oct17 funding transfer 24iVv9BBgKkatAhH1sDuJYBjiN5EcnFaTX2n9xgxPHy53iCsnPH3eFisj4miMPDL4QwLGQrqxswEMAcZRcvtunxD from FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy (documented custody buyback wallet).
 - Original human provenance recovered from thread T-01a146fc-4b3c-70aa-ba5a-afef1de4145f: human #1700 reported sending 0.10 SOL, #1704 directed testing, and #1749 explicitly authorized agent buy/sell with DrAh. The 0.04 SOL test budget / 0.06 SOL untouched reserve wording was assistant #1703, not an independently stated human allocation. Preserve the reserve, but do not ask again for generic agent buy/sell permission. No human statement establishes freedom from buyback/beneficiary obligations.
 - Neither test identity appears on the documented exposed hosted-key list; that alone is not absolute non-exposure proof. No exposed key, vault assets, beneficiary liability, new transfer or multisig bypass was used.
-- Remaining clarification, requested by the parent: confirm that up to 0.021225960 SOL in DrAh is free of buyback/beneficiary obligations. Keep signing and preparation gated until that answer. Preserve 0.06 SOL untouched, the original unsigned evidence, one-replacement limit, markets/order/amounts and no-retry rules. No top-up is required. Rebinding the guarded source/Worker to DrAh remains an implementation step; no binding has changed yet.
+- CLEARED: owner directly answered “yes spend it” in T-01a16a2e-8386-7058-85c7-8ea910a43c4a to the specific DrAh funding-obligation request. Agent execution may spend up to 0.021225960 SOL, preserving 0.06 SOL untouched, the original unsigned evidence, one-replacement limit, markets/order/amounts and no-retry rules. No top-up is required.
+- Local guard now binds DrAh instead of DkD5; regression first failed on the old binding, then all 22 targeted durable-sequence/adapter/Worker tests passed on disposable PostgreSQL without skips. This source change is not deployed yet. No fresh message, signature or spending yet.
+- Actual with-custody-keys.sh/keyserve access succeeded and solana-keygen independently derived DrAh through the private FIFO; command exited successfully with cleanup. No private material was exported and no transaction was signed. The separate exact-message signing adapter still needs validation.
 - Existing keyserve helper can release the role through a private FIFO with a per-application Keychain grant; custody verification is not proof of that helper's current access or a tested exact-message signing adapter. Do not export keys, change Keychain ACLs, or treat prior synthetic signing tests as live execution.
 - Artifacts: wallet-provenance-current.json, dedicated-creator-access-check.log, agent-test-wallet-access-check.log. No SOL spent in this investigation.
 - Finalized slot 460579006 confirms H7TK remains feeClaimer on all four historical configs: accrued/new DBC partner trading fees and eligible partner surplus remain claimable. Creator trading fee share is 71%; migration fee percentage is zero. Last two configs still name H7TK as leftover receiver. DAMM NFT custody migration did not revoke these rights. Evidence: dbc-remaining-rights-detail.json. Public reopening still requires explicit exposure settlement and six-swap acceptance.
@@ -87,7 +89,7 @@
 ## Open blockers and remaining owner actions
 - Image and read-only restoration are deployed; source checkpoint e6a6d1113803ac517250aee3a164ff7e39aa630f was pushed to backup/restoration-checkpoint-20261023 and the exact remote SHA verified, including packaging 1288e0d and MCP 2e5a0a2. Main is untouched. This status-only follow-up uses the same authorized backup destination.
 - Temporary render-debug container removed and disposable chart PostgreSQL stopped; existing containers and the live chart LaunchAgent are preserved. Loopback signing console is stopped.
-- Resolve the funding-obligation clarification above, then bind DrAh and verify private helper access and exact-message agent execution. Do not ask for generic agent buy/sell permission or an owner Backpack connection. One unsigned replacement is already authorized; do not consume it before the signer and funding gates pass. No automatic retry is authorized.
+- Funding and actual private-helper access are cleared. Deploy the tested DrAh binding and validate exact-message agent execution before consuming the one authorized unsigned replacement. No generic agent buy/sell permission or owner Backpack connection is needed. No automatic retry is authorized.
 - Trading: fresh exact messages, wallet signatures, six-step finality/fees/refunds/session/DAMM checks still required. Do not infer execution from an HTTP 200.
 - Owner accepted continued historical DBC fee-claimer exposure for reopening; moving pool custody did not revoke immutable fee-claimer/leftover rights.
 - New launches: choose/bind safe replacement configs and fee destinations under recovered custody; never exposed keys.
@@ -106,7 +108,7 @@
 - Then inventory every named service/environment and deployment credential there, map notice coverage to rotated versus still-live credentials, and verify revocations independently. Existing ares workspace checks do not establish kikka coverage. No Railway rotation is claimed complete for the inaccessible workspace.
 
 ## Budgets and safety gates
-- Six swaps: gross ceiling 0.021225960 SOL; human signatures; no replacement retries or sale-proceeds budget credits.
+- Six swaps: gross ceiling 0.021225960 SOL; owner-authorized agent signing with DrAh and 0.06 SOL reserve; exactly one verified-unsigned replacement already authorized, no further replacement retries or sale-proceeds budget credits.
 - Rescue/sweep: 0.003011880 SOL; transient peak 0.004475320 SOL.
 - Hook canary: 0.15 SOL all-in; release retry allowance: 0.025 SOL.
 - Existing approved scopes/budgets stand. Stop only for required signatures, above-cap spend or a genuine unresolved risk decision.

@@ -10,7 +10,7 @@ const markets = [
   { githubRepoId: '1391948723', phase: 'graduated', mint: 'HbtGZge2NcfrrmBGx2Pqf9qgrNvMa63hQHVqcWSPuNub', pool: 'q15tXnaoDGRKph9LYMuFzDeyveGseTgoa1TKgoS8TfT', curve: '4b1hdxNQaqaktZX462dofh8WtZy2uUKivMid92Nv58it' },
 ]
 export const TEST_PLAN = Object.freeze({ id: 'existing-markets-six-swaps-v1',
-  wallet: 'DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9', ceiling: '21225960',
+  wallet: 'DrAhCGXsHLNdJ9ihhRBkyKZSzY446qKg1Dcx6zEm9dmi', ceiling: '21225960',
   steps: Object.freeze(markets.flatMap(market => ['buy', 'sell'].map(direction => Object.freeze({ ...market, direction })))) })
 
 const amount = (value, label = 'cost') => {

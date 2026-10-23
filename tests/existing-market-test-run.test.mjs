@@ -11,7 +11,7 @@ import { recordTestDammCheckpoint } from '../src/existing-market-test-accounting
 // A disposable local database only. The tests never connect through application credentials.
 const url = process.env.TEST_GUARD_DATABASE_URL
 const options = { skip: !url }
-const wallet = 'DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9'
+const wallet = 'DrAhCGXsHLNdJ9ihhRBkyKZSzY446qKg1Dcx6zEm9dmi'
 function prepared(step, amount = '1000000') {
   const tx = new Transaction({ feePayer: new PublicKey(wallet), recentBlockhash: SystemProgram.programId.toBase58() })
     .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 2000000 }),
@@ -54,6 +54,7 @@ test('durable one-use sequence: concurrent consumption, restart, exact sell, no 
     for (let index = 0; index < 6; index++) {
       const step = TEST_PLAN.steps[index], amount = step.direction === 'buy' ? '1000000' : '37'
       await assert.rejects(run.request({ ...request(step, amount), wallet: SystemProgram.programId.toBase58() }), /plan/)
+      await assert.rejects(run.request({ ...request(step, amount), wallet: 'DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9' }), /plan/)
       await assert.rejects(run.request({ ...request(step, amount), slippageBps: 101 }), /plan/)
       await assert.rejects(run.request({ ...request(step, amount), referrer: wallet }), /plan/)
       if (step.direction === 'sell') await assert.rejects(run.request(request(step, '36')), /plan/)
