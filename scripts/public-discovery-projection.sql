@@ -32,7 +32,7 @@ GRANT SELECT (github_repo_id,archived) ON public.repositories TO repoing_site_vi
 GRANT SELECT (github_repo_id,status,indexed_at,launch_finality) ON public.markets TO repoing_site_view_owner;
 GRANT SELECT (github_repo_id,status) ON public.bundles TO repoing_site_view_owner;
 
--- The operational owner has SET ROLE membership but does not inherit this schema's privileges.
+-- Requires SET ROLE permission for the existing view owner; ADMIN membership alone is insufficient.
 -- Replace views as their existing owner without adding schema privileges to the login.
 SET LOCAL ROLE repoing_site_view_owner;
 
