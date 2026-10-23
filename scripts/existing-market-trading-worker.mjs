@@ -110,11 +110,12 @@ export class PublicSite extends Container {
   // Binding-only RPC; no public route, header, query or body selects env values.
   async fetchWithReviewBindings(request, suppliedBindings) {
     const bindings = snapshotBindings(suppliedBindings)
+    const appOrigin = 'https://repo.ing'
     // Keep dispatch inside the same concurrency gate as refresh: releasing it
     // first permits a second RPC to replace envVars before this fetch starts.
     return this.ctx.blockConcurrencyWhile(async () => {
       await validateBindings(bindings)
-      const fingerprint = await sha256(JSON.stringify(bindings))
+      const fingerprint = await sha256(JSON.stringify({ ...bindings, APP_ORIGIN: appOrigin }))
       if (await this.ctx.storage.get('review-bindings-sha256') !== fingerprint
         || await this.ctx.storage.get('database-binding-sha256') !== undefined) {
         // Unknown state (including the old database-only key) forces restart.
@@ -128,6 +129,7 @@ export class PublicSite extends Container {
       this.envVars = {
         DATABASE_URL: bindings.PUBLIC_DATABASE_URL,
         TRADING_DATABASE_URL: bindings.TRADING_DATABASE_URL,
+        APP_ORIGIN: appOrigin,
         DBC_CONFIG: bindings.DBC_CONFIG,
         DBC_LEGACY_CONFIGS: bindings.DBC_LEGACY_CONFIGS,
         TRADING_CUSTODY_RECOVERY_SHA256: bindings.TRADING_CUSTODY_RECOVERY_SHA256,

@@ -170,6 +170,7 @@ test('binds only the reader, separate trading credential and exact public review
   const body = await (await f.request()).json()
   assert.equal(body.DATABASE_URL, 'public-reader')
   assert.equal(body.TRADING_DATABASE_URL, 'trade-only')
+  assert.equal(body.APP_ORIGIN, 'https://repo.ing')
   for (const [key, value] of Object.entries(inputs.proposedEnvironment)) assert.equal(body[key], value)
   assert.equal(body.TRADING_CUSTODY_RECOVERY_JSON, undefined)
   assert(Object.values(body).every(value => Buffer.byteLength(value) <= 16000), 'container environment values respect the runtime limit')
@@ -193,6 +194,7 @@ test('binds only the reader, separate trading credential and exact public review
     TRADING_CUSTODY_RECOVERY_JSON: manifest,
     EXISTING_MARKET_TRADING_ONLY: 'true',
     EXISTING_MARKET_TRADING_STAGE: 'review',
+    APP_ORIGIN: 'https://repo.ing',
   })).digest('hex')
   assert.equal([...f.storage.values()][0], expected)
 })
