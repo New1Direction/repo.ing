@@ -6,6 +6,7 @@ import { LAUNCH_CONFIG_START, SWAP_CONFIG_START } from '../src/hooklab-owner-dri
 import { governedSetNativeLaunches } from '../src/hooklab-native-launch.mjs'
 import { governedSetOpenCreation } from '../src/hooklab-open-creation.mjs'
 import { parseLaunchConfigReserved } from '../src/hooklab-launch-config-reserved.mjs'
+import { configSchema } from '../src/hooklab-owner-driver/config.mjs'
 
 export const STEP8_STAGE_NAMES = Object.freeze(['launch-config-init', 'swap-config-init', 'launch-governance-init', 'swap-governance-init',
   'launch-config', 'swap-config', 'launch-fee', 'launch-usd-bounds', 'native-launches', 'open-creation'])
@@ -16,7 +17,7 @@ const check = (ok, why) => { if (!ok) throw Error(why) }
 const bn = n => new BN(String(n))
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 
-export function buildSelectedStep8Stage({ name, abi, programs, roles, genesis, custodyDigest, accounts }) {
+export function buildSelectedStep8Stage({ name, abi, programs, roles, genesis, custodyDigest, accounts, ownerConfig }) {
   const activation = ['open-launches', 'open-trading'].includes(name)
   check(STEP8_STAGE_NAMES.includes(name) || activation, 'Unknown selected setup stage')
   check(genesis === MAINNET_GENESIS, 'Mainnet genesis required')
@@ -24,6 +25,12 @@ export function buildSelectedStep8Stage({ name, abi, programs, roles, genesis, c
   check(accounts instanceof Map, 'Current account Map required')
   check(programs.launch === '9zzzPsLUsuu1XoGZ4TsHbghyXUPqXnHeJUpPRY7P5ZWu' && programs.swap === '72tDzM3mhFsYU1qecrLpScv1Bud6XaszkQtB4YVjJh9s', 'Independent programs required')
   const ix = instructionsFor(abi), d = derivedAddresses(programs, MARKER)
+  const adopted = key => {
+    check(ownerConfig?.schema === 'repoing/hooklab-owner-config/1' && ownerConfig.network === 'mainnet-beta', 'Adopted owner configuration required')
+    const decision = configSchema.shape.decisions.shape[key].parse(ownerConfig.decisions?.[key])
+    check(decision?.approved === true && decision.value !== null, `Owner adoption required: ${key}`)
+    return decision.value
+  }
   const role = name.startsWith('swap-') || name === 'open-trading' ? 'swap' : 'launch'
   const address = (r, type) => d[`${r}${type}`]
   const decode = (r, type) => {
@@ -81,8 +88,10 @@ export function buildSelectedStep8Stage({ name, abi, programs, roles, genesis, c
       result.expectedEffects.native = true
       return current.native ? skip() : emit(governedSetNativeLaunches({ launchProgram: programs.launch, admin: roles.admin, expected, on: true }))
     }
-    const menus = { creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500] }
-    check(current.native && config.max_creator_fee_bps >= 200, 'Native launches and creator ceiling required first')
+    check(current.native, 'Native launches required first')
+    // Gate-route menus are explicit decisions, not selected-hook fee restrictions.
+    const menus = adopted('openCreationMenus')
+    check(menus.creatorFeeBps.every(fee => fee <= Math.min(config.max_creator_fee_bps, config.rule_bounds.max_rules_fee_bps)), 'Gate menu exceeds current fee ceilings')
     result.expectedEffects.menus = menus
     result.expectedEffects.open = true
     if (current.open && same(current.creatorFeeBps, menus.creatorFeeBps) && same(current.capBps, menus.capBps)) return skip()
@@ -90,7 +99,16 @@ export function buildSelectedStep8Stage({ name, abi, programs, roles, genesis, c
   }
   const before = role === 'launch' ? ix.launchConfigArgs(config) : ix.swapConfigArgs(config)
   const after = { ...before }
-  if (name === 'launch-config') { after.max_creator_fee_bps = 200; after.rule_bounds = { ...before.rule_bounds, max_rules_fee_bps: 200, max_burn_bps: 200 } }
+  if (name === 'launch-config') {
+    after.max_creator_fee_bps = adopted('maxCreatorFeeBps')
+    after.rule_bounds = { ...before.rule_bounds, max_rules_fee_bps: adopted('maxRulesFeeBps'),
+      ...(ownerConfig.decisions.maxBurnBps !== undefined ? { max_burn_bps: adopted('maxBurnBps') } : {}) }
+    // Existing Rust check_args/check_rule_bounds limits, not adopted policy defaults.
+    check(after.max_creator_fee_bps <= 1000 && after.rule_bounds.max_rules_fee_bps <= 1000 && after.rule_bounds.max_burn_bps <= 500, 'Configuration exceeds candidate ceiling')
+    const current = parseLaunchConfigReserved(config.reserved)
+    check(current, 'Noncanonical launch reserved state')
+    check(!current.open || current.creatorFeeBps.every(fee => fee <= Math.min(after.max_creator_fee_bps, after.rule_bounds.max_rules_fee_bps)), 'Configuration would invalidate existing gate menu')
+  }
   if (name === 'swap-config') { after.protocol_fee_bps = 0; after.launch_protocol_share_bps = 2500 }
   if (name === 'launch-fee') after.launch_fee_lamports = bn(20000000)
   if (name === 'launch-usd-bounds') { after.min_virtual_quote = bn('5625000000'); after.max_virtual_quote = bn('112500000000') }
