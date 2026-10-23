@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq } from 'drizzle-orm'
 import { createCustodyRecovery } from '../../src/custody-recovery.mjs'
@@ -18,10 +20,15 @@ export function tradingDatabase() {
 // Public accounting/provenance bindings only, never signing authority. The digest
 // belongs in the reviewed deployment inputs, not in a browser request.
 export function tradingCustodyRecovery() {
-  const raw = process.env.TRADING_CUSTODY_RECOVERY_JSON
+  let raw = process.env.TRADING_CUSTODY_RECOVERY_JSON
   const digest = process.env.TRADING_CUSTODY_RECOVERY_SHA256
   if (raw === undefined && digest === undefined && process.env.EXISTING_MARKET_TRADING_ONLY !== 'true') return null
   try {
+    // The pinned image carries the exact public file. Containers limit each
+    // environment value to 16KB, so production passes only its reviewed digest.
+    if (raw === undefined && process.env.EXISTING_MARKET_TRADING_ONLY === 'true') {
+      raw = readFileSync(join(process.cwd(), 'config/existing-market-custody.json'), 'utf8')
+    }
     if (!raw || !/^[a-f0-9]{64}$/.test(digest ?? '') || createHash('sha256').update(raw).digest('hex') !== digest) throw Error()
     const manifest = JSON.parse(raw)
     if (manifest === null) throw Error()

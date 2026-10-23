@@ -146,7 +146,8 @@ test('binds only the reader, separate trading credential and exact public review
   assert.equal(body.DATABASE_URL, 'public-reader')
   assert.equal(body.TRADING_DATABASE_URL, 'trade-only')
   for (const [key, value] of Object.entries(inputs.proposedEnvironment)) assert.equal(body[key], value)
-  assert.equal(body.TRADING_CUSTODY_RECOVERY_JSON, manifest)
+  assert.equal(body.TRADING_CUSTODY_RECOVERY_JSON, undefined)
+  assert(Object.values(body).every(value => Buffer.byteLength(value) <= 16000), 'container environment values respect the runtime limit')
   for (const key of hookFlags) assert.equal(body[key], 'false')
   assert.equal(body.PRIVATE_KEY, undefined)
   assert.equal(body.PUBLIC_DATABASE_URL, undefined)
@@ -196,7 +197,7 @@ test('bundled exact custody bytes avoid the 5KB binding limit and cannot be over
   delete f.env.TRADING_CUSTODY_RECOVERY_JSON
   assert.equal((await f.request()).status, 200)
   f.env.TRADING_CUSTODY_RECOVERY_JSON = 'untrusted override'
-  assert.equal((await (await f.request()).json()).TRADING_CUSTODY_RECOVERY_JSON, manifest)
+  assert.equal((await (await f.request()).json()).TRADING_CUSTODY_RECOVERY_JSON, undefined)
   const corrupt = await fixture(manifest + '\n')
   assert.equal((await corrupt.request()).status, 503)
   assert.equal(corrupt.runtime.calls.length, 0)

@@ -6,7 +6,7 @@ import { getTableColumns } from 'drizzle-orm'
 import { markets } from '../src/db/schema.mjs'
 import { createDammTrader } from '../src/canonical-damm-trade.mjs'
 import { tradeRouter } from '../app/lib/trader.mjs'
-import { tradingDatabase, tradingMarketLoader } from '../app/lib/trading-recovery.mjs'
+import { tradingCustodyRecovery, tradingDatabase, tradingMarketLoader } from '../app/lib/trading-recovery.mjs'
 import { POST } from '../app/api/trade/route.js'
 
 const binding = {
@@ -17,6 +17,25 @@ const binding = {
   owner: '11111111111111111111111111111111',
 }
 const manifest = { version: 1, poolCreators: [binding], positions: [] }
+
+test('trading-only image loads the committed custody file without an oversized environment value and still requires its exact digest', () => {
+  process.env.EXISTING_MARKET_TRADING_ONLY = 'true'
+  delete process.env.TRADING_CUSTODY_RECOVERY_JSON
+  try {
+    process.env.TRADING_CUSTODY_RECOVERY_SHA256 = '2c31354ba8009acb0da1319b068f479216b0615120328510cba50665f0ecd888'
+    const recovered = tradingCustodyRecovery()
+    assert.equal(recovered.poolCreators.length, 77)
+    assert.equal(recovered.positions.length, 4)
+    assert(recovered.poolCreators.every(row => row.owner === '3dHCTpgdx15yXyVGh7DK1woQ1XisQpmFCxncURrq63Gs'))
+    process.env.TRADING_CUSTODY_RECOVERY_SHA256 = '0'.repeat(64)
+    assert.throws(() => tradingCustodyRecovery(), /custody.*binding/i)
+    delete process.env.TRADING_CUSTODY_RECOVERY_SHA256
+    assert.throws(() => tradingCustodyRecovery(), /custody.*binding/i)
+  } finally {
+    delete process.env.EXISTING_MARKET_TRADING_ONLY
+    delete process.env.TRADING_CUSTODY_RECOVERY_SHA256
+  }
+})
 
 test('trading-only router admits only the reviewed market identity and exact config set', async () => {
   process.env.EXISTING_MARKET_TRADING_ONLY = 'true'
