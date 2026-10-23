@@ -1,9 +1,7 @@
 import { createHash } from 'node:crypto'
-import { PublicKey } from '@solana/web3.js'
 import { createTrendSources } from './trend-sources.mjs'
 import { TREND_INTERVAL_MS, trendScore, assertFreshTrend, transitionTrend, manualSignal, DAY } from './trend-rules.mjs'
 import { DISCOVERY_VERSION, DISCOVERY_WINDOW_MS } from './discovery-rewards.mjs'
-import { createMarketConfigResolver } from './market-config.mjs'
 import { releaseAfterUnlock } from './database-pool.mjs'
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -58,9 +56,10 @@ async function trendCandidates(db, repoIds, now) {
   return repoIds.flatMap(id=>byId.has(id)?[trendCandidateView(byId.get(id),evidence.get(id)??[],signalRows.get(id)??[],now)]:[])
 }
 async function recordSignal(db,repoId,signal,operator=null){
-  await db.query(`insert into trend_signals(github_repo_id,source,url,note,occurred_at,expires_at,operator) values($1,$2,$3,$4,$5,$6,$7)
+  await db.query(`insert into trend_signals(github_repo_id,source,url,note,occurred_at,expires_at${operator===null?'':',operator'})
+    values($1,$2,$3,$4,$5,$6${operator===null?'':',$7'})
     on conflict(github_repo_id,source,url) do update set note=excluded.note,occurred_at=excluded.occurred_at,expires_at=excluded.expires_at
-    where trend_signals.source <> 'manual'`,[repoId,signal.source,signal.url,signal.note,signal.occurredAt,signal.expiresAt,operator])
+    where trend_signals.source <> 'manual'`,[repoId,signal.source,signal.url,signal.note,signal.occurredAt,signal.expiresAt,...operator===null?[]:[operator]])
 }
 async function recordObservation(db,observation,signals,operator=null){
   const r=observation.repo
@@ -76,46 +75,77 @@ async function recordObservation(db,observation,signals,operator=null){
   }catch(error){await db.query('rollback');throw error}
 }
 
-export function createTrendIntake({pool,sources=createTrendSources(),now=()=>Date.now()}={}){
+// Same maintainer policy as the public promotion/launchable surfaces, without importing app runtime or auth.
+// Unlike the legacy optional-table readers, discovery-only runs require these tables and fail closed on read errors.
+async function discoveryAllowed(db,repoId,excluded){
+  if(excluded.has(String(repoId)))return false
+  const {rows:[row]}=await db.query(`select
+    not exists(select 1 from maintainer_opt_outs where github_repo_id=$1 and withdrawn_at is null)
+    and not exists(select 1 from repository_participation where github_repo_id=$1 and enabled=false)
+    and not exists(select 1 from maintainer_invites where github_repo_id=$1 and dismissed_at is not null)
+    and not exists(select 1 from trend_candidates where github_repo_id=$1 and state in ('rejected','duplicate')) as allowed`,[repoId])
+  return row.allowed
+}
+
+export function createTrendIntake({pool,sources=createTrendSources(),now=()=>Date.now(),discoveryOnly=false,excluded=new Set()}={}){
   async function runOnce(){
     const db=await pool.connect()
     try{
       if(!(await db.query("select pg_try_advisory_lock(hashtextextended('trend-intake',0)) as locked")).rows[0].locked)return {status:'BUSY'}
       const last=(await db.query("select checked_at from trend_source_health where source='intake'")).rows[0]
       if(last&&now()-last.checked_at.getTime()<TREND_INTERVAL_MS)return {status:'WAITING'}
+      // Verify opt-out schema/permissions before any outbound request, including on an empty intake.
+      if(discoveryOnly)await discoveryAllowed(db,'0',new Set())
       // Persist the attempt before I/O so restarting a worker cannot amplify API calls.
       await health(db,{source:'intake',status:'RUNNING',count:0})
       const seed=await sources.seeds()
       for(const row of seed.health)await health(db,row)
       const {rows:known}=await db.query(`select github_repo_id::text as "repoId",full_name as "fullName",state
-        from (select * from trend_candidates where state not in ('rejected','duplicate')
+        from (select github_repo_id,full_name,state,attempted_at from trend_candidates where state not in ('rejected','duplicate')
           order by (state='approved') desc,detected_at desc,github_repo_id limit 32) watched order by attempted_at,github_repo_id`)
-      const {rows:all}=await db.query('select github_repo_id::text as id,full_name as name from trend_candidates')
-      const names=new Set(all.map(c=>c.name.toLowerCase()))
+      const {rows:all}=await db.query(`select full_name as name from trend_candidates where lower(full_name)=any($1::text[])`,
+        [seed.signals.map(s=>s.repository.slice(19).toLowerCase())])
+      const names=new Set([...all.map(c=>c.name.toLowerCase()),...known.map(c=>c.fullName.toLowerCase())])
       const fresh=[...new Map(seed.signals.filter(s=>!names.has(s.repository.slice(19).toLowerCase())).map(s=>[s.repository,s])).values()]
       const picked=known.length?[...known.slice(0,4).map(c=>({repository:`https://github.com/${c.fullName}`,expectedId:c.repoId})),
         ...(fresh.length?fresh.slice(0,5-Math.min(4,known.length)):known.slice(4,5).map(c=>({repository:`https://github.com/${c.fullName}`,expectedId:c.repoId})))]:fresh.slice(0,5)
       const results=[]
       for(const item of picked){
+        if(discoveryOnly&&item.expectedId&&!await discoveryAllowed(db,item.expectedId,excluded)){
+          results.push({repoId:item.expectedId,status:'EXCLUDED'});continue
+        }
+        let observation,signals
         try{
-          const observation=await sources.observe(item.repository,item.expectedId)
+          observation=await sources.observe(item.repository,item.expectedId)
+          if(discoveryOnly)assertFreshTrend(observation,now())
           if(item.expectedId&&observation.repo.id!==item.expectedId)throw Error('SOURCE_IDENTITY_DISAGREEMENT')
-          const signals=seed.signals.filter(s=>s.repository.toLowerCase()===`https://github.com/${observation.repo.fullName}`.toLowerCase())
+          signals=seed.signals.filter(s=>s.repository.toLowerCase()===`https://github.com/${observation.repo.fullName}`.toLowerCase())
           if(signals.some(s=>s.expectedId&&s.expectedId!==observation.repo.id))throw Error('SOURCE_IDENTITY_DISAGREEMENT')
-          await recordObservation(db,observation,signals)
-          results.push({repoId:observation.repo.id,status:'OBSERVED'})
         }catch(error){
+          const code=trendError(error)
+          if(item.expectedId)await db.query('update trend_candidates set error=$2,attempted_at=now() where github_repo_id=$1',[item.expectedId,code])
+          results.push({repository:item.repository,status:'UNAVAILABLE',code})
+          continue
+        }
+        // Check again after identity resolution (including renamed/new repos). DB errors must abort, not become source errors.
+        if(discoveryOnly&&!await discoveryAllowed(db,observation.repo.id,excluded)){
+          results.push({repoId:observation.repo.id,status:'EXCLUDED'});continue
+        }
+        try{await recordObservation(db,observation,signals);results.push({repoId:observation.repo.id,status:'OBSERVED'})}
+        catch(error){
+          if(discoveryOnly)throw error
           const code=trendError(error)
           if(item.expectedId)await db.query('update trend_candidates set error=$2,attempted_at=now() where github_repo_id=$1',[item.expectedId,code])
           results.push({repository:item.repository,status:'UNAVAILABLE',code})
         }
       }
-      await syncTrendLaunches(db)
+      if(!discoveryOnly)await syncTrendLaunches(db)
       await health(db,{source:'intake',status:results.some(r=>r.status!=='OBSERVED')?'PARTIAL':'OK',count:results.filter(r=>r.status==='OBSERVED').length,results})
       return {status:'COMPLETE',results,sources:seed.health}
     }finally{await releaseAfterUnlock(db,()=>db.query("select pg_advisory_unlock(hashtextextended('trend-intake',0))"))}
   }
   async function addManual(input,operator){
+    if(discoveryOnly)throw Error('DISCOVERY_ONLY')
     const signal=manualSignal(input,now())
     const observation=await sources.observe(signal.repository)
     const db=await pool.connect()
@@ -145,6 +175,7 @@ export async function reviewTrend({pool,repoId,to,revision,operator,config,disco
         const resolved=await resolve(`https://github.com/${candidate.fullName}`)
         if(String(resolved.githubRepoId)!==repoId||resolved.fullName!==candidate.fullName)throw Error('SOURCE_IDENTITY_DISAGREEMENT')
         if(!discoveryEnabled)throw Error('DISCOVERY_ENROLLMENT_UNAVAILABLE')
+        const {PublicKey}=await import('@solana/web3.js')
         new PublicKey(config)
       }
     }
@@ -161,6 +192,8 @@ export async function reviewTrend({pool,repoId,to,revision,operator,config,disco
 // the wallet signature and after it returns, before any submission.
 export function trendLaunchGuard({pool,repoId,revision,config,discoveryEnabled}){
   return async({repo,market,stage})=>{
+    const {PublicKey}=await import('@solana/web3.js')
+    const {createMarketConfigResolver}=await import('./market-config.mjs')
     const candidate=await trendCandidate(pool,repoId)
     if(!candidate||String(repo.githubRepoId)!==repoId||candidate.fullName!==repo.fullName)throw Error('SOURCE_IDENTITY_DISAGREEMENT')
     assertFreshTrend(candidate)
@@ -195,6 +228,7 @@ export async function syncTrendLaunches(db){
         const evidence=JSON.parse(row.evidence)
         if(row.wallet!==row.launcher_wallet||row.discovery_version!==evidence.discoveryVersion||
           evidence.windowMs!==DISCOVERY_WINDOW_MS||!row.launch_block_time)throw Error('DISCOVERY_ATTRIBUTION_MISMATCH')
+        const {createMarketConfigResolver}=await import('./market-config.mjs')
         createMarketConfigResolver(row.config,[])(row)
         next=row.traded?'active':'launched'
       }catch{error='DISCOVERY_ATTRIBUTION_MISMATCH'}
