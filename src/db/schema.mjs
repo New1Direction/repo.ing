@@ -1,4 +1,4 @@
-import { bigint, bigserial, boolean, char, check, doublePrecision, index, integer, jsonb, numeric, pgSequence, pgTable, primaryKey, serial, smallint, text, timestamp, unique, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
+import { bigint, bigserial, boolean, char, check, doublePrecision, foreignKey, index, integer, jsonb, numeric, pgSequence, pgTable, primaryKey, serial, smallint, text, timestamp, unique, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
 // Migration 0049: tables of GitHub-only features refuse Hugging Face market ids (src/market-identity.mjs).
@@ -835,8 +835,8 @@ export const repoClaims = pgTable('repo_claims', {
   check('repo_claims_positive_amount_check', sql`${table.amountBaseUnits} > 0`),
   check('repo_claims_status_check', sql`${table.status} in ('pending', 'settled', 'aborted')`),
   check('repo_claims_custody_evidence', sql`(${table.evidenceSource}='signed-intent' and ${table.custodyPayoutSignature} is null)
-    or (${table.evidenceSource}='custody-receipt' and ${table.status}='settled' and ${table.signedTransaction} is null
-      and ${table.lastValidBlockHeight} is null and ${table.dammAmountBaseUnits}=${table.amountBaseUnits}
+    or (${table.evidenceSource} in ('custody-receipt','custody-dbc-receipt') and ${table.status}='settled' and ${table.signedTransaction} is null
+      and ${table.lastValidBlockHeight} is null and ${table.dammAmountBaseUnits}=case when ${table.evidenceSource}='custody-receipt' then ${table.amountBaseUnits} else 0 end
       and ${table.custodyPayoutSignature} is not null and ${table.custodyPayoutSignature}=${table.claimSignature})`),
   check('repo_claims_settlement_check', sql`(${table.status} = 'pending' and ${table.settledAt} is null and ${table.resolvedAt} is null and ${table.resolutionReason} is null) or (${table.status} = 'settled' and ${table.settledAt} is not null and ${table.resolvedAt} is null and ${table.resolutionReason} is null) or (${table.status} = 'aborted' and ${table.settledAt} is null and ${table.resolvedAt} is not null and ${table.resolutionReason} is not null)`),
 ])
@@ -1697,25 +1697,45 @@ export const builderFeeCollections = pgTable('builder_fee_collections', {
       and ${table.signedTransaction} is null and ${table.lastValidBlockHeight} is null and ${table.expiresAt} is null)`),
 ])
 
-export const custodyFeeCollections = pgTable('custody_fee_collections', {
+// Migration 0085 also installs deferred completeness and DBC immutability triggers.
+export const custodyCollectionBatches = pgTable('custody_collection_batches', {
   signature: varchar('signature', { length: 88 }).primaryKey(),
-  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
-  role: text('role').notNull(), position: varchar('position', { length: 44 }).notNull(),
+  itemCount: integer('item_count').notNull(),
   amount: numeric('amount', { precision: 20, scale: 0 }).notNull(),
   slot: bigint('slot', { mode: 'bigint' }).notNull(), receipt: jsonb('receipt').notNull(),
   recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
-}, t => [index('custody_fee_collections_repo').on(t.githubRepoId, t.role),
+}, t => [check('custody_collection_batches_item_count_check', sql`${t.itemCount} between 1 and 2`),
+  check('custody_collection_batches_amount_check', sql`${t.amount} > 0`),
+  check('custody_collection_batches_slot_check', sql`${t.slot} > 0`)])
+
+export const custodyFeeCollections = pgTable('custody_fee_collections', {
+  signature: varchar('signature', { length: 88 }).notNull(),
+  itemIndex: integer('item_index').notNull().default(-1),
+  phase: text('phase').notNull().default('DAMM'),
+  batchSignature: varchar('batch_signature', { length: 88 }).references(() => custodyCollectionBatches.signature),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
+  role: text('role').notNull(), position: varchar('position', { length: 44 }),
+  amount: numeric('amount', { precision: 20, scale: 0 }).notNull(),
+  slot: bigint('slot', { mode: 'bigint' }).notNull(), receipt: jsonb('receipt').notNull(),
+  recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [primaryKey({ name: 'custody_fee_collections_pkey', columns: [t.signature, t.itemIndex] }),
+  index('custody_fee_collections_repo').on(t.githubRepoId, t.role),
+  check('custody_collection_item_shape', sql`(${t.phase}='DAMM' and ${t.itemIndex}=-1 and ${t.position} is not null and ${t.batchSignature} is null)
+    or (${t.phase}='DBC' and ${t.itemIndex} between 0 and 1 and ${t.position} is null and ${t.batchSignature} is not null and ${t.batchSignature}=${t.signature})`),
   check('custody_fee_collections_role_check', sql`${t.role} in ('creator','partner')`),
   check('custody_fee_collections_amount_check', sql`${t.amount} > 0`),
   check('custody_fee_collections_slot_check', sql`${t.slot} > 0`)])
 
 export const custodyFeePayouts = pgTable('custody_fee_payouts', {
   signature: varchar('signature', { length: 88 }).primaryKey(),
-  collectionSignature: varchar('collection_signature', { length: 88 }).notNull().references(() => custodyFeeCollections.signature),
+  collectionSignature: varchar('collection_signature', { length: 88 }).notNull(),
+  collectionItemIndex: integer('collection_item_index').notNull().default(-1),
   beneficiary: varchar('beneficiary', { length: 44 }).notNull(),
   amount: numeric('amount', { precision: 20, scale: 0 }).notNull(),
   slot: bigint('slot', { mode: 'bigint' }).notNull(), receipt: jsonb('receipt').notNull(),
   recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
-}, t => [index('custody_fee_payouts_collection').on(t.collectionSignature),
+}, t => [foreignKey({ name: 'custody_payout_collection_item_fk', columns: [t.collectionSignature, t.collectionItemIndex],
+  foreignColumns: [custodyFeeCollections.signature, custodyFeeCollections.itemIndex] }),
+  index('custody_fee_payouts_collection').on(t.collectionSignature),
   check('custody_fee_payouts_amount_check', sql`${t.amount} > 0`),
   check('custody_fee_payouts_slot_check', sql`${t.slot} > 0`)])

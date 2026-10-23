@@ -4,6 +4,8 @@ import { CP_AMM_PROGRAM_ID, derivePoolAuthority } from '@meteora-ag/cp-amm-sdk'
 import { NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync,
   ASSOCIATED_TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction } from '@solana/spl-token'
 import { prepareCustodyMultisig, validateCustodyGovernance } from './custody-multisig.mjs'
+import { validateDbcCustodyBatchReceipt } from './custody-dbc-receipt.mjs'
+export { validateDbcCustodyBatchReceipt }
 
 export const CUSTODY_VAULT = '3dHCTpgdx15yXyVGh7DK1woQ1XisQpmFCxncURrq63Gs'
 const pk = value => new PublicKey(value)
@@ -176,9 +178,11 @@ function validateExecution({ plan, tx, finality, review, multisigPlan, governanc
 // Caller must bind creator beneficiary+boundAt to DB or partner to a separate policy,
 // enforce entitlement and collection remaining, and persist signature uniqueness.
 export function prepareCustodyPayout({ amount, collectionSignature, beneficiary, beneficiaryBoundAt, partnerRecipientPolicy,
-  attribution, payer, createAta = false }) {
+  attribution, payer, createAta = false, collectionItemIndex }) {
   requireThat(typeof amount === 'bigint' && amount > 0n && amount <= 0xffffffffffffffffn && typeof collectionSignature === 'string' && collectionSignature.length > 0)
   requireThat(attribution?.repoId && ['creator', 'partner'].includes(attribution.role))
+  requireThat(attribution.phase === 'DBC' ? Number.isInteger(collectionItemIndex) && collectionItemIndex >= 0 && collectionItemIndex < 2
+    : collectionItemIndex === undefined && (attribution.phase === undefined || attribution.phase === 'DAMM'))
   const recipient = address(beneficiary)
   requireThat(recipient !== CUSTODY_VAULT)
   if (attribution.role === 'creator') {
@@ -196,7 +200,8 @@ export function prepareCustodyPayout({ amount, collectionSignature, beneficiary,
     mint: address(NATIVE_MINT), beneficiary: recipient, beneficiaryBoundAt: beneficiaryBoundAt ?? null,
     partnerRecipientPolicy: partnerRecipientPolicy ? Object.freeze({ ...partnerRecipientPolicy, recipient }) : null,
     amount, collectionSignature, attribution: Object.freeze({ ...attribution }), payer: address(payer), createAta,
-    instructions, transferInstruction, beneficiaryPaid: false }
+    instructions, transferInstruction, beneficiaryPaid: false,
+    ...(attribution.phase === 'DBC' ? { collectionItemIndex } : {}) }
 }
 
 export function validateCustodyPayoutReceipt({ plan, tx, finality, review, multisigPlan, governanceProof }) {
@@ -227,7 +232,8 @@ export function validateCustodyPayoutReceipt({ plan, tx, finality, review, multi
     attribution: expected.attribution, collectionSignature: expected.collectionSignature, beneficiary: expected.beneficiary,
     beneficiaryBoundAt: expected.beneficiaryBoundAt, partnerRecipientPolicy: expected.partnerRecipientPolicy,
     source: expected.source, destination: expected.destination, owner: CUSTODY_VAULT, mint: address(NATIVE_MINT),
-    beneficiaryPaid: true, vaultControlVerified: true, governance })
+    beneficiaryPaid: true, vaultControlVerified: true, governance,
+    ...(expected.attribution.phase === 'DBC' ? { collectionItemIndex: expected.collectionItemIndex } : {}) })
 }
 
 function normalizeReceiptTx(tx) {
@@ -243,15 +249,16 @@ function normalizeReceiptTx(tx) {
 // plan must be assembled from trusted RPC and review storage. Validation cannot
 // establish provenance of arbitrary user JSON. Supply a pool or an idle client;
 // these wrappers own the entire SQL transaction (do not nest in a caller's BEGIN).
-async function recordValidated(db, evidence, payout) {
-  const receipt = payout ? validateCustodyPayoutReceipt(evidence) : validateCustodyReceipt(evidence)
-  const { recordCustodyCollection, recordCustodyPayout } = await import('./custody-ledger.mjs')
+async function recordValidated(db, evidence, payout, dbcBatch = false) {
+  const receipt = dbcBatch ? validateDbcCustodyBatchReceipt(evidence) :
+    payout ? validateCustodyPayoutReceipt(evidence) : validateCustodyReceipt(evidence)
+  const { recordCustodyCollection, recordCustodyPayout, recordDbcCustodyBatchCollection } = await import('./custody-ledger.mjs')
   // pg.Client also has connect(); only pg.Pool exposes totalCount.
   const owned = typeof db.connect === 'function' && typeof db.totalCount === 'number'
   const client = owned ? await db.connect() : db
   try {
     await client.query('BEGIN')
-    const result = payout ? await recordCustodyPayout(client, receipt, {
+    const result = dbcBatch ? await recordDbcCustodyBatchCollection(client, receipt) : payout ? await recordCustodyPayout(client, receipt, {
       partnerBeneficiary: receipt.attribution.role === 'partner' ? receipt.partnerRecipientPolicy.recipient : null,
     }) : await recordCustodyCollection(client, receipt)
     await client.query('COMMIT')
@@ -264,3 +271,4 @@ async function recordValidated(db, evidence, payout) {
 
 export const recordValidatedCustodyCollection = (db, evidence) => recordValidated(db, evidence, false)
 export const recordValidatedCustodyPayout = (db, evidence) => recordValidated(db, evidence, true)
+export const recordValidatedDbcCustodyBatchCollection = (db, evidence) => recordValidated(db, evidence, false, true)

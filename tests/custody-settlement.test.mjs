@@ -7,7 +7,7 @@ import bs58 from 'bs58'
 import { prepareCustodySettlement, validateCustodyReceipt, CUSTODY_VAULT } from '../src/custody-settlement.mjs'
 import * as settlement from '../src/custody-settlement.mjs'
 import { CUSTODY_MEMBERS, prepareCustodyMultisig } from '../src/custody-multisig.mjs'
-import { governanceFixture } from './custody-evidence-fixture.mjs'
+import { governanceFixture, dbcBatchFixture } from './custody-evidence-fixture.mjs'
 
 const key = n => new PublicKey(Buffer.alloc(32, n))
 async function fixture({ role = 'creator' } = {}) {
@@ -243,4 +243,104 @@ for (const [name, mutate] of Object.entries({
   missingPreExistingAtaBalance: f => { f.tx.meta.preTokenBalances.pop() },
 })) test(`payout rejects ${name}`, () => {
   const f = payoutFixture(); mutate(f); assert.throws(() => settlement.validateCustodyPayoutReceipt(f))
+})
+
+for (const role of ['creator', 'partner']) test(`DBC ${role}: asymmetric two-pool collection stays two items, never beneficiary payment`, async () => {
+  const f = await dbcBatchFixture(role)
+  assert.equal(typeof settlement.validateDbcCustodyBatchReceipt, 'function')
+  const receipt = settlement.validateDbcCustodyBatchReceipt(f)
+  assert.equal(receipt.amount, 408n)
+  assert.equal(receipt.beneficiaryPaid, false)
+  assert.deepEqual(receipt.items.map(i => [i.itemIndex, i.attribution.repoId, i.amount]), [[0, '101', 101n], [1, '102', 307n]])
+  assert.deepEqual(receipt.items.map(i => i.instructionPath), role === 'creator' ? [[0, 0], [0, 3]] : [[0], [1]])
+  assert.deepEqual(receipt.items.map(i => i.eventPath), role === 'creator' ? [[0, 2], [0, 5]] : [[0, 1], [1, 1]])
+  assert.equal(receipt.authorityRisk, role === 'partner' ? 'exposed-partner-authority' : null)
+  assert.throws(() => validateCustodyReceipt(f), 'DBC must not be accepted as DAMM')
+})
+
+for (const role of ['creator', 'partner']) test(`DBC ${role}: Token-2022 base mint can collect quote-only WSOL without a base transfer`, async () => {
+  const f = await dbcBatchFixture(role, { tokenType: 1 })
+  assert.equal(settlement.validateDbcCustodyBatchReceipt(f).amount, 408n)
+  f.tx.meta.postTokenBalances[0].uiTokenAmount.amount = '1'
+  assert.throws(() => settlement.validateDbcCustodyBatchReceipt(f))
+})
+
+for (const role of ['creator', 'partner']) test(`DBC ${role}: single-item and v0 receipts retain canonical paths; oversized batches reject`, async () => {
+  const single = await dbcBatchFixture(role, { amounts: [101n] })
+  assert.equal(settlement.validateDbcCustodyBatchReceipt(single).items.length, 1)
+  assert.equal(settlement.validateDbcCustodyBatchReceipt(single).amount, 101n)
+  const f = await dbcBatchFixture(role), old = f.tx.transaction.message
+  f.tx.transaction.message = { header: old.header, staticAccountKeys: old.accountKeys, addressTableLookups: [],
+    compiledInstructions: old.instructions.map(i => ({ programIdIndex: i.programIdIndex,
+      accountKeyIndexes: i.accounts, data: bs58.decode(i.data) })) }
+  assert.equal(settlement.validateDbcCustodyBatchReceipt(f).amount, 408n)
+  f.tx.transaction.message.addressTableLookups.push({})
+  assert.throws(() => settlement.validateDbcCustodyBatchReceipt(f))
+  assert.throws(() => settlement.validateDbcCustodyBatchReceipt({ ...single, plan: { ...single.plan, claims: [] } }))
+  const large = await dbcBatchFixture(role, { amounts: [101n, 307n, 53n] })
+  assert.throws(() => settlement.validateDbcCustodyBatchReceipt(large))
+})
+
+for (const role of ['creator', 'partner']) for (const [name, offset, value] of [
+  ['wrong event pool', 16, 1], ['nonzero base event', 48, 1], ['inflated quote event', 56, 102], ['wrong event discriminator', 8, 0],
+]) test(`DBC ${role}: even reviewed ${name} rejects`, async () => {
+  const f = await dbcBatchFixture(role), index = role === 'creator' ? 2 : 1
+  const event = f.review.inner[0].instructions[index].instruction
+  event.data[offset] = value
+  f.tx.meta.innerInstructions[0].instructions[index].data = bs58.encode(event.data)
+  assert.throws(() => settlement.validateDbcCustodyBatchReceipt(f))
+})
+
+for (const [name, mutate] of Object.entries({
+  wrongRole: f => { f.plan.claims[0].attribution.role = 'partner' },
+  wrongConfig: f => { f.plan.claims[0].attribution.config = key(100).toBase58() },
+  wrongPool: f => { f.plan.claims[0].attribution.curve = key(100).toBase58() },
+  duplicatePool: f => { f.plan.claims[1] = f.plan.claims[0] },
+  overCap: f => { f.plan.claims[0].maxQuoteAmount = 100n },
+  unknownOutcome: f => { f.finality.confirmationStatus = 'confirmed' },
+  missingGovernance: f => { f.governanceProof = null },
+  staleObservation: f => { f.plan.observation.slot-- },
+  changedTotal: f => { f.tx.meta.postTokenBalances.at(-1).uiTokenAmount.amount = '426' },
+  exchangedSourceAmounts: f => { f.tx.meta.postTokenBalances[1].uiTokenAmount.amount = '693'; f.tx.meta.postTokenBalances[3].uiTokenAmount.amount = '899' },
+  extraNativeMovement: f => { f.tx.meta.postBalances[1]-- },
+  missingExistingAta: f => { f.tx.meta.preTokenBalances.pop() },
+  duplicateBalance: f => { f.tx.meta.postTokenBalances.push(f.tx.meta.postTokenBalances[0]) },
+  changedTokenProgram: f => { f.tx.meta.postTokenBalances.at(-1).programId = TOKEN_2022_PROGRAM_ID.toBase58() },
+  extraBaseMovement: f => { f.tx.meta.postTokenBalances[0].uiTokenAmount.amount = '1' },
+  zeroQuote: f => { f.plan.claims[0].maxQuoteAmount = 0n },
+  failedExecution: f => { f.tx.meta.err = { InstructionError: [0, 'Custom'] } },
+  wrongPoolOwner: f => { f.plan.claims[0].poolAccount.owner = TOKEN_PROGRAM_ID.toBase58() },
+  wrongConfigDiscriminator: f => { f.plan.claims[0].configAccount.data[0] ^= 1 },
+  reviewedExtraMovement: f => {
+    f.tx.meta.innerInstructions[0].instructions.push(f.tx.meta.innerInstructions[0].instructions[1])
+    f.review.inner[0].instructions.push(f.review.inner[0].instructions[1])
+  },
+  reviewedDuplicateEvent: f => {
+    f.tx.meta.innerInstructions[0].instructions.push(f.tx.meta.innerInstructions[0].instructions[2])
+    f.review.inner[0].instructions.push(f.review.inner[0].instructions[2])
+  },
+})) test(`DBC rejects ${name}`, async () => {
+  const f = await dbcBatchFixture(); mutate(f)
+  assert.equal(typeof settlement.validateDbcCustodyBatchReceipt, 'function')
+  assert.throws(() => settlement.validateDbcCustodyBatchReceipt(f))
+})
+
+test('DBC partner collection requires explicit exposed-authority acknowledgement and actual top-level signer', async () => {
+  const f = await dbcBatchFixture('partner')
+  assert.equal(typeof settlement.validateDbcCustodyBatchReceipt, 'function')
+  delete f.plan.partnerReview
+  assert.throws(() => settlement.validateDbcCustodyBatchReceipt(f))
+  const g = await dbcBatchFixture('partner')
+  g.tx.transaction.message.header.numRequiredSignatures = 1
+  assert.throws(() => settlement.validateDbcCustodyBatchReceipt(g))
+})
+
+test('DBC payout retains explicit collection item identity; old DAMM has no new required parameter', () => {
+  const f = payoutFixture()
+  const a = { ...f.plan.attribution, phase: 'DBC' }
+  const p = settlement.prepareCustodyPayout({ ...f.plan, attribution: a, collectionItemIndex: 1 })
+  assert.equal(p.collectionItemIndex, 1)
+  assert.throws(() => settlement.prepareCustodyPayout({ ...f.plan, attribution: a }))
+  assert.throws(() => settlement.prepareCustodyPayout({ ...f.plan, attribution: a, collectionItemIndex: -1 }))
+  assert.throws(() => settlement.prepareCustodyPayout({ ...f.plan, collectionItemIndex: 1 }))
 })
