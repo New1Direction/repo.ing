@@ -173,13 +173,17 @@ export default {
       upstream = new Request(request.url, { method: request.method, headers: upstreamHeaders, redirect: 'manual' })
     }
     let response
+    let failureStage = 'bindings'
     try {
       await validateBindings(bindings)
+      failureStage = 'dispatch'
       response = await env.PUBLIC_SITE.getByName('public-readonly').fetchWithReviewBindings(upstream, bindings)
-    } catch {
+    } catch (error) {
       // Includes missing RPC during propagation, invalid bindings and failed
       // restart/storage/boot. Never fall back to raw fetch or the old DB-only RPC.
-      return Response.json({ error: 'TRADING_REVIEW_UNAVAILABLE' }, { status: 503, headers: { ...headers, 'Retry-After': '5' } })
+      // Only fixed categories are public; never expose exception text or bindings.
+      const reason = error?.message?.includes('RPC receiver does not implement') ? 'rpc-version' : failureStage
+      return Response.json({ error: 'TRADING_REVIEW_UNAVAILABLE', reason }, { status: 503, headers: { ...headers, 'Retry-After': '5' } })
     }
     const safe = new Response(response.body, response)
     safe.headers.delete('set-cookie')
