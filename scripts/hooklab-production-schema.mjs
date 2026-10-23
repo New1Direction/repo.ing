@@ -51,6 +51,8 @@ export const MIGRATIONS = Object.freeze({
   'selected-hook-economics': Object.freeze({ files: ['hooklab-selected-hook-economics-schema.sql'], requires: ['hook_lab_launch_requests'],
     inspect: "select column_name from information_schema.columns where table_name='hook_lab_launch_requests' and column_name='selected_economics'" }),
   'selected-trade-quotes': Object.freeze({ files: ['hooklab-selected-trade-quotes-schema.sql'], requires: [] }),
+  'selected-hook-zero-creator-fee': Object.freeze({ files: ['hooklab-selected-hook-zero-creator-fee-schema.sql'], requires: ['hook_lab_launch_requests'],
+    inspect: "select convalidated,pg_get_constraintdef(oid) as creator_fee_check from pg_constraint where conrelid=to_regclass('public.hook_lab_launch_requests') and conname='hook_lab_launch_requests_creator_fee_bps_check'" }),
 })
 export function productionSchema(files = SCHEMA_FILES) {
   const parts = files.map(name => ({ name, sql: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8') }))

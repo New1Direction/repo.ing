@@ -14,7 +14,7 @@ test('the reviewed bootstrap is unchanged', () => {
 })
 
 test('coin-profiles is a separate migration for one new table', () => {
-  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles', 'wallet-funding', 'launch-pricing', 'coin-trades', 'native-stages', 'open-launches', 'selected-hook-requests', 'selected-hook-execution', 'hook-catalog', 'selected-hook-authority', 'selected-hook-setup', 'selected-hook-economics', 'selected-trade-quotes'])
+  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles', 'wallet-funding', 'launch-pricing', 'coin-trades', 'native-stages', 'open-launches', 'selected-hook-requests', 'selected-hook-execution', 'hook-catalog', 'selected-hook-authority', 'selected-hook-setup', 'selected-hook-economics', 'selected-trade-quotes', 'selected-hook-zero-creator-fee'])
   const open = migrationSchema('open-launches')
   assert.deepEqual([open.tables, open.requires], [['hook_lab_coin_moderation'], ['hook_lab_launch_requests', 'hook_lab_launch_request_prices']])
   assert.match(open.sql, /where status in \('invited','launching'\) and source='owner-invite'/)
@@ -26,7 +26,7 @@ test('coin-profiles is a separate migration for one new table', () => {
 })
 
 test('selected request recording and execution are separate exact-hash migration reviews',()=>{
-  for(const name of ['selected-hook-requests','selected-hook-execution','selected-hook-economics']){
+  for(const name of ['selected-hook-requests','selected-hook-execution','selected-hook-economics','selected-hook-zero-creator-fee']){
     const migration=migrationSchema(name)
     assert.deepEqual(migration.requires,['hook_lab_launch_requests']);assert.deepEqual(migration.tables,[])
     assert.equal(run('migrate',name,'--sha256','0'.repeat(64)).status,2)

@@ -28,13 +28,13 @@ const profile = { image: IMAGE, description: 'A test coin.', x: '', website: '',
 const pricing = (() => { const sources = [{ source: 'coingecko', usdMicros: '150000000' }, { source: 'coinbase', usdMicros: '150000000' }]
   return { solUsdMicros: '150000000', sources, virtualQuote: launchVirtualQuote(150000000n) } })()
 
-async function withDatabase(work) {
+async function withDatabase(work, migrations = Object.keys(MIGRATIONS)) {
   const testConfig = process.env.HOOKLAB_REQUEST_TEST_SOCKET ? { host: process.env.HOOKLAB_REQUEST_TEST_SOCKET, port: 5432, user: process.env.USER, database: 'postgres' } : config
   const root = new pg.Pool(testConfig), name = `open_launch_${randomUUID().replaceAll('-', '')}`; let pool
   try {
     await root.query(`create database ${name}`); pool = new pg.Pool({ ...testConfig, database: name })
     await pool.query(productionSchema().sql)
-    for (const migration of Object.keys(MIGRATIONS)) await pool.query(migrationSchema(migration).sql)
+    for (const migration of migrations) await pool.query(migrationSchema(migration).sql)
     if(!(await pool.query("select 1 from information_schema.columns where table_name='hook_lab_launch_requests' and column_name='hook_publication'")).rows.length)
       await pool.query(await readFile(new URL('../src/hooklab-selected-hook-setup-schema.sql',import.meta.url),'utf8'))
     if (!Object.hasOwn(MIGRATIONS, 'hook-catalog')) await pool.query(await readFile(new URL('../src/hooklab-hook-catalog-schema.sql',import.meta.url),'utf8'))
@@ -94,11 +94,12 @@ test('selected hook coin survives HTTP handler restart with immutable intent and
   const request = (body, path = 'launch-requests', cookie = token) => new Request(`https://repo.ing/api/hook-lab/${path}`, { method: 'POST',
     headers: { origin: 'https://repo.ing', 'content-type': 'application/json', cookie: `__Host-hook-wallet-session=${cookie}` }, body: JSON.stringify(body) })
   const economics = { quoteCut: { maxBuyBps: 80, maxSellBps: 40 }, authorShareBps: 1000, rules: { burnBuyBps: 20, burnSellBps: 30 } }
-  const coin = { action: 'create', requestId: id, name: 'Custom coin', symbol: 'CSTM', image, description: '', x: '', website: '', telegram: '', creatorFeeBps: 100, capBps: 0, selectedHook,hookPublication,...economics }
+  const coin = { action: 'create', requestId: id, name: 'Custom coin', symbol: 'CSTM', image, description: '', x: '', website: '', telegram: '', creatorFeeBps: 0, capBps: 0, selectedHook,hookPublication,...economics }
   const first = await createLaunchRequestsHandler(options)(request(coin))
   assert.equal(first.status, 200, await first.clone().text())
   const stored = (await first.json()).request
   assert.deepEqual(stored.selectedHook, selectedHook); assert.equal(stored.capBps, 0); assert.equal(stored.status, 'queued')
+  assert.equal(stored.creatorFeeBps, 0)
   assert.deepEqual(stored.hookPublication,hookPublication)
   for (const key of Object.keys(economics)) assert.deepEqual(stored[key], economics[key])
   assert.equal(stored.custodyOperationId, null)
@@ -116,13 +117,62 @@ test('selected hook coin survives HTTP handler restart with immutable intent and
   await assert.rejects(pool.query('update hook_lab_launch_requests set selected_economics=null where id=$1', [id]), /immutable/i)
   let reserved = 0
   const native = createNativeLaunchHandler({ ...options, runtime: () => ({ reserve: async () => { reserved++; throw Error('must not reserve') }, lifecycle: {} }) })
-  const blocked = await native(request({ action: 'reserve', operationId: randomUUID(), capBps: 0, selectedHook, creatorFeeBps: 100,
+  const blocked = await native(request({ action: 'reserve', operationId: randomUUID(), capBps: 0, selectedHook, creatorFeeBps: 0,
     label: 'CSTM', name: stored.name, symbol: stored.symbol, uri: stored.uri, virtualQuote: '1000000000' }, 'native-launch'))
   assert.equal(blocked.status, 409); assert.equal((await blocked.json()).blockers[0].code, 'SELECTED_HOOK_REVIEW_UNAVAILABLE'); assert.equal(reserved, 0)
   assert.equal((await pool.query('select count(*)::int n from hook_lab_native_signer_custody')).rows[0].n, 0)
   assert.equal((await createLaunchRequestsHandler(options)(request({ action: 'cancel', requestId: id }))).status, 200)
   assert.equal((await ownerApprovalStore(pool, { openLaunches: true, usdPricing: true }).requestFor(creator)).status, 'cancelled')
 }))
+
+test('selected zero-fee migration preserves existing rows and every other database protection', () => withDatabase(async pool => {
+  const selectedHook = { program: key('zero-fee-hook'), flags: 3 }
+  const insert = (fee, extra = {}) => {
+    const row = { id: randomUUID(), creator: key(randomUUID()), hook: selectedHook, cap: 0, source: 'open', status: 'queued', ...extra }
+    return pool.query(`insert into hook_lab_launch_requests(id,creator_wallet,name,symbol,uri,creator_fee_bps,cap_bps,source,status,selected_hook)
+      values($1,$2,'Fee test','FEE','',$3,$4,$5,$6,$7) returning *`, [row.id, row.creator, fee, row.cap, row.source, row.status, row.hook])
+  }
+  const feeConstraint = 'hook_lab_launch_requests_creator_fee_bps_check'
+  const rejectedFee = { code: '23514', constraint: feeConstraint }
+  await assert.rejects(insert(0), rejectedFee, 'the deployed schema rejects a selected zero fee')
+  const existing = (await insert(100)).rows[0]
+  const protections = async () => ({
+    constraints: (await pool.query(`select conname,convalidated,pg_get_constraintdef(oid) as definition from pg_constraint
+      where conrelid='hook_lab_launch_requests'::regclass and conname<>$1 order by conname`, [feeConstraint])).rows,
+    columns: (await pool.query("select column_name,is_nullable from information_schema.columns where table_schema='public' and table_name='hook_lab_launch_requests' order by column_name")).rows,
+    indexes: (await pool.query("select indexname,indexdef from pg_indexes where schemaname='public' and tablename='hook_lab_launch_requests' order by indexname")).rows,
+    triggers: (await pool.query("select tgname,pg_get_triggerdef(oid) as definition from pg_trigger where tgrelid='hook_lab_launch_requests'::regclass and not tgisinternal order by tgname")).rows,
+  })
+  const before = await protections(), migration = migrationSchema('selected-hook-zero-creator-fee')
+  await pool.query(migration.sql)
+  assert.deepEqual(await protections(), before)
+  assert.deepEqual((await pool.query('select * from hook_lab_launch_requests where id=$1', [existing.id])).rows[0], existing)
+  assert.equal((await pool.query(migration.inspect)).rows[0].convalidated, true)
+  for (const fee of [0, 1, 9999]) assert.equal((await insert(fee)).rows[0].creator_fee_bps, fee)
+  for (const fee of [-1, 10000]) await assert.rejects(insert(fee), rejectedFee)
+  for (const source of ['open', 'owner-invite']) {
+    const plain = { hook: null, cap: 100, source }
+    for (const fee of [1, 9999]) assert.equal((await insert(fee, plain)).rows[0].creator_fee_bps, fee)
+    for (const fee of [-1, 0, 10000]) await assert.rejects(insert(fee, plain), rejectedFee)
+  }
+  for (const hook of [selectedHook, null]) await assert.rejects(insert(null, { hook, cap: hook ? 0 : 100 }), { code: '23502', column: 'creator_fee_bps' })
+  for (const extra of [{ cap: 1 }, { source: 'owner-invite' }, { hook: { ...selectedHook, flags: 256 } }, { hook: {} }, { hook: 'null' }])
+    await assert.rejects(insert(0, extra), { code: '23514', constraint: 'hook_lab_launch_requests_hook_config_check' })
+  await assert.rejects(insert(0, { status: 'declined' }), { code: '23514', constraint: 'hook_lab_launch_requests_selected_execution' })
+  const zero = (await insert(0)).rows[0]
+  await assert.rejects(pool.query('update hook_lab_launch_requests set creator_fee_bps=1 where id=$1', [zero.id]), /intent is immutable/)
+  await assert.rejects(pool.query('update hook_lab_launch_requests set selected_hook=null,cap_bps=100 where id=$1', [zero.id]), /intent is immutable/)
+  await pool.query("update hook_lab_launch_requests set status='cancelled' where id=$1", [zero.id])
+  assert.equal((await pool.query('select creator_fee_bps from hook_lab_launch_requests where id=$1', [zero.id])).rows[0].creator_fee_bps, 0)
+  await pool.query(migration.sql)
+  assert.deepEqual(await protections(), before, 'reapplying the migration preserves the same protections')
+  await assert.rejects(pool.query(`alter table hook_lab_launch_requests
+    drop constraint hook_lab_launch_requests_creator_fee_bps_check,
+    add constraint hook_lab_launch_requests_creator_fee_bps_check check (creator_fee_bps between 1 and 9999)`),
+  rejectedFee, 'restoring the old check is unsafe once zero-fee requests exist, including cancelled requests')
+  assert.equal((await insert(0)).rows[0].creator_fee_bps, 0, 'failed rollback leaves the valid new constraint intact')
+  assert.equal((await pool.query(migration.inspect)).rows[0].convalidated, true)
+}, Object.keys(MIGRATIONS).filter(name => name !== 'selected-hook-zero-creator-fee')))
 
 async function bind(pool, store, creator, operationId, { id, ...value }) {   // the request id is not part of what binds
   const db = await pool.connect()
