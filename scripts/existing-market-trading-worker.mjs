@@ -2,9 +2,8 @@ import { Container } from '@cloudflare/containers'
 // Wrangler Text module: preserve exact bytes without a >5KB environment binding.
 import custodyManifest from '../config/existing-market-custody.json'
 
-// Review/test-only successor to the accepted recovery wrapper. Keep the existing
-// PublicSite/PUBLIC_SITE/public-readonly migration identity. This module is not
-// a live activation mechanism: changing a binding to `live` fails closed.
+// Existing-market recovery wrapper. Keep PublicSite/PUBLIC_SITE/public-readonly
+// identity and the closed launch/claim/replay boundaries in every stage.
 const pages = new Set(['/', '/launch', '/explore', '/find-repos', '/discoverers', '/referrals', '/agents', '/wallet', '/builders', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks'])
 const mint = '[1-9A-HJ-NP-Za-km-z]{32,44}'
 const tokenPage = new RegExp(`^/token/${mint}$`)
@@ -35,7 +34,7 @@ async function validateBindings(bindings) {
   if (bindingNames.some(name => typeof bindings[name] !== 'string' || !bindings[name].trim())
     || bindings.PUBLIC_DATABASE_URL === bindings.TRADING_DATABASE_URL
     || bindings.EXISTING_MARKET_TRADING_ONLY !== 'true'
-    || !['review', 'test'].includes(bindings.EXISTING_MARKET_TRADING_STAGE)
+    || !['review', 'test', 'live'].includes(bindings.EXISTING_MARKET_TRADING_STAGE)
     || bindings.DBC_CONFIG !== primaryConfig
     || bindings.DBC_LEGACY_CONFIGS.split(',').sort().join(',') !== [...legacyConfigs].sort().join(',')
     || bindings.TRADING_CUSTODY_RECOVERY_SHA256 !== custodyDigest
@@ -44,7 +43,7 @@ async function validateBindings(bindings) {
   }
 }
 
-// Integrated from the prepared edge-policy.mjs, narrowed to review only.
+// Only explicit trade actions bypass the public read-only policy.
 // A null result MUST fall back to the unchanged public GET/HEAD allowlist.
 // A Request is the only result allowed to bypass that read-only list.
 async function tradeBoundary(request, bindings) {
@@ -52,7 +51,7 @@ async function tradeBoundary(request, bindings) {
   const url = new URL(request.url)
   const deny = () => Response.json({ error: 'TRADING_EXECUTION_DISABLED' }, { status: 403 })
   if (request.headers.has('upgrade')) return deny()
-  const active = ['review', 'test'].includes(stage)
+  const active = ['review', 'test', 'live'].includes(stage)
   const balance = url.pathname === '/api/wallet/balance' || marketBalance.test(url.pathname)
   const search = url.pathname === '/api/repo-search'
   const mcp = url.pathname === '/api/mcp/readonly'
@@ -83,7 +82,7 @@ async function tradeBoundary(request, bindings) {
     let payload
     try { payload = JSON.parse(new TextDecoder().decode(body)) } catch { return deny() }
     const actions = stage === 'test' ? ['prepare', 'status', ...(bindings.EXISTING_MARKET_TEST_SUBMISSION === 'true' ? ['submit'] : [])]
-      : ['depth', 'quote', 'costs', 'prepare', 'status']
+      : ['depth', 'quote', 'costs', 'prepare', 'status', ...(stage === 'live' ? ['submit'] : [])]
     if (!payload || (!search && !mcp && !actions.includes(payload.action))) return deny()
   }
   const headers = new Headers()
@@ -171,7 +170,7 @@ export default {
     }
     const headers = {
       'Cache-Control': 'no-store',
-      'X-Repoing-Mode': 'existing-market-trading-review',
+      'X-Repoing-Mode': env.EXISTING_MARKET_TRADING_STAGE === 'live' ? 'existing-market-trading-live' : 'existing-market-trading-review',
       'X-Repoing-Snapshot': '2026-10-22T14:48:06Z',
       'Referrer-Policy': 'no-referrer',
       'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'",
@@ -222,7 +221,9 @@ export default {
       return new HTMLRewriter().on('body', {
         element(body) {
           body.setAttribute('style', `${body.getAttribute('style') || ''};padding-bottom:80px`)
-          const notice = bindings.EXISTING_MARKET_TRADING_STAGE === 'test'
+          const notice = bindings.EXISTING_MARKET_TRADING_STAGE === 'live'
+            ? 'Existing-market trading is live. New launches, claims and hooks remain paused. Historical DBC partner-fee rights remain exposed.'
+            : bindings.EXISTING_MARKET_TRADING_STAGE === 'test'
             ? `Authorized six-swap test only · ${bindings.EXISTING_MARKET_TEST_SUBMISSION === 'true' ? 'Operator-gated wallet test.' : 'Unsigned preparation only. Do not sign.'} Public trading, launches, claims and replay are paused.`
             : 'Existing-market trading review · Unsigned preparation only. Do not sign. Submission, launches, claims and replay are paused.'
           body.append(`<aside role="note" id="recovery-notice" style="position:fixed;bottom:0;left:0;right:0;z-index:2147483647;padding:10px 16px;background:#fff3cd;color:#332500;border-top:1px solid #b89b46;font:600 13px/1.4 system-ui;text-align:center">${notice} Charts use read-only finalized-chain indexing. Fee accounting and payouts remain under verification.</aside>`, { html: true })

@@ -306,7 +306,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     return { signature, direction: saved.direction, mint: market.mint, pool: market.pool, tokenDelta, solDelta, quoteDelta, quoteMint: quote,
       quoteVaultDelta, slot: BigInt(tx.slot), minimumAmountOut: saved.minimumAmountOut }
   }
-  const submitTrade = async (prepared, signTransaction) => {
+  const submitTrade = async (prepared, signTransaction, { allowRebroadcast = true } = {}) => {
     const saved = readTradeRecord(prepared?.record, 'curve')
     const signed = await signTransaction(prepared.transaction)
     if (!(signed instanceof Transaction) || !matchesReviewedTransaction(saved.message, signed) ||
@@ -314,7 +314,8 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
       throw new Error('Wallet returned an altered or unsigned trade transaction')
     }
     const signature = bs58.encode(signed.signature)
-    await broadcastUntilSettled(connection, signed.serialize(), { signature, lastValidBlockHeight: saved.lastValidBlockHeight })
+    await broadcastUntilSettled(connection, signed.serialize(), { signature, lastValidBlockHeight: saved.lastValidBlockHeight,
+      ...!allowRebroadcast ? { maxMs: 0 } : {} })
     const confirmation = await connection.confirmTransaction({ signature, blockhash: saved.blockhash,
       lastValidBlockHeight: saved.lastValidBlockHeight }, 'confirmed')
     if (confirmation.value.err) throw new Error(`Trade failed: ${JSON.stringify(confirmation.value.err)}`)

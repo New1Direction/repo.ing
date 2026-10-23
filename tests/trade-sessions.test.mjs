@@ -136,7 +136,9 @@ test('a prepared DAMM trade survives a restart: another instance submits and ver
   const accepted = acceptSignedTrade(loaded, signed.serialize().toString('base64'), now())
   assert.equal(accepted.signature, swaps.buy.transaction.signatures[0])
   const session = await storeB.markSubmitted(loaded, accepted)
-  const result = await session.engine.submitTrade(session.prepared, async () => accepted.signed)
+  connection.getSignatureStatuses = async () => ({ value: [null] })
+  const result = await session.engine.submitTrade(session.prepared, async () => accepted.signed, { allowRebroadcast: false })
+  assert.equal(sent.length, 1, 'recovery sends once even when status lookup has not observed the signature')
   assert.equal(sent[0], signed.serialize().toString('base64'))
   assert.equal(result.signature, swaps.buy.transaction.signatures[0])
   assert.equal(result.tokenDelta, 53_186_326_140n)
@@ -221,7 +223,7 @@ test('a curve trade prepared before a restart is broadcast by a fresh trader fro
   const sent = [], reads = []
   const connection = Object.assign(Object.create(rpc), {
     sendRawTransaction: async raw => { sent.push(Buffer.from(raw)); return 'sig' },
-    getSignatureStatuses: async () => ({ value: [{ confirmationStatus: 'confirmed', err: null }] }),
+    getSignatureStatuses: async () => ({ value: [null] }),
     getBlockHeight: async () => 1, confirmTransaction: async args => { reads.push(args); return { value: { err: null } } },
     getTransaction: async () => null,
   })
@@ -229,7 +231,7 @@ test('a curve trade prepared before a restart is broadcast by a fresh trader fro
     loadMarket: async () => ({ id: 3, githubRepoId: 42n, mint: MINT, pool: CURVE }) })
   const prepared = preparedFromRecord(JSON.parse(JSON.stringify(record)))
   // The market pins in the record are checked first; the fake market here is not a real DBC pool so it fails there.
-  await assert.rejects(trader.submitTrade(prepared, async t => { t.sign(wallet); return t }), /approved DBC config|missing or failed/)
+  await assert.rejects(trader.submitTrade(prepared, async t => { t.sign(wallet); return t }, { allowRebroadcast: false }), /approved DBC config|missing or failed/)
   assert.equal(sent.length, 1)
   assert.equal(reads[0].blockhash, blockhash)
   assert.equal(reads[0].lastValidBlockHeight, 100)

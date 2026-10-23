@@ -52,6 +52,20 @@ test('real PostgreSQL: sessions persist across store instances, first signature 
       assert.equal(reread.prepared.record.signedMessage, accepted.signedMessage)
       const { rows: [row] } = await pool.query('select phase, direction, github_repo_id::text as repo, amount_in::text as amount, last_valid_block_height::text as lvbh from trade_sessions where id=$1', [id])
       assert.deepEqual(row, { phase: 'curve', direction: 'buy', repo: '42', amount: '10000000', lvbh: '350000000' })
+
+      const onceId = randomUUID()
+      const once = () => createTradeSessionStore({ db: pool, engineFor, now, requirePersistence: true, allowRebroadcast: false })
+      await once().create(onceId, { prepared: preparedFromRecord(record), wallet: record.wallet })
+      const first = once(), second = once()
+      const [a, b] = await Promise.all([first.load(onceId), second.load(onceId)])
+      const attempts = await Promise.allSettled([first.markSubmitted(a, accepted), second.markSubmitted(b, accepted)])
+      assert.equal(attempts.filter(result => result.status === 'fulfilled').length, 1, 'only one replica receives send permission')
+      assert.match(attempts.find(result => result.status === 'rejected').reason.message, /already submitted/)
+      const restarted = once(), retained = await restarted.load(onceId)
+      assert.equal(retained.signature, accepted.signature)
+      await assert.rejects(restarted.markSubmitted(retained, accepted), /already submitted/)
+      await pool.query('delete from trade_sessions where id=$1', [onceId])
+
       t += SESSION_TTL_MS + 1000
       assert.equal(await store.load(id), null)
       assert.equal(await createTradeSessionStore({ db: pool, engineFor, now }).cleanup(), 1)

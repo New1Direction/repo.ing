@@ -18,15 +18,28 @@ const binding = {
 }
 const manifest = { version: 1, poolCreators: [binding], positions: [] }
 
-test('test stage denies submission without explicit enablement and rejects public-live fallback', async () => {
+test('review/test and unknown stages deny submission without explicit enablement', async () => {
   process.env.EXISTING_MARKET_TRADING_ONLY = 'true'
   try {
-    for (const stage of ['review', 'test', 'live']) {
+    for (const stage of ['review', 'test', 'unknown']) {
       process.env.EXISTING_MARKET_TRADING_STAGE = stage
       const result = await POST(new Request('https://repo.ing/api/trade', { method: 'POST', body: JSON.stringify({ action: 'submit' }) }))
       assert.equal(result.status, 403)
       assert.equal((await result.json()).error, 'TRADING_EXECUTION_DISABLED')
     }
+  } finally {
+    delete process.env.EXISTING_MARKET_TRADING_ONLY
+    delete process.env.EXISTING_MARKET_TRADING_STAGE
+  }
+})
+
+test('live recovery reaches trade validation rather than the closed test boundary', async () => {
+  process.env.EXISTING_MARKET_TRADING_ONLY = 'true'
+  process.env.EXISTING_MARKET_TRADING_STAGE = 'live'
+  try {
+    const result = await POST(new Request('https://repo.ing/api/trade', { method: 'POST', body: JSON.stringify({ action: 'quote', direction: 'invalid' }) }))
+    assert.equal(result.status, 400)
+    assert.equal((await result.json()).error, 'Invalid trade direction')
   } finally {
     delete process.env.EXISTING_MARKET_TRADING_ONLY
     delete process.env.EXISTING_MARKET_TRADING_STAGE

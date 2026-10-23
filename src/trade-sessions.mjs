@@ -44,7 +44,7 @@ export function sessionFromRow(row, engineFor) {
     result: row.result ?? undefined }
 }
 
-export function createTradeSessionStore({ db, engineFor, cache = new Map(), now = Date.now, log = console.error, requirePersistence = false }) {
+export function createTradeSessionStore({ db, engineFor, cache = new Map(), now = Date.now, log = console.error, requirePersistence = false, allowRebroadcast = true }) {
   let nextCleanup = 0
   const remember = session => {
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value)
@@ -101,14 +101,15 @@ export function createTradeSessionStore({ db, engineFor, cache = new Map(), now 
     const at = session.submittedAt ?? now()
     if (session.memoryOnly) {
       const current = cache.get(session.id) ?? session
+      if (!allowRebroadcast && current.signature) throw Error('Prepared trade already submitted; check its status')
       if (current.signature && current.signature !== signature) throw Error('Prepared trade already has a different signature')
       const record = { ...session.prepared.record, signedMessage }
       return remember({ ...current, prepared: preparedFromRecord(record), signature, submittedAt: current.submittedAt ?? at })
     }
     const { rows: [row] } = await db.query(`update trade_sessions set signature = $2, signed_message = $3,
-        submitted_at = coalesce(submitted_at, $4) where id = $1 and (signature is null or signature = $2)
+        submitted_at = coalesce(submitted_at, $4) where id = $1 and ${allowRebroadcast ? '(signature is null or signature = $2)' : 'signature is null'}
       returning ${COLUMNS}`, [session.id, signature, signedMessage, new Date(at)])
-    if (!row) throw Error('Prepared trade already has a different signature')
+    if (!row) throw Error(allowRebroadcast ? 'Prepared trade already has a different signature' : 'Prepared trade already submitted; check its status')
     return remember({ ...sessionFromRow(row, engineFor), recorded: session.recorded })
   }
 

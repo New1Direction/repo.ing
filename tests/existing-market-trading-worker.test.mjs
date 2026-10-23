@@ -224,7 +224,7 @@ test('binds only the reader, separate trading credential and exact public review
   assert.equal([...f.storage.values()][0], expected)
 })
 
-test('missing or mismatched bindings fail closed, including live activation and changed manifest bytes', async () => {
+test('missing or mismatched bindings fail closed, including unknown stages and changed manifest bytes', async () => {
   const f = await fixture()
   await f.request()
   const required = ['PUBLIC_DATABASE_URL', 'TRADING_DATABASE_URL', 'EXISTING_MARKET_TRADING_ONLY', 'EXISTING_MARKET_TRADING_STAGE', 'DBC_CONFIG', 'DBC_LEGACY_CONFIGS', 'TRADING_CUSTODY_RECOVERY_SHA256']
@@ -234,7 +234,7 @@ test('missing or mismatched bindings fail closed, including live activation and 
     assert.equal((await f.request()).status, 503, key)
     f.env[key] = prior
   }
-  for (const [key, value] of [['EXISTING_MARKET_TRADING_STAGE', 'live'], ['EXISTING_MARKET_TRADING_ONLY', 'false'], ['DBC_CONFIG', mint], ['DBC_LEGACY_CONFIGS', mint], ['TRADING_CUSTODY_RECOVERY_SHA256', '0'.repeat(64)], ['TRADING_DATABASE_URL', 'public-reader']]) {
+  for (const [key, value] of [['EXISTING_MARKET_TRADING_STAGE', 'unknown'], ['EXISTING_MARKET_TRADING_ONLY', 'false'], ['DBC_CONFIG', mint], ['DBC_LEGACY_CONFIGS', mint], ['TRADING_CUSTODY_RECOVERY_SHA256', '0'.repeat(64)], ['TRADING_DATABASE_URL', 'public-reader']]) {
     const prior = f.env[key]
     f.env[key] = value
     assert.equal((await f.request()).status, 503, key)
@@ -258,9 +258,29 @@ test('bundled exact custody bytes avoid the 5KB binding limit and cannot be over
 test('the DO itself rejects unvalidated raw fetch and invalid binding RPCs', async () => {
   const f = await fixture()
   assert.equal((await f.instance.fetch(new Request('https://repo.ing/stats'))).status, 503)
-  await assert.rejects(f.instance.fetchWithReviewBindings(new Request('https://repo.ing/stats'), { ...f.env, EXISTING_MARKET_TRADING_STAGE: 'live' }), /bindings/i)
+  await assert.rejects(f.instance.fetchWithReviewBindings(new Request('https://repo.ing/stats'), { ...f.env, EXISTING_MARKET_TRADING_STAGE: 'unknown' }), /bindings/i)
   assert.equal(f.runtime.calls.length, 0)
   assert.equal(f.storage.size, 0)
+})
+
+test('live stage exposes only existing-market trades while launches, hooks, claims and replay stay closed', async () => {
+  const f = await fixture()
+  f.env.EXISTING_MARKET_TRADING_STAGE = 'live'
+  for (const action of ['depth', 'quote', 'costs', 'prepare', 'submit', 'status']) assert.equal((await f.trade(action)).status, 200)
+  const body = await (await f.request()).json()
+  assert.equal(body.EXISTING_MARKET_TRADING_STAGE, 'live')
+  assert.equal(body.EXISTING_MARKET_TEST_ACCESS_TOKEN, '')
+  assert.equal(body.EXISTING_MARKET_TEST_SUBMISSION, 'false')
+  for (const key of hookFlags) assert.equal(body[key], 'false')
+  for (const path of ['/api/launch', '/api/claim', '/api/replay', '/api/hook-lab/native-launch', '/api/actions/trade']) {
+    assert.equal((await f.request(path, { method: 'POST', headers: { origin: 'https://repo.ing', 'content-type': 'application/json' }, body: '{}' })).status, 403)
+  }
+  assert.equal((await f.trade('submit', { origin: 'https://evil.example' })).status, 403)
+  f.runtime.html = true
+  const html = await (await f.request()).text()
+  assert.match(html, /existing-market trading is live/i)
+  assert.match(html, /launches.*claims.*hooks.*paused/i)
+  assert.doesNotMatch(html, /do not sign|unsigned preparation only/i)
 })
 
 test('both DB bindings and raw config changes restart warm instances; rollback restarts too', async () => {

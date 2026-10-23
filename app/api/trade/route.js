@@ -43,7 +43,7 @@ export async function POST(request) {
     const body = await request.json()
     if (process.env.EXISTING_MARKET_TRADING_ONLY === 'true') {
       const stage = process.env.EXISTING_MARKET_TRADING_STAGE
-      if (!['review', 'test'].includes(stage) || (body.action === 'submit' &&
+      if (!['review', 'test', 'live'].includes(stage) || (body.action === 'submit' && stage !== 'live' &&
         (stage !== 'test' || process.env.EXISTING_MARKET_TEST_SUBMISSION !== 'true'))) {
         return Response.json({ error: 'TRADING_EXECUTION_DISABLED' }, { status: 403, headers: { 'Cache-Control': 'no-store' } })
       }
@@ -132,7 +132,8 @@ export async function POST(request) {
       const attempt = { attemptKey: body.id, prepared: session.prepared, signature }
       await track({ ...attempt, outcome: 'submitted', prepareToSignMs: session.submittedAt - session.createdAt }, session)
       let result
-      try { result = await session.engine.submitTrade(session.prepared, async () => signed) }
+      try { result = await session.engine.submitTrade(session.prepared, async () => signed,
+        { allowRebroadcast: process.env.EXISTING_MARKET_TRADING_ONLY !== 'true' }) }
       catch (error) {
         // The RPC node simulated the signed swap, saw the price already past its minimum and never forwarded it. Only a first
         // submission can say so. Like any slippage stop (see landingOutcome), it records no terminal outcome.

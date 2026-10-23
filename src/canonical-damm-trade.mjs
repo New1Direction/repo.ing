@@ -335,7 +335,7 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     return { signature, direction: saved.direction, mint: market.mint, pool: saved.pool.toBase58(), commitment,
       minimumAmountOut: saved.minimumAmountOut, ...receipt }
   }
-  const submitTrade = async (prepared, signTransaction) => {
+  const submitTrade = async (prepared, signTransaction, { allowRebroadcast = true } = {}) => {
     const saved = readTradeRecord(prepared?.record, 'graduated')
     const signed = await signTransaction(prepared.transaction)
     if (!(signed instanceof Transaction) || !matchesReviewedTransaction(saved.message, signed) ||
@@ -344,7 +344,8 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     }
     const record = recordWithSignedMessage(prepared.record, signed)
     const signature = bs58.encode(signed.signature)
-    await broadcastUntilSettled(connection, signed.serialize(), { signature, lastValidBlockHeight: saved.lastValidBlockHeight })
+    await broadcastUntilSettled(connection, signed.serialize(), { signature, lastValidBlockHeight: saved.lastValidBlockHeight,
+      ...!allowRebroadcast ? { maxMs: 0 } : {} })
     const confirmation = await connection.confirmTransaction({ signature, blockhash: saved.blockhash,
       lastValidBlockHeight: saved.lastValidBlockHeight }, 'confirmed')
     if (confirmation.value.err) throw new Error(`Trade failed: ${JSON.stringify(confirmation.value.err)}`)
