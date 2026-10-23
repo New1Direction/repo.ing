@@ -15,13 +15,14 @@ const securityHeaders = [
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone',
   poweredByHeader: false,
   // Each disposable acceptance site owns its build/lock; leave other dev servers alone.
   ...(process.env.HOOK_LOCAL_ACCEPTANCE === 'true' ? { distDir: `.amp/in/e2e-next-${new URL(process.env.APP_ORIGIN).port}` } : {}),
   // Native read-only SDK uses createRequire/new URL for exact-byte IDLs and manifest.
   serverExternalPackages: ['@repo-ing/hooklab-readonly', '@repo-ing/hooklab-guarded-candidate', '@repo-ing/hooklab-hardened-candidate', '@repo-ing/hooklab-production-candidate'],
   outputFileTracingIncludes: {
-    '/*': ['./vendor/hooklab-event-abi/inclusive-max-wallet-candidate/*.json', './vendor/hooklab-production-candidate/idl/bordrless_token.json', './vendor/hooklab-production-candidate/idl/bordrless_bridge.json', './vendor/hooklab-native-candidate/*.json', './vendor/hooklab-native-candidate/open-36dd07e/*.json'],
+    '/*': ['./config/existing-market-custody.json', './.railwayignore', './vendor/hooklab-event-abi/inclusive-max-wallet-candidate/*.json', './vendor/hooklab-production-candidate/idl/bordrless_token.json', './vendor/hooklab-production-candidate/idl/bordrless_bridge.json', './vendor/hooklab-native-candidate/*.json', './vendor/hooklab-native-candidate/open-36dd07e/*.json'],
     '/api/direct-coins': ['./node_modules/@repo-ing/hooklab-guarded-candidate/**/*'],
     '/api/hook-lab': ['./node_modules/@repo-ing/hooklab-guarded-candidate/**/*'],
     '/api/hook-lab/acceptance': ['./node_modules/@repo-ing/hooklab-guarded-candidate/**/*'],
