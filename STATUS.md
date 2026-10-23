@@ -3,7 +3,7 @@
 ## Delivery and instructions
 - Repository: New1Direction/repo.ing; working branch: repair/creator-selected-hooks.
 - Backup destination: backup/restoration-checkpoint-20261023; never merge or push main without authorization.
-- Owner authorized the backup push, including tested custody changes. Verify the remote ref after pushing.
+- Backup checkpoint f5986d4 (39 prior commits + tested custody changes) was pushed and its remote SHA verified; main is unchanged.
 - Priority: checkpoint → standalone image below 600 MB → read-only routes/live data → existing-market trading → independently accepted launches/hooks/claims.
 - Surplus/gacha remain deferred. Do not restart inference or repeat completed credential rotations/custody transactions.
 - No private Hook Lab ELFs, recovery envelopes, secrets or custody material belong in Git or image build contexts.
@@ -26,7 +26,7 @@
 - Fresh one-file layer control bb9e2a6… also completed rollout, ImagePulled and VMStarted; HTTP 200 confirmed.
 - Those controls reject a blanket failure of all new manifests/layers; they do not validate the trading candidate.
 - Clean seven-layer repack c8325a3… preserves all 41,097 /app files, permissions/links and runtime config; five local denial checks passed.
-- That repack is still large; its preparation was being observed, not deployed. Superseded by the owner's standalone-image instruction.
+- That repack reached preparation READY at 19:08 UTC but was not deployed. It is still large and superseded by the standalone-image instruction.
 - Cloudflare support case 02393828 is open; do not wait on it to implement standalone packaging.
 - Implement root multi-stage Dockerfile + Next output:'standalone'; runtime includes must retain pinned vendor SDK/ABI/IDL and traced files.
 - Verify package inventory, health, isolated runtime identity/restart, then production cutover with automatic rollback on failed acceptance.
