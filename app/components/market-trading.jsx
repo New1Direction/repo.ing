@@ -12,7 +12,7 @@ import { GraduationProgress } from './graduation-progress'
 // `pulse` (server-read GitHub events) becomes pins on the price chart.
 // `quote` is the market's pair (src/quote-assets.mjs marketQuoteView): null for SOL. A stock pair's chart and graduation bar
 // show its stock, with the display units the chart's metrics read brings (quoteUnits).
-export function MarketTrading({ market, available, usdPerSol, aside = null, below = null, pulse = null, quote = null }) {
+export function MarketTrading({ market, available, usdPerSol, aside = null, below = null, pulse = null, quote = null, reviewOnly = false }) {
   useEffect(() => watchMarketEvents(market.mint), [market.mint])
   const [solPrice, setSolPrice] = useState(usdPerSol)
   const [quoteUnits, setQuoteUnits] = useState(null)
@@ -55,5 +55,5 @@ export function MarketTrading({ market, available, usdPerSol, aside = null, belo
   }, [market.mint])
   return <><GraduationProgress curve={verifiedCurve} error={error||Boolean(curve&&!verifiedCurve)} units={quoteUnits}/>
     <div className="market-grid"><PriceChart key={`chart:${market.mint}`} mint={market.mint} symbol={market.symbol} curveStatus={verifiedCurve?.status} onSolUsd={setSolPrice}
-      onQuoteUnits={quote ? setQuoteUnits : undefined} quote={quote} pulse={pulse}/><div className="market-side"><TradePanel key={`trade:${market.mint}`} market={market} quote={quote} available={available} usdPerSol={solPrice} curve={verifiedCurve || (curveEnded.current === market.mint ? {status:'migrating'} : null)}/>{aside}</div>{below}</div></>
+      onQuoteUnits={quote ? setQuoteUnits : undefined} quote={quote} pulse={pulse}/><div className="market-side"><TradePanel key={`trade:${market.mint}`} market={market} quote={quote} available={available} reviewOnly={reviewOnly} usdPerSol={solPrice} curve={verifiedCurve || (curveEnded.current === market.mint ? {status:'migrating'} : null)}/>{aside}</div>{below}</div></>
 }

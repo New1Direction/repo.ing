@@ -100,7 +100,7 @@ function PercentAmounts({ disabled, amount, decimals, label, preset, describe, o
 }
 
 // quote: the market's pair (src/quote-assets.mjs marketQuoteView): null for SOL, else the stock it is bought with and sold for.
-export function TradePanel({ market, available, usdPerSol = null, curve = null, quote = null }) {
+export function TradePanel({ market, available, usdPerSol = null, curve = null, quote = null, reviewOnly = false }) {
   const [direction, setDirection] = useState('buy')
   const panelRef = useRef(null)
   const [panelVisible, setPanelVisible] = useState(false)
@@ -350,7 +350,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null, 
   }
 
   async function trade(tolerance, side, value) {
-    if (submitting.current) return
+    if (reviewOnly || submitting.current) return
     submitting.current = true
     setBusy(true); setPreparedCosts(null); setResultCard(null); setMinimumOut(null); setLiveQuote(null); setPreparedSlippage(null)
     let signedTrade = null
@@ -378,6 +378,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null, 
           slippageBps: tolerance, referrer: localStore() ? storedReferral(localStore(), address) : null }) })
       const prepared = await preparedResponse.json()
       if (!preparedResponse.ok) throw new Error(prepared.error)
+      if (prepared.reviewOnly) throw new Error('Review only — signing disabled')
       setPreparedCosts(prepared.costs)
       setMinimumOut(prepared.minimumAmountOut)
       setPreparedSlippage(prepared.slippageBps)
@@ -457,8 +458,8 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null, 
     </div>
     <form onSubmit={submit} aria-busy={busy}>
       <div className="trade-field">
-        <div className="trade-field-head"><label htmlFor="trade-amount">You {buying ? 'pay' : 'sell'}</label><TradeBalance wallet={wallet} {...balanceShown}
-          onConnect={() => connect().catch(() => {})} onRetry={() => { setBalanceRefresh(value => value + 1); setStockInfoRefresh(value => value + 1) }}/></div>
+        <div className="trade-field-head"><label htmlFor="trade-amount">You {buying ? 'pay' : 'sell'}</label>{reviewOnly && !wallet ? <span className="trade-balance">Unsigned review</span> : <TradeBalance wallet={wallet} {...balanceShown}
+          onConnect={() => connect().catch(() => {})} onRetry={() => { setBalanceRefresh(value => value + 1); setStockInfoRefresh(value => value + 1) }}/>}</div>
         <div className="trade-field-main"><input id="trade-amount" disabled={busy || !units} aria-describedby="trade-quote-hint" inputMode="decimal" autoComplete="off" placeholder="0.00" value={amount} onChange={e => chooseAmount(e.target.value)} required/><span className="trade-unit">{buying ? payUnits.symbol : market.symbol}</span></div>
         <div className="trade-field-foot">
           {buying && usdAmount && <span className="trade-usd">≈ {usdAmount}</span>}
@@ -514,7 +515,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null, 
       {launchFeeNote && <p className="trade-impact-warning trade-launch-fee" role="status">{launchFeeNote}</p>}
       {liveQuote?.priceImpactPercent >= 5 && <p className="trade-impact-warning" role="status">High price impact. This trade moves the execution price by about {liveQuote.priceImpactPercent.toFixed(2)}% before fees. Consider a smaller amount.</p>}
       <p className="sr-only" id="trade-quote-hint">{minimumReceive ? `Minimum after ${slippageLabel(shownSlippage)} slippage: ${formatUnits(minimumReceive, receiveDecimals, 6)} ${receiveUnit}. Refreshed before wallet confirmation.` : 'Quote updates as you enter an amount.'}</p>
-      <button className="button primary trade-submit" type="submit" disabled={busy || !available || !tradingOpen || !units || !validAmount || buyExceedsBalance || costShortfall || quoteShortfall || sellExceedsBalance || resultCard?.state === 'pending'}>{busy && <LoadingSignal/>}{busy ? stage || 'Preparing…' : submitLabel}</button>
+      <button className="button primary trade-submit" type="submit" disabled={reviewOnly || busy || !available || !tradingOpen || !units || !validAmount || buyExceedsBalance || costShortfall || quoteShortfall || sellExceedsBalance || resultCard?.state === 'pending'}>{busy && <LoadingSignal/>}{reviewOnly ? 'Review only — signing disabled' : busy ? stage || 'Preparing…' : submitLabel}</button>
       <TransactionStatus stage={busy ? stage : ''}/>
       <TradeIdentity wallet={wallet} direction={direction} x={x}/>
       {graduatedPool && <p className="trade-venue">Trades in the graduated Meteora pool · <a href={graduatedPool.url} target="_blank" rel="noopener noreferrer">View pool ↗</a></p>}

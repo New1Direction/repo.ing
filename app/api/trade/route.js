@@ -5,11 +5,12 @@ import { randomUUID } from 'node:crypto'
 import bs58 from 'bs58'
 import { createFeeAccrual } from '../../../src/fee-accrual.mjs'
 import { createStockFeeAccrual } from '../../../src/stock-fee-accrual.mjs'
-import { database, chain, configAddress } from '../../lib/server.mjs'
+import { chain, configAddress } from '../../lib/server.mjs'
 import { tradeResultFields, tradeStatus } from '../../lib/trade-status.mjs'
 import { settleConfirmedTrade } from '../../lib/trade-settlement.mjs'
 import { tradeRouter as trader } from '../../lib/trader.mjs'
 import { tradeSessions } from '../../lib/trade-sessions.mjs'
+import { tradingCustodyRecovery, tradingDatabase as database } from '../../lib/trading-recovery.mjs'
 import { publicError } from '../../lib/public-error.mjs'
 import { refuseOverLimit } from '../../lib/request-limits.mjs'
 import { statusOutcome, submitOutcome, trackTradeOutcome } from '../../lib/trade-tracking.mjs'
@@ -39,6 +40,12 @@ function validSignature(signature) {
 export async function POST(request) {
   try {
     const body = await request.json()
+    if (process.env.EXISTING_MARKET_TRADING_ONLY === 'true') {
+      const stage = process.env.EXISTING_MARKET_TRADING_STAGE
+      if (!['review', 'live'].includes(stage) || (body.action === 'submit' && stage !== 'live')) {
+        return Response.json({ error: 'TRADING_EXECUTION_DISABLED' }, { status: 403, headers: { 'Cache-Control': 'no-store' } })
+      }
+    }
     // Each read action is counted against its address after the checks beside it and before anything is read
     // (app/lib/request-limits.mjs).
     if (body.action === 'depth') {
@@ -84,6 +91,7 @@ export async function POST(request) {
       const session = await tradeSessions().create(id, { prepared, wallet: prepared.record.wallet })
       await track({ attemptKey: id, outcome: 'prepared', prepared }, session)
       return Response.json({ id, costs, transaction: prepared.record.transaction,
+        ...(process.env.EXISTING_MARKET_TRADING_ONLY === 'true' ? { reviewOnly: process.env.EXISTING_MARKET_TRADING_STAGE !== 'live' } : {}),
         minimumAmountOut: prepared.minimumAmountOut.toString(), slippageBps: prepared.slippageBps,
         lastValidBlockHeight: prepared.lastValidBlockHeight }, { headers: { 'Cache-Control': 'no-store' } })
     }
@@ -140,7 +148,7 @@ export async function POST(request) {
         prepared: session.prepared, signature: result.signature,
         recordFees: args => session.prepared.quoteMint
           ? createStockFeeAccrual({ pool: database(), connection, config: configAddress() }).recordTradeFees({ ...args, quoteMint: session.prepared.quoteMint })
-          : createFeeAccrual({ pool: database(), connection, config: configAddress() }).recordTradeFees(args) })
+          : createFeeAccrual({ pool: database(), connection, config: configAddress(), custodyRecovery: tradingCustodyRecovery() }).recordTradeFees(args) })
       session = await store.saveResult(session, { state: 'confirmed', signature: result.signature, ...tradeResultFields(result), feeIndexing, creatorFee })
       return Response.json(session.result, { headers: { 'Cache-Control': 'no-store' } })
     }

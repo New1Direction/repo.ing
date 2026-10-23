@@ -175,6 +175,7 @@ export default async function Token({ params, searchParams }) {
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol} {...(quote ? { quote } : {})}/> : <>
       <MarketDecision market={market} pulse={pulse} declined={decision} stockPair={stockPair}/>
       <MarketTrading key={market.mint} market={market} quote={quote} available={tradeAvailable()} usdPerSol={null} pulse={pulse?.events ?? null}
+        reviewOnly={process.env.EXISTING_MARKET_TRADING_ONLY === 'true' && process.env.EXISTING_MARKET_TRADING_STAGE !== 'live'}
         aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<BuildingLive stream={stream}/><TrustPanel market={market} launchFee={launchFee} declined={decision || null} repoFacts={repoFacts}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
           <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}
           {!stockPair && decision === null && <Suspense fallback={null}><PackSharesCard market={market}/></Suspense>}</>}

@@ -204,11 +204,11 @@ export function verifyDammSwapReceipt(tx, expected, coder) {
 // the curve trader and, once the curve has migrated, its DAMM v2 pool (a Token-2022 token A) trades here (docs/EARLY_ACCESS.md, step 7b).
 // Without it such a market is refused by name.
 export function createDammTrader({ pool: databasePool, connection, config, graduatedFees = null, loadTransaction = loadTransactionAt, loadMarket: marketLoader = null,
-  stockGraduation = null, earlyAccess = tradingEarlyAccessConfig(), hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID }) {
+  stockGraduation = null, earlyAccess = tradingEarlyAccessConfig(), hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, custodyRecovery = null }) {
   const resolveConfig = createMarketConfigResolver(config)
   const dbc = new DynamicBondingCurveClient(connection, 'confirmed')
   const amm = new CpAmm(connection)
-  const proofs = graduatedFees ?? createGraduatedFees({ connection, config, db: databasePool, earlyAccess, hookProgram, earlyAccessGraduated: true })
+  const proofs = graduatedFees ?? createGraduatedFees({ connection, config, db: databasePool, earlyAccess, hookProgram, earlyAccessGraduated: true, custodyRecovery })
   // A stock-paired market's graduated pool, quote, swap and receipt (src/stock-damm-trade.mjs); every SOL line below is unchanged.
   const stock = createStockDammTrading({ connection, amm, loadTransaction, graduation: stockGraduation ?? createStockGraduation({ connection, config, db: databasePool }) })
   const destinations = new Map(), revokedMints = new Set()

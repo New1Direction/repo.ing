@@ -14,6 +14,13 @@ const SIGNATURE = `${'5'.repeat(86)}A`
 const LINK = { username: 'builder_jo', name: 'Jo', image: 'https://pbs.twimg.com/profile_images/1/jo.jpg' }
 const market = { repoId: '998887', mint: 'MintTradePanel', pool: 'PoolTradePanel', fullName: 'local/preview', symbol: 'WTR' }
 
+test('review-only trading shows quotes without offering wallet signing', () => {
+  const output = html(h(TradePanel, { market, available: true, reviewOnly: true }), { wallet: true })
+  assert.match(output, /Review only — signing disabled/)
+  assert.match(output, /trade-submit[^>]*disabled/)
+  assert.doesNotMatch(output, />Connect wallet<\/button>/)
+})
+
 test('quote amounts keep the precision that matters: 2 decimals from 1,000, 4 from 1, up to 6 below, never rounded up', () => {
   assert.equal(quoteAmountLabel('1146160980723', 6), '1,146,160.98')
   assert.equal(quoteAmountLabel('1000000000000', 6), '1,000,000')

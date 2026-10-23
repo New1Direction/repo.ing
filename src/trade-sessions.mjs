@@ -44,7 +44,7 @@ export function sessionFromRow(row, engineFor) {
     result: row.result ?? undefined }
 }
 
-export function createTradeSessionStore({ db, engineFor, cache = new Map(), now = Date.now, log = console.error }) {
+export function createTradeSessionStore({ db, engineFor, cache = new Map(), now = Date.now, log = console.error, requirePersistence = false }) {
   let nextCleanup = 0
   const remember = session => {
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value)
@@ -74,6 +74,7 @@ export function createTradeSessionStore({ db, engineFor, cache = new Map(), now 
       [id, wallet, record.phase, record.direction, record.githubRepoId, record.transaction, record.message, record.amountIn,
         record.minimumAmountOut, record.blockhash, record.lastValidBlockHeight, JSON.stringify(record), new Date(createdAt)])
     } catch (error) {
+      if (requirePersistence) throw Error('Prepared trade could not be persisted; nothing submitted')
       log('trade session not persisted; kept in this process only', error?.code ?? error?.name ?? 'error')
       return remember({ ...session, memoryOnly: true })
     }

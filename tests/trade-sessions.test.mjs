@@ -76,6 +76,14 @@ function dammFixtureRecord() {
 }
 const signedFixture = () => Transaction.populate(new Message(swaps.buy.transaction.message), [swaps.buy.transaction.signatures[0]])
 
+test('required persistence refuses a signable session during a database outage', async () => {
+  const store = createTradeSessionStore({ db: { query: async () => { throw Error('permission denied') } },
+    engineFor: () => ({}), requirePersistence: true, log: () => {} })
+  await assert.rejects(store.create(randomUUID(), {
+    prepared: preparedFromRecord(dammFixtureRecord()), wallet: dammFixtureRecord().wallet,
+  }), /persisted/)
+})
+
 // A chain that accepts the broadcast and reports it confirmed; receipts come from the injected loadTransaction.
 function landingChain() {
   const sent = []
