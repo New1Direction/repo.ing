@@ -227,3 +227,75 @@ test('a mismatched stored row still throws when the fallback exists', async () =
   const { connection, loadTransaction } = chain({ endpoint: 'fake://fallback-mismatch' })
   await assert.rejects((await coldProcess())({ connection, config, db, loadTransaction }).read(market, state, fixed), /Stored graduated migration proof mismatch/)
 })
+
+const recoveryVault = '3dHCTpgdx15yXyVGh7DK1woQ1XisQpmFCxncURrq63Gs'
+const recoveryBindings = () => ({ version: 1, poolCreators: [], positions: [
+  { role: 'creator', repoId: market.githubRepoId, curve: market.pool, config, mint: market.mint, pool: target,
+    migration: MIGRATION, position, nftAccount, nftMint, previousOwner: market.creatorWallet, owner: recoveryVault },
+  { role: 'partner', repoId: market.githubRepoId, curve: market.pool, config, mint: market.mint, pool: target,
+    migration: MIGRATION, position: partnerPosition, nftAccount: partnerNftAccount, nftMint: partnerNftMint,
+    previousOwner: fixed.feeClaimer.toBase58(), owner: recoveryVault },
+] })
+const movedAccounts = () => fixture.accounts.map((a, i) => {
+  const data = Buffer.from(a.data, 'base64')
+  if (i === 2 || i === 4) key(recoveryVault).toBuffer().copy(data, 32)
+  return { ...a, data: data.toString('base64') }
+})
+
+test('approved custody changes preserve separate fee entitlements without authorizing a default reader', async () => {
+  const create = await coldProcess(), baseline = chain({ endpoint: 'fake://recovery-baseline' })
+  const before = await create({ ...baseline, config }).read(market, state, fixed)
+  const moved = chain({ endpoint: 'fake://recovery-moved', accounts: movedAccounts() })
+  const bindings = recoveryBindings()
+  const reader = create({ ...moved, config, custodyRecovery: bindings })
+  // Mutating caller-owned configuration cannot change an already constructed reader's approval.
+  bindings.positions[0].owner = market.creatorWallet
+  const after = await reader.read(market, state, fixed)
+  for (const side of [null, 'partner']) {
+    const a = side ? after[side] : after, b = side ? before[side] : before
+    assert.deepEqual([a.available, a.claimed, a.earned], [b.available, b.claimed, b.earned])
+    assert.equal(a.nftAccount.toBase58(), b.nftAccount.toBase58())
+  }
+  assert.equal(market.creatorWallet, recoveryBindings().positions[0].previousOwner)
+  // Same connection and module cache, but no custody approval: legacy claim/trade readers stay strict.
+  await assert.rejects(create({ ...moved, config }).read(market, state, fixed), /Graduated creator position/)
+  for (const field of ['repoId', 'curve', 'config', 'mint', 'pool', 'migration', 'position', 'nftMint', 'previousOwner', 'role']) {
+    const invalid = recoveryBindings()
+    invalid.positions[0][field] = field === 'repoId' ? '999' : field === 'migration' ? 'another-migration'
+      : field === 'role' ? 'partner' : fixed.feeClaimer.toBase58()
+    await assert.rejects(async () => create({ ...moved, config, custodyRecovery: invalid }).read(market, state, fixed), /custody binding/i)
+  }
+  await assert.rejects(reader.read(market, state, { ...fixed, feeClaimer: key(recoveryVault) }), /custody binding/i)
+  await assert.rejects(create({ ...baseline, config, custodyRecovery: recoveryBindings() }).read(market, state, fixed), /Graduated creator position/)
+})
+
+test('pool creator recovery is separately bound and never rewrites the historical market creator', async () => {
+  const create = await coldProcess(), c = chain({ endpoint: 'fake://creator-recovery' })
+  const before = await create({ ...c, config }).read(market, state, fixed)
+  const changed = { poolState: { ...state.poolState, creator: key(recoveryVault) } }
+  const custodyRecovery = { version: 1, positions: [], poolCreators: [{ repoId: market.githubRepoId,
+    curve: market.pool, config, mint: market.mint, previousOwner: market.creatorWallet, owner: recoveryVault }] }
+  const after = await create({ ...c, config, custodyRecovery }).read(market, changed, fixed)
+  assert.deepEqual([after.earned, after.partner.earned], [before.earned, before.partner.earned])
+  await assert.rejects(create({ ...c, config }).read(market, changed, fixed), /Invalid canonical creator pool/)
+  await assert.rejects(create({ ...c, config, custodyRecovery }).read(market, state, fixed), /Invalid canonical creator pool/)
+  const invalid = { ...custodyRecovery, poolCreators: [{ ...custodyRecovery.poolCreators[0], repoId: '999' }] }
+  await assert.rejects(create({ ...c, config, custodyRecovery: invalid }).read(market, changed, fixed), /custody binding/i)
+})
+
+test('custody approval rejects ambiguous manifests and unsafe current NFT controls', async () => {
+  const create = await coldProcess(), c = chain({ endpoint: 'fake://invalid-recovery', accounts: movedAccounts() })
+  for (const manifest of [ { ...recoveryBindings(), version: 2 }, { version: 1 },
+    { ...recoveryBindings(), positions: [...recoveryBindings().positions, recoveryBindings().positions[0]] } ]) {
+    assert.throws(() => create({ ...c, config, custodyRecovery: manifest }), /custody/i)
+  }
+  for (const accountIndex of [2, 4]) for (const mutate of [
+    b => b.writeBigUInt64LE(0n, 64), b => b.writeUInt32LE(1, 72), b => { b[108] = 2 },
+    b => { b.writeUInt32LE(1, 129); key(market.creatorWallet).toBuffer().copy(b, 133) },
+  ]) {
+    const accounts = movedAccounts(), data = Buffer.from(accounts[accountIndex].data, 'base64')
+    mutate(data); accounts[accountIndex].data = data.toString('base64')
+    const invalid = chain({ endpoint: `fake://unsafe-custody-${instance++}`, accounts })
+    await assert.rejects(create({ ...invalid, config, custodyRecovery: recoveryBindings() }).read(market, state, fixed), /Graduated (creator|partner) position/)
+  }
+})

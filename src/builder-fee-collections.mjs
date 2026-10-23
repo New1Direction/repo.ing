@@ -65,7 +65,7 @@ export function createBuilderFeeCollections({ pool, connection, verification = n
     // still has to hold, so a payout that did take DBC fees keeps the review refused.
     const { rows: [totals] } = await db.query(`select
       coalesce((select sum(amount_base_units) from fee_events where github_repo_id=$1),0)::text as earned,
-      coalesce((select sum(amount_base_units - damm_amount_base_units) from repo_claims where github_repo_id=$1 and status='settled'),0)::text as "ownerPaid",
+      coalesce((select sum(amount_base_units - damm_amount_base_units) from repo_claims where github_repo_id=$1 and status='settled' and evidence_source='signed-intent'),0)::text as "ownerPaid",
       coalesce((select sum(amount) from builder_fee_collections where github_repo_id=$1 and status='settled' and (terms::jsonb->>'purpose')=$2),0)::text as "platformCollected",
       (select count(*) from repo_claims where github_repo_id=$1 and status='pending')::int +
       (select count(*) from platform_fee_claims where github_repo_id=$1 and status='pending')::int +
@@ -96,6 +96,13 @@ export function createBuilderFeeCollections({ pool, connection, verification = n
     return t
   }
   function publicRow(row) {
+    if (row.evidence_source === 'historical-receipt') {
+      const terms = JSON.parse(row.terms), receipt = JSON.parse(row.receipt)
+      if (row.status !== 'settled' || digest(terms) !== row.terms_hash ||
+          receipt.signature !== row.signature || receipt.amount !== String(row.amount)) throw Error('Historical collection evidence mismatch')
+      return { id: row.id, status: row.status, evidenceSource: row.evidence_source,
+        originalIntentAvailable: false, signature: row.signature, receipt }
+    }
     return { id: row.id, status: row.status, terms: termsFor(row), termsHash: row.terms_hash,
       expiresAt: new Date(row.expires_at).getTime(), signature: row.signature, receipt: row.receipt ? JSON.parse(row.receipt) : null }
   }

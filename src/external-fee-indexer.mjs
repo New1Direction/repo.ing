@@ -39,8 +39,9 @@ const isEarlyAccess = market => Boolean(market.earlyAccessEnd || market.transfer
 // earlyAccess: EARLY_ACCESS_DBC_CONFIG. Set, a contributor early access market's curve trades are indexed like any other, and after
 // its graduation its DAMM v2 position fees (docs/EARLY_ACCESS.md step 7a). Unset, such a market is reported as skipped.
 export function createExternalFeeIndexer({ pool: databasePool, connection, config, earlyAccess = tradingEarlyAccessConfig(),
-  graduatedFees = createGraduatedFees({ connection, config, db: databasePool, earlyAccess, earlyAccessGraduated: true }),
-  accrual = createFeeAccrual({ pool: databasePool, connection, config, earlyAccess }),
+  custodyRecovery = null,
+  graduatedFees = createGraduatedFees({ connection, config, db: databasePool, earlyAccess, earlyAccessGraduated: true, custodyRecovery }),
+  accrual = createFeeAccrual({ pool: databasePool, connection, config, earlyAccess, custodyRecovery }),
   recordTrade = createTradeRecorder({ pool: databasePool, connection, config, earlyAccess }),
   schedule = null, feed = null, now = Date.now, log = line => console.log(line) }) {
   const graduatedReads = new Map()

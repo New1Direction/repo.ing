@@ -8,6 +8,7 @@ import { createMarketConfigResolver, readPoolConfig } from './market-config.mjs'
 import { loadFinalizedTransaction } from './finalized-transaction.mjs'
 import { EARLY_ACCESS_GRADUATION_PENDING, isEarlyAccessMarket } from './early-access.mjs'
 import { EARLY_ACCESS_HOOK_PROGRAM_ID } from './early-access-hook.mjs'
+import { createCustodyRecovery } from './custody-recovery.mjs'
 
 const DBC = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const verifiedMigrations = new Map()
@@ -75,7 +76,8 @@ async function proofQuery(db, text, params) {
 // only by a path that also handles its graduated phase (earlyAccessGraduated; docs/EARLY_ACCESS.md, step 7); every other path is
 // refused by name. Without earlyAccess such a market is refused by name.
 export function createGraduatedFees({ connection, config, db = null, loadTransaction = loadFinalizedTransaction, earlyAccess = null,
-  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, earlyAccessGraduated = false }) {
+  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, earlyAccessGraduated = false, custodyRecovery = null }) {
+  const custody = createCustodyRecovery(custodyRecovery)
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const amm = new CpAmm(connection)
   const resolve = createMarketConfigResolver(config, undefined, undefined, { earlyAccess, hookProgram })
@@ -118,7 +120,7 @@ export function createGraduatedFees({ connection, config, db = null, loadTransac
     const state = suppliedState ?? await dbc.state.getPool(market.pool)
     const fixed = suppliedFixed ?? await readPoolConfig(dbc, configKey)
     if (!state || !fixed || !state.poolState.config.equals(configKey) ||
-        state.poolState.baseMint.toBase58() !== market.mint || state.poolState.creator.toBase58() !== market.creatorWallet) throw Error('Invalid canonical creator pool')
+        state.poolState.baseMint.toBase58() !== market.mint || state.poolState.creator.toBase58() !== custody.creator(market, configKey)) throw Error('Invalid canonical creator pool')
     if (!state.poolState.isMigrated) return null
     if (isEarlyAccessMarket(market) && !earlyAccessGraduated) throw Error(EARLY_ACCESS_GRADUATION_PENDING)
     if (fixed.migrationOption !== MigrationOption.MET_DAMM_V2 || !fixed.quoteMint.equals(NATIVE_MINT) ||
@@ -155,12 +157,14 @@ export function createGraduatedFees({ connection, config, db = null, loadTransac
     const nft = unpackAccount(proof.nftAccount, nftInfo, TOKEN_2022_PROGRAM_ID)
     if (!poolState.tokenAMint.equals(new PublicKey(market.mint)) || !poolState.tokenBMint.equals(NATIVE_MINT) ||
         poolState.collectFeeMode !== 1 || !positionState.pool.equals(target) || !positionState.nftMint.equals(proof.nftMint) ||
-        !nft.mint.equals(proof.nftMint) || nft.owner.toBase58() !== market.creatorWallet || nft.amount !== 1n || nft.delegate ||
+        !nft.mint.equals(proof.nftMint) || nft.owner.toBase58() !== custody.position('creator', market, configKey, target, proof, market.creatorWallet) ||
+        nft.amount !== 1n || nft.delegate || !nft.isInitialized || nft.isFrozen || nft.closeAuthority ||
         positionState.permanentLockedLiquidity.lten(0) || positionState.unlockedLiquidity.gtn(1) || !positionState.vestedLiquidity.isZero()) throw Error('Graduated creator position or SOL fee mode mismatch')
     const partnerState = amm._program.coder.accounts.decode('position', partnerPositionInfo.data)
     const partnerNft = unpackAccount(proof.partner.nftAccount, partnerNftInfo, TOKEN_2022_PROGRAM_ID)
     if (!fixed.feeClaimer || !partnerState.pool.equals(target) || !partnerState.nftMint.equals(proof.partner.nftMint) ||
-        !partnerNft.mint.equals(proof.partner.nftMint) || !partnerNft.owner.equals(fixed.feeClaimer) || partnerNft.amount !== 1n ||
+        !partnerNft.mint.equals(proof.partner.nftMint) || partnerNft.owner.toBase58() !== custody.position('partner', market, configKey, target, proof, fixed.feeClaimer.toBase58()) ||
+        partnerNft.amount !== 1n || !partnerNft.isInitialized || partnerNft.isFrozen || partnerNft.closeAuthority ||
         partnerNft.delegate || partnerState.permanentLockedLiquidity.lten(0) || partnerState.unlockedLiquidity.gtn(1) ||
         !partnerState.vestedLiquidity.isZero()) throw Error('Graduated partner position or fee claimer mismatch')
     const fees = getUnClaimLpFee(poolState, positionState)

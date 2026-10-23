@@ -9,12 +9,14 @@ import { eligibleDiscoveryFee } from './discovery-rewards.mjs'
 import { loadFinalizedTransaction } from './finalized-transaction.mjs'
 import { canonicalDbcSwapEvents, UnparseableTradeError } from './trade-evidence.mjs'
 import { tradingEarlyAccessConfig } from './early-access.mjs'
+import { createCustodyRecovery } from './custody-recovery.mjs'
 
 const KIND = 'dbc_creator_quote'
 
 // earlyAccess: EARLY_ACCESS_DBC_CONFIG, so a contributor early access market's curve trades (swap2 with the transfer hook, parsed
 // like any DBC swap) accrue as well; unset, those markets are refused as before.
-export function createFeeAccrual({ pool: databasePool, connection, config, earlyAccess = tradingEarlyAccessConfig() }) {
+export function createFeeAccrual({ pool: databasePool, connection, config, earlyAccess = tradingEarlyAccessConfig(), custodyRecovery = null }) {
+  const custody = createCustodyRecovery(custodyRecovery)
   const resolveConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const db = drizzle(databasePool)
@@ -72,7 +74,7 @@ export function createFeeAccrual({ pool: databasePool, connection, config, early
         const configKey = resolveConfig(market)
         const state = await dbc.state.getPool(market.pool)
         const fixed = await readPoolConfig(dbc, configKey)
-        if (!state || !fixed || !state.poolState.creator.equals(new PublicKey(market.creatorWallet)) ||
+        if (!state || !fixed || state.poolState.creator.toBase58() !== custody.creator(market, configKey) ||
             !state.poolState.config.equals(configKey) || !state.poolState.baseMint.equals(new PublicKey(market.mint)) ||
             !fixed.quoteMint.equals(NATIVE_MINT) || fixed.collectFeeMode !== CollectFeeMode.QuoteToken ||
             fixed.creatorTradingFeePercentage <= 0) {

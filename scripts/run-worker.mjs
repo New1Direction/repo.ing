@@ -62,6 +62,8 @@ import { loadHolderSnapshot } from '../app/lib/trust-panel.mjs'
 import { readRepoPulse } from '../app/lib/dev-pulse.mjs'
 import { configFeeSchedule } from '../app/lib/launch-fee.mjs'
 
+// This worker can rebroadcast archived signed intents. Recovery accounting must not start it.
+if (process.env.CUSTODY_RECOVERY_MANIFEST !== undefined) throw Error('Custody recovery requires the accounting-only indexer; general worker remains disabled')
 const { DATABASE_URL: databaseUrl, SOLANA_RPC_URL: rpc, DBC_CONFIG: config } = process.env
 if (!databaseUrl || !rpc || !config) throw new Error('DATABASE_URL, SOLANA_RPC_URL, and DBC_CONFIG are required')
 const once = process.argv.includes('--once')

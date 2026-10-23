@@ -10,6 +10,8 @@ import { eq, sql } from 'drizzle-orm'
 import { markets, repoClaims } from './db/schema.mjs'
 
 import { createGraduatedFees } from './graduated-fees.mjs'
+import { createCustodyRecovery } from './custody-recovery.mjs'
+import { custodyBalance, verifyCustodySolvency } from './custody-ledger.mjs'
 
 export const PARTNER_CAPTURE_MISMATCH = 'Partner fee capture differs from chain evidence'
 export const GRADUATED_WITHDRAWAL_MISMATCH = 'Graduated fee withdrawals differ from proven payouts'
@@ -122,9 +124,10 @@ export function createReconcileEpisodes({ now = Date.now, holdMs = RECONCILE_HOL
 // are reconciled on its curve like any other's (docs/EARLY_ACCESS.md, step 6a). Without it (every other caller, the fee status the
 // token page and the claim preview read included) such a market is refused by name.
 // earlyAccessGraduated: the caller also handles a graduated early access market (the graduation monitor; step 7).
-export function createReconciler({ pool, connection, config, earlyAccess = null, earlyAccessGraduated = false }) {
+export function createReconciler({ pool, connection, config, earlyAccess = null, earlyAccessGraduated = false, custodyRecovery = null }) {
+  const custody = createCustodyRecovery(custodyRecovery)
   const resolveConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
-  const graduatedFees = createGraduatedFees({ connection, config, db: pool, earlyAccess, earlyAccessGraduated })
+  const graduatedFees = createGraduatedFees({ connection, config, db: pool, earlyAccess, earlyAccessGraduated, custodyRecovery })
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
 
   const reconcile = async githubRepoId => {
@@ -167,11 +170,14 @@ export function createReconciler({ pool, connection, config, earlyAccess = null,
         }
         if (!state) return { ...base, status: 'UNAVAILABLE', reason: POOL_STATE_MISSING }
         if (!state.poolState.config.equals(configKey) || !state.poolState.baseMint.equals(mintKey) ||
-            !state.poolState.creator.equals(new PublicKey(market.creatorWallet))) {
+            state.poolState.creator.toBase58() !== custody.creator(market, configKey)) {
           return { ...base, status: 'UNAVAILABLE', reason: POOL_IDENTITY_MISMATCH }
         }
         const graduated = await graduatedFees.read(market, state)
-        const onchainCreatorFee = BigInt(state.poolState.creatorQuoteFee.toString()) + (graduated?.available ?? 0n)
+        const custodyFunds = custodyRecovery ? await custodyBalance(client, repoId) : null
+        if (custodyFunds) await verifyCustodySolvency(client, connection)
+        // Moving earned fees into the vault does not pay the beneficiary or erase their entitlement.
+        const onchainCreatorFee = BigInt(state.poolState.creatorQuoteFee.toString()) + (graduated?.available ?? 0n) + (custodyFunds?.creator.held ?? 0n)
         let platform = null
         // A bundle market's partner position is the bundle router's (docs/BUNDLE_LAUNCH.md): repo.ing's platform ledgers never
         // book it, so they are not compared with it.
@@ -180,15 +186,21 @@ export function createReconciler({ pool, connection, config, earlyAccess = null,
             from platform_fee_events where github_repo_id=$1`, [String(repoId)])
           const { rows: [paid] } = await client.query(`select coalesce(sum(amount),0)::text as paid
             from platform_fee_claims where github_repo_id=$1 and phase='DAMM' and status='settled'`, [String(repoId)])
-          platform = { earned: BigInt(events.earned), claimed: BigInt(paid.paid),
+          platform = { earned: BigInt(events.earned), claimed: BigInt(paid.paid) + (custodyFunds?.partner.collected ?? 0n),
             onchainEarned: graduated.partner.earned, onchainClaimed: graduated.partner.claimed }
           if (platform.earned !== platform.onchainEarned || platform.claimed !== platform.onchainClaimed)
             return { ...base, onchainCreatorFee, platform, status: 'MISMATCH', reason: PARTNER_CAPTURE_MISMATCH }
         }
         if (graduated) {
-          const { rows: [damm] } = await client.query(`select coalesce(sum(damm_amount_base_units),0)::text as paid
-            from repo_claims where github_repo_id=$1 and status='settled'`,[String(repoId)])
-          if (BigInt(damm.paid) !== graduated.claimed) return { ...base, onchainCreatorFee, platform, status: 'MISMATCH', reason: GRADUATED_WITHDRAWAL_MISMATCH }
+          // Operator collections can withdraw DAMM fees without being repo-owner claims.
+          // Compare proven source withdrawals, not the payout amount: a claim may retain WSOL
+          // for a later payout. The outstanding-balance comparison below remains independent.
+          const { rows: [damm] } = await client.query(`select
+            coalesce((select sum(damm_amount_base_units) from repo_claims where github_repo_id=$1 and status='settled' and evidence_source='signed-intent'),0)::text as paid,
+            coalesce((select sum((receipt::jsonb->>'dammClaimed')::numeric) from builder_fee_collections
+              where github_repo_id=$1 and status='settled'),0)::text as collected`,[String(repoId)])
+          if (BigInt(damm.collected) < 0n || BigInt(damm.paid) + BigInt(damm.collected) + (custodyFunds?.creator.collected ?? 0n) !== graduated.claimed)
+            return { ...base, onchainCreatorFee, platform, status: 'MISMATCH', reason: GRADUATED_WITHDRAWAL_MISMATCH }
         }
         const difference = onchainCreatorFee - expectedRemaining
         // An early access market also says how much of the fee is its DAMM v2 position's: its payouts claim one part at a time

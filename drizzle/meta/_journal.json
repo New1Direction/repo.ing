@@ -561,6 +561,20 @@
       "when": 1792173600000,
       "tag": "0082_hook_lab_plain_authorization",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1792713600000,
+      "tag": "0083_receipt_backed_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1792713600001,
+      "tag": "0084_custody_fee_ledger",
+      "breakpoints": true
     }
   ]
 }

@@ -827,11 +827,17 @@ export const repoClaims = pgTable('repo_claims', {
   signedTransaction: text('signed_transaction'),
   lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'bigint' }),
   dammAmountBaseUnits: bigint('damm_amount_base_units', { mode: 'bigint' }).notNull().default(0n),
+  evidenceSource: text('evidence_source').notNull().default('signed-intent'),
+  custodyPayoutSignature: varchar('custody_payout_signature', { length: 88 }).unique().references(() => custodyFeePayouts.signature),
 }, (table) => [
   uniqueIndex('repo_claims_signature_unique').on(table.claimSignature),
   uniqueIndex('repo_claims_one_pending_per_repo').on(table.githubRepoId).where(sql`${table.status} = 'pending'`),
   check('repo_claims_positive_amount_check', sql`${table.amountBaseUnits} > 0`),
   check('repo_claims_status_check', sql`${table.status} in ('pending', 'settled', 'aborted')`),
+  check('repo_claims_custody_evidence', sql`(${table.evidenceSource}='signed-intent' and ${table.custodyPayoutSignature} is null)
+    or (${table.evidenceSource}='custody-receipt' and ${table.status}='settled' and ${table.signedTransaction} is null
+      and ${table.lastValidBlockHeight} is null and ${table.dammAmountBaseUnits}=${table.amountBaseUnits}
+      and ${table.custodyPayoutSignature} is not null and ${table.custodyPayoutSignature}=${table.claimSignature})`),
   check('repo_claims_settlement_check', sql`(${table.status} = 'pending' and ${table.settledAt} is null and ${table.resolvedAt} is null and ${table.resolutionReason} is null) or (${table.status} = 'settled' and ${table.settledAt} is not null and ${table.resolvedAt} is null and ${table.resolutionReason} is null) or (${table.status} = 'aborted' and ${table.settledAt} is null and ${table.resolvedAt} is not null and ${table.resolutionReason} is not null)`),
 ])
 
@@ -1673,7 +1679,8 @@ export const builderFeeCollections = pgTable('builder_fee_collections', {
   mint: varchar('mint', { length: 44 }).notNull(), pool: varchar('pool', { length: 44 }).notNull(),
   wallet: varchar('wallet', { length: 44 }).notNull(), amount: numeric('amount', { precision: 20, scale: 0 }).notNull(),
   status: text('status').notNull(), terms: text('terms').notNull(), termsHash: varchar('terms_hash', { length: 64 }).notNull(),
-  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  evidenceSource: text('evidence_source').notNull().default('signed-intent'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   signature: varchar('signature', { length: 88 }).unique(), signedTransaction: text('signed_transaction'),
   lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'bigint' }), receipt: text('receipt'),
@@ -1684,4 +1691,31 @@ export const builderFeeCollections = pgTable('builder_fee_collections', {
   index('builder_fee_collections_repo_status').on(table.githubRepoId, table.status),
   check('builder_fee_collections_positive', sql`${table.amount} > 0`),
   check('builder_fee_collections_status', sql`${table.status} in ('reviewed','pending','settled','aborted')`),
+  check('builder_fee_collections_evidence_check', sql`(${table.evidenceSource}='signed-intent' and ${table.expiresAt} is not null
+    and (${table.status} not in ('pending','settled') or (${table.signature} is not null and ${table.signedTransaction} is not null and ${table.lastValidBlockHeight} is not null)))
+    or (${table.evidenceSource}='historical-receipt' and ${table.status}='settled' and ${table.signature} is not null and ${table.receipt} is not null
+      and ${table.signedTransaction} is null and ${table.lastValidBlockHeight} is null and ${table.expiresAt} is null)`),
 ])
+
+export const custodyFeeCollections = pgTable('custody_fee_collections', {
+  signature: varchar('signature', { length: 88 }).primaryKey(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
+  role: text('role').notNull(), position: varchar('position', { length: 44 }).notNull(),
+  amount: numeric('amount', { precision: 20, scale: 0 }).notNull(),
+  slot: bigint('slot', { mode: 'bigint' }).notNull(), receipt: jsonb('receipt').notNull(),
+  recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [index('custody_fee_collections_repo').on(t.githubRepoId, t.role),
+  check('custody_fee_collections_role_check', sql`${t.role} in ('creator','partner')`),
+  check('custody_fee_collections_amount_check', sql`${t.amount} > 0`),
+  check('custody_fee_collections_slot_check', sql`${t.slot} > 0`)])
+
+export const custodyFeePayouts = pgTable('custody_fee_payouts', {
+  signature: varchar('signature', { length: 88 }).primaryKey(),
+  collectionSignature: varchar('collection_signature', { length: 88 }).notNull().references(() => custodyFeeCollections.signature),
+  beneficiary: varchar('beneficiary', { length: 44 }).notNull(),
+  amount: numeric('amount', { precision: 20, scale: 0 }).notNull(),
+  slot: bigint('slot', { mode: 'bigint' }).notNull(), receipt: jsonb('receipt').notNull(),
+  recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [index('custody_fee_payouts_collection').on(t.collectionSignature),
+  check('custody_fee_payouts_amount_check', sql`${t.amount} > 0`),
+  check('custody_fee_payouts_slot_check', sql`${t.slot} > 0`)])
