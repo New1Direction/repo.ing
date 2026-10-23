@@ -32,6 +32,10 @@ GRANT SELECT (github_repo_id,archived) ON public.repositories TO repoing_site_vi
 GRANT SELECT (github_repo_id,status,indexed_at,launch_finality) ON public.markets TO repoing_site_view_owner;
 GRANT SELECT (github_repo_id,status) ON public.bundles TO repoing_site_view_owner;
 
+-- The operational owner has SET ROLE membership but does not inherit this schema's privileges.
+-- Replace views as their existing owner without adding schema privileges to the login.
+SET LOCAL ROLE repoing_site_view_owner;
+
 CREATE OR REPLACE VIEW site_public.trend_candidates WITH (security_barrier=true) AS
 SELECT c.github_repo_id,c.full_name,c.description,
   (CASE WHEN c.state IN ('reviewed','approved') THEN 'detected' ELSE c.state END)::varchar(16) AS state,
@@ -87,6 +91,8 @@ CREATE OR REPLACE VIEW site_public.trend_source_health WITH (security_barrier=tr
 SELECT source,CASE WHEN status IN ('OK','PARTIAL','RUNNING','UNAVAILABLE') THEN status ELSE 'UNAVAILABLE' END::text AS status,
   checked_at,'{}'::text AS detail
 FROM public.trend_source_health WHERE source IN ('intake','github_trending','github_search','hn');
+
+RESET ROLE;
 
 -- Fail rather than silently restoring data to a reader that has gained base-table access or write privileges.
 DO $guard$
