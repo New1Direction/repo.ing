@@ -1,4 +1,6 @@
 import { Container } from '@cloudflare/containers'
+// Wrangler Text module: preserve exact bytes without a >5KB environment binding.
+import custodyManifest from '../config/existing-market-custody.json'
 
 // Review-only successor to the accepted recovery wrapper. Keep the existing
 // PublicSite/PUBLIC_SITE/public-readonly migration identity. This module is not
@@ -146,7 +148,7 @@ export default {
       'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'",
     }
     if (url.hostname.endsWith('.workers.dev')) headers['X-Robots-Tag'] = 'noindex, nofollow, noarchive'
-    const bindings = snapshotBindings(env)
+    const bindings = snapshotBindings({ ...env, TRADING_CUSTODY_RECOVERY_JSON: custodyManifest })
     const boundary = await tradeBoundary(request, bindings.EXISTING_MARKET_TRADING_STAGE)
     if (boundary instanceof Response) {
       for (const [key, value] of Object.entries(headers)) boundary.headers.set(key, value)

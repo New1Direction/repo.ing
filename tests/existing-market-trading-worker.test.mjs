@@ -16,7 +16,7 @@ const inputs = { configs, custody: { sha256: '2c31354ba8009acb0da1319b068f479216
 const mint = '59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be'
 const hookFlags = ['HOOK_PRODUCTION_BOOTSTRAP', 'HOOK_NATIVE_LAUNCH_ENABLED', 'HOOK_NATIVE_LAUNCHES_ENABLED', 'HOOK_INCLUSIVE_TRADING_ENABLED', 'HOOK_NATIVE_TRADING_ENABLED', 'HOOK_WALLET_FUNDING_ENABLED', 'HOOK_WALLET_IDENTITY_ENABLED', 'HOOK_SELECTED_HOOKS_ENABLED']
 
-async function fixture() {
+async function fixture(bundledManifest = manifest) {
   assert(existsSync(workerUrl), 'deployable review worker must exist')
   const storage = new Map()
   const runtime = { env: { DATABASE_URL: 'old-reader' }, starts: 1, calls: [], failDestroy: false, failStorage: false, hold: null, html: false }
@@ -56,10 +56,10 @@ async function fixture() {
       return new Response(notice, response)
     }
   }
-  const context = createContext({ Request, Response, Headers, URL, TextEncoder, TextDecoder, Uint8Array, crypto: webcrypto, HTMLRewriter, Container })
+  const context = createContext({ Request, Response, Headers, URL, TextEncoder, TextDecoder, Uint8Array, crypto: webcrypto, HTMLRewriter, Container, custodyManifest: bundledManifest })
   const source = readFileSync(workerUrl, 'utf8')
-  assert.equal((source.match(/^import /gm) ?? []).length, 1)
   const module = new Script(source.replace("import { Container } from '@cloudflare/containers'", '')
+    .replace("import custodyManifest from '../config/existing-market-custody.json'", '')
     .replace('export class PublicSite', 'class PublicSite').replace('export default {', 'const worker = {')
     + '\n;({ PublicSite, worker })').runInContext(context)
   const env = {
@@ -174,14 +174,14 @@ test('binds only the reader, separate trading credential and exact public review
 test('missing or mismatched bindings fail closed, including live activation and changed manifest bytes', async () => {
   const f = await fixture()
   await f.request()
-  const required = ['PUBLIC_DATABASE_URL', 'TRADING_DATABASE_URL', 'EXISTING_MARKET_TRADING_ONLY', 'EXISTING_MARKET_TRADING_STAGE', 'DBC_CONFIG', 'DBC_LEGACY_CONFIGS', 'TRADING_CUSTODY_RECOVERY_JSON', 'TRADING_CUSTODY_RECOVERY_SHA256']
+  const required = ['PUBLIC_DATABASE_URL', 'TRADING_DATABASE_URL', 'EXISTING_MARKET_TRADING_ONLY', 'EXISTING_MARKET_TRADING_STAGE', 'DBC_CONFIG', 'DBC_LEGACY_CONFIGS', 'TRADING_CUSTODY_RECOVERY_SHA256']
   for (const key of required) {
     const prior = f.env[key]
     delete f.env[key]
     assert.equal((await f.request()).status, 503, key)
     f.env[key] = prior
   }
-  for (const [key, value] of [['EXISTING_MARKET_TRADING_STAGE', 'live'], ['EXISTING_MARKET_TRADING_ONLY', 'false'], ['DBC_CONFIG', mint], ['DBC_LEGACY_CONFIGS', mint], ['TRADING_CUSTODY_RECOVERY_SHA256', '0'.repeat(64)], ['TRADING_CUSTODY_RECOVERY_JSON', manifest + '\n'], ['TRADING_DATABASE_URL', 'public-reader']]) {
+  for (const [key, value] of [['EXISTING_MARKET_TRADING_STAGE', 'live'], ['EXISTING_MARKET_TRADING_ONLY', 'false'], ['DBC_CONFIG', mint], ['DBC_LEGACY_CONFIGS', mint], ['TRADING_CUSTODY_RECOVERY_SHA256', '0'.repeat(64)], ['TRADING_DATABASE_URL', 'public-reader']]) {
     const prior = f.env[key]
     f.env[key] = value
     assert.equal((await f.request()).status, 503, key)
@@ -189,6 +189,17 @@ test('missing or mismatched bindings fail closed, including live activation and 
     f.env[key] = prior
   }
   assert.equal(f.runtime.calls.length, 1)
+})
+
+test('bundled exact custody bytes avoid the 5KB binding limit and cannot be overridden by an environment binding', async () => {
+  const f = await fixture()
+  delete f.env.TRADING_CUSTODY_RECOVERY_JSON
+  assert.equal((await f.request()).status, 200)
+  f.env.TRADING_CUSTODY_RECOVERY_JSON = 'untrusted override'
+  assert.equal((await (await f.request()).json()).TRADING_CUSTODY_RECOVERY_JSON, manifest)
+  const corrupt = await fixture(manifest + '\n')
+  assert.equal((await corrupt.request()).status, 503)
+  assert.equal(corrupt.runtime.calls.length, 0)
 })
 
 test('the DO itself rejects unvalidated raw fetch and invalid binding RPCs', async () => {
