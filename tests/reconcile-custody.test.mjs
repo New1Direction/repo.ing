@@ -1,6 +1,5 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
@@ -38,7 +37,6 @@ test('reconciliation retains both phases of custody but counts only DAMM source 
       assert.equal((await pool.query('select current_database() db')).rows[0].db, 'repoing_reconcile_custody_test')
       await pool.query('drop schema public cascade; create schema public; drop schema if exists drizzle cascade')
       await migrate(drizzle(pool), { migrationsFolder: new URL('../drizzle', import.meta.url).pathname })
-      await pool.query(await readFile(new URL('../drizzle/0085_custody_dbc_batch_items.sql', import.meta.url), 'utf8'))
       await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,stars,forks,archived,github_updated_at)
         values(101,'fixture','reconcile','fixture/reconcile',0,0,false,now())`)
       await pool.query(`insert into markets(github_repo_id,status,mint,pool,launcher_wallet,creator_wallet,

@@ -4,11 +4,16 @@ import { NATIVE_MINT } from '@solana/spl-token'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { buildLaunchCurve } from './launch-curve.mjs'
 import { isApprovedLaunchFee, readFeeSchedule, STANDARD_FEE_NUMERATOR } from './launch-fee.mjs'
+import { MULTISIG_VAULT } from './custody-multisig.mjs'
 
 // Builds and reviews the createConfig transaction for the launch-fee config. Chain-agnostic: the mainnet script
 // (scripts/create-launch-fee-config.mjs) and the local-validator tests run exactly this code.
 export const DBC_PROGRAM_ID = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 export const LAUNCH_FEE_PROFILE = 'launch-fee'
+
+// Mainnet snapshot tested locally through launch, fee accounting/claims and DAMM migration on 2026-10-23.
+// Includes allocated trailing bytes. A program upgrade requires a new review, never a configurable bypass.
+export const CUSTODY_DBC_EXECUTABLE_SHA256 = 'e2bfc853c1a1778dd8ee40ea9a0f3edf5587442360c57c685e7e3024ad0cad47'
 
 // The only decoded PoolConfig fields allowed to differ from the flat config it replaces.
 export const LAUNCH_FEE_FIELDS = Object.freeze(['poolFees.baseFee.cliffFeeNumerator', 'poolFees.baseFee.firstFactor',
@@ -57,9 +62,22 @@ export function configDifferences(left, right) {
 
 // The new config must equal the flat 1.75% reference in every field except its base fee, and carry exactly the
 // approved launch fee (exponential schedule ending at 1.75%, launcher first buy at 1.75%, timestamp activation).
-export function assertOnlyLaunchFeeDiffers(candidate, reference) {
+// Recovery additionally permits both immutable recipients to move to the recovered vault, not arbitrary wallets.
+export function assertOnlyLaunchFeeDiffers(candidate, reference, { custodyReplacement = false } = {}) {
   const differences = configDifferences(candidate, reference)
-  const unexpected = differences.filter(path => !LAUNCH_FEE_FIELDS.includes(path))
+  const recipients = custodyReplacement ? ['feeClaimer', 'leftoverReceiver'] : []
+  if (recipients.some(field => plain(candidate[field]) !== MULTISIG_VAULT)) throw Error('Replacement requires recovered custody recipients')
+  const versionTransition = custodyReplacement && differences.includes('version')
+  if (versionTransition) {
+    // DBC 0.2.2 keeps the original migration path for SPL/SOL with no transfer fee.
+    // SDK 1.5.13 exposes the new transfer-fee fields as the first five padding0 bytes.
+    if (reference.version !== 0 || candidate.version !== 1) throw Error('Unreviewed config version transition')
+    if (plain(candidate.quoteMint) !== NATIVE_MINT.toBase58() || candidate.quoteTokenFlag !== 0 || candidate.tokenType !== 0 ||
+        candidate.padding0?.length !== 14 || candidate.padding0.some(byte => byte !== 0)) {
+      throw Error('Version transition requires SPL/SOL without transfer fees or reserved fields')
+    }
+  }
+  const unexpected = differences.filter(path => !LAUNCH_FEE_FIELDS.includes(path) && !recipients.includes(path) && !(versionTransition && path === 'version'))
   if (unexpected.length) throw Error(`New config differs from the reference beyond the launch fee: ${unexpected.join(', ')}`)
   const old = readFeeSchedule(reference)
   if (old.kind !== 'flat' || old.startNumerator !== STANDARD_FEE_NUMERATOR) throw Error('Reference config is not the flat 1.75% config')
@@ -70,7 +88,18 @@ export function assertOnlyLaunchFeeDiffers(candidate, reference) {
 // Unsigned simulation that captures the payer and the created config account: exact rent, network fee, payer
 // debit and account bytes, all before any key is loaded. With a reference config, also proves the simulated
 // account is that config plus the launch fee and nothing else.
-export async function reviewLaunchFeeConfig({ connection, tx, config, payer, reference = null }) {
+export async function reviewLaunchFeeConfig({ connection, tx, config, payer, reference = null, custodyReplacement = false }) {
+  if (custodyReplacement && !reference) throw Error('Custody replacement requires a reference')
+  if (custodyReplacement) {
+    const loader = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111')
+    const [programData] = PublicKey.findProgramAddressSync([DBC_PROGRAM_ID.toBuffer()], loader)
+    const [program, data] = await connection.getMultipleAccountsInfo([DBC_PROGRAM_ID, programData], 'finalized')
+    if (!program?.executable || !program.owner.equals(loader) || program.data.length !== 36 || program.data.readUInt32LE(0) !== 2 ||
+        !program.data.subarray(4).equals(programData.toBuffer()) || !data?.owner.equals(loader) || data.data.length < 45 ||
+        data.data.readUInt32LE(0) !== 3 || sha256(data.data.subarray(45)) !== CUSTODY_DBC_EXECUTABLE_SHA256) {
+      throw Error('Custody replacement requires the reviewed DBC executable')
+    }
+  }
   const dbc = new DynamicBondingCurveClient(connection, 'confirmed')
   const coder = dbc.state.getProgram().coder.accounts
   const configKey = new PublicKey(config), payerKey = new PublicKey(payer)
@@ -94,7 +123,7 @@ export async function reviewLaunchFeeConfig({ connection, tx, config, payer, ref
   if (reference) {
     const info = await connection.getAccountInfo(new PublicKey(reference), 'confirmed')
     if (!info?.owner.equals(DBC_PROGRAM_ID)) throw Error('Reference config is missing')
-    differences = assertOnlyLaunchFeeDiffers(decoded, coder.decode('poolConfig', info.data))
+    differences = assertOnlyLaunchFeeDiffers(decoded, coder.decode('poolConfig', info.data), { custodyReplacement })
   } else if (!isApprovedLaunchFee(decoded)) throw Error('Simulated config does not carry the approved launch fee')
   return { accountDataSha256: sha256(data), accountBytes: data.length, rentLamports: created.lamports, networkFeeLamports: fee.value,
     totalDebitLamports, payerBalanceLamports: balance, decoded, differences }

@@ -7,7 +7,9 @@ import { custodyBalance, recordCustodyCollection, recordCustodyPayout, recordDbc
 import { CUSTODY_VAULT } from '../src/custody-settlement.mjs'
 import * as settlement from '../src/custody-settlement.mjs'
 import { dbcBatchFixture, dbcPayoutFixture } from './custody-evidence-fixture.mjs'
-import { readFile } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { getTableConfig } from 'drizzle-orm/pg-core'
@@ -83,7 +85,16 @@ test('PostgreSQL DBC batch: atomic item accounting, replay, rollback, concurrent
       assert.equal((await pool.query('select current_database() db')).rows[0].db, 'repoing_custody_batch_test')
       assert.equal(typeof settlement.recordValidatedDbcCustodyBatchCollection, 'function')
       await pool.query('drop schema public cascade; create schema public; drop schema if exists drizzle cascade')
-      await migrate(drizzle(pool), { migrationsFolder: new URL('../drizzle', import.meta.url).pathname })
+      // Start at the deployed predecessor, then exercise the real journal upgrade.
+      const predecessor = await mkdtemp(join(tmpdir(), 'repoing-custody-migrations-'))
+      try {
+        await cp(new URL('../drizzle/', import.meta.url), predecessor, { recursive: true })
+        const journalPath = join(predecessor, 'meta/_journal.json')
+        const journal = JSON.parse(await readFile(journalPath, 'utf8'))
+        journal.entries = journal.entries.filter(entry => entry.idx <= 84)
+        await writeFile(journalPath, JSON.stringify(journal))
+        await migrate(drizzle(pool), { migrationsFolder: predecessor })
+      } finally { await rm(predecessor, { recursive: true, force: true }) }
       const f = await dbcBatchFixture(), recipient = new PublicKey(Buffer.alloc(32, 210)).toBase58()
       for (const c of f.plan.claims) {
         const a = c.attribution
@@ -106,7 +117,10 @@ test('PostgreSQL DBC batch: atomic item accounting, replay, rollback, concurrent
         beneficiaryPaid: false, vaultControlVerified: true }
       await transaction(db => recordCustodyCollection(db, old))
       const oldRow = (await pool.query('select * from custody_fee_collections')).rows[0]
-      await pool.query(await readFile(new URL('../drizzle/0085_custody_dbc_batch_items.sql', import.meta.url), 'utf8'))
+      await migrate(drizzle(pool), { migrationsFolder: new URL('../drizzle', import.meta.url).pathname })
+      const journalBeforeRetry = (await pool.query('select * from drizzle.__drizzle_migrations order by id')).rows
+      await migrate(drizzle(pool), { migrationsFolder: new URL('../drizzle', import.meta.url).pathname })
+      assert.deepEqual((await pool.query('select * from drizzle.__drizzle_migrations order by id')).rows, journalBeforeRetry)
       assert.deepEqual((await pool.query('select receipt from custody_fee_collections')).rows[0].receipt, oldRow.receipt)
       assert.equal((await transaction(db => recordCustodyCollection(db, old))).inserted, false)
       for (const table of [custodyCollectionBatches, custodyFeeCollections, custodyFeePayouts]) {

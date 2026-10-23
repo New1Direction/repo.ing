@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import BN from 'bn.js'
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
 import {
@@ -14,7 +15,7 @@ import {
 import {
   feePercentLabel, LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeNotice, launchFeeSentence, launchFeeTradeNote,
 } from '../src/launch-fee-copy.mjs'
-import { assertOnlyLaunchFeeDiffers, configDifferences, LAUNCH_FEE_FIELDS } from '../src/launch-fee-config.mjs'
+import { assertOnlyLaunchFeeDiffers, configDifferences, LAUNCH_FEE_FIELDS, reviewLaunchFeeConfig } from '../src/launch-fee-config.mjs'
 import { launchBuyMinFee, launchBuyPreset, launchBuyQuote } from '../src/launch-buy.mjs'
 import { handleBuyPost } from '../app/lib/solana-actions.mjs'
 
@@ -79,6 +80,63 @@ test('the launch-fee config equals the builders config except for its base fee',
   assert.throws(() => assertOnlyLaunchFeeDiffers({ ...launchCurve, creatorTradingFeePercentage: 70 }, buildersCurve), /beyond the launch fee: creatorTradingFeePercentage/)
   assert.throws(() => assertOnlyLaunchFeeDiffers(buildersCurve, buildersCurve), /approved launch fee/)
   assert.throws(() => assertOnlyLaunchFeeDiffers(launchCurve, launchCurve), /flat 1.75%/)
+})
+
+test('custody replacement changes only the two recipients and launch fee, never the economics', () => {
+  const vault = new PublicKey('3dHCTpgdx15yXyVGh7DK1woQ1XisQpmFCxncURrq63Gs')
+  const exposed = new PublicKey('H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3')
+  const reference = { ...buildersCurve, feeClaimer: exposed, leftoverReceiver: exposed }
+  const candidate = { ...launchCurve, feeClaimer: vault, leftoverReceiver: vault }
+  const options = { custodyReplacement: true }
+  assert.deepEqual(assertOnlyLaunchFeeDiffers(candidate, reference, options).sort(),
+    [...LAUNCH_FEE_FIELDS, 'feeClaimer', 'leftoverReceiver'].sort())
+  for (const field of ['feeClaimer', 'leftoverReceiver']) {
+    assert.throws(() => assertOnlyLaunchFeeDiffers({ ...candidate, [field]: exposed }, reference, options), /custody recipients/)
+    assert.throws(() => assertOnlyLaunchFeeDiffers({ ...candidate, [field]: PublicKey.default }, reference, options), /custody recipients/)
+  }
+  assert.throws(() => assertOnlyLaunchFeeDiffers({ ...candidate, creatorTradingFeePercentage: 70 }, reference, options), /creatorTradingFeePercentage/)
+  assert.throws(() => assertOnlyLaunchFeeDiffers({ ...candidate, partnerPermanentLockedLiquidityPercentage: 49 }, reference, options), /partnerPermanentLockedLiquidityPercentage/)
+  assert.throws(() => assertOnlyLaunchFeeDiffers(candidate, reference), /beyond the launch fee/)
+})
+
+test('custody replacement admits only the reviewed version-zero to one SPL/SOL transition', () => {
+  const vault = new PublicKey('3dHCTpgdx15yXyVGh7DK1woQ1XisQpmFCxncURrq63Gs')
+  const shape = { quoteMint: new PublicKey('So11111111111111111111111111111111111111112'),
+    quoteTokenFlag: 0, tokenType: 0, padding0: Array(14).fill(0), version: 0 }
+  const reference = { ...buildersCurve, ...shape, feeClaimer: vault, leftoverReceiver: vault }
+  const candidate = { ...launchCurve, ...shape, version: 1, feeClaimer: vault, leftoverReceiver: vault }
+  const options = { custodyReplacement: true }
+  assert.ok(assertOnlyLaunchFeeDiffers(candidate, reference, options).includes('version'))
+  assert.throws(() => assertOnlyLaunchFeeDiffers(candidate, reference), /version/)
+  for (const change of [{ version: 2 }, { tokenType: 1 }, { quoteTokenFlag: 1 },
+    { quoteMint: PublicKey.default }, { padding0: [0, 0, 0, 0, 1, ...Array(9).fill(0)] }, { padding0: [] }]) {
+    assert.throws(() => assertOnlyLaunchFeeDiffers({ ...candidate, ...change }, reference, options), /version|transfer|SPL/)
+  }
+  assert.throws(() => assertOnlyLaunchFeeDiffers(candidate, { ...reference, version: 2 }, options), /version/)
+})
+
+test('legacy config CLI refuses execution before RPC or protected-key access', () => {
+  const result = spawnSync(process.execPath, ['scripts/create-launch-fee-config.mjs', '--execute'], {
+    cwd: new URL('..', import.meta.url), encoding: 'utf8', timeout: 5000,
+    env: { ...process.env, SOLANA_RPC_URL: 'http://127.0.0.1:1' },
+  })
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /Review-only: execution requires a separately approved safe signing plan/)
+})
+
+test('custody config review cannot omit its economics reference', async () => {
+  await assert.rejects(reviewLaunchFeeConfig({ custodyReplacement: true }), /Custody replacement requires a reference/)
+})
+
+test('custody config review rejects an unavailable or changed DBC executable', async () => {
+  const loader = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111')
+  const program = Buffer.alloc(36); program.writeUInt32LE(2)
+  new PublicKey('HUfnSSiJxgspQm6C1rkqv6L3XgVtn7AESApgCQpCXCYh').toBuffer().copy(program, 4)
+  const data = Buffer.alloc(64); data.writeUInt32LE(3)
+  for (const accounts of [[null, null], [{ owner: loader, executable: true, data: program }, { owner: loader, data }]]) {
+    const connection = { getMultipleAccountsInfo: async () => accounts }
+    await assert.rejects(reviewLaunchFeeConfig({ connection, custodyReplacement: true, reference: Keypair.generate().publicKey }), /reviewed DBC executable/)
+  }
 })
 
 test('the size-scaled rate limiter is not available for new configs', () => {

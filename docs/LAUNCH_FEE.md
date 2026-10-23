@@ -78,31 +78,27 @@ The chain test passed twice: on the CI fixture DBC program (2026-09-30) and on t
 
 The fixture run charged the same amounts at 0 s and after the window; its in-window trades landed at 18 s and 20 s and paid 36.04% and 34.72%, each exactly the schedule's fee for that second. In both runs builder credits equalled on-chain creator fees and reconciled `MATCH` on both markets before and after claims, graduation, DAMM migration and verification.
 
-Mainnet dry run (unsigned simulation against the real program; nothing signed or sent): only the six fee fields differ from `2YbBp7…`; rent 5,974,080 + network fee 10,000 = **5,984,080 lamports (0.00598408 SOL)** paid by the partner wallet.
+Historical mainnet dry run (before the custody incident): only the six fee fields differed from `2YbBp7…`; rent 5,974,080 + network fee 10,000 = **5,984,080 lamports (0.00598408 SOL)** paid by the partner wallet. That review is not authorization to reuse that wallet or config.
+
+On 2026-10-23, the finalized mainnet DBC executable (including allocated trailing bytes), SHA256
+`e2bfc853c1a1778dd8ee40ea9a0f3edf5587442360c57c685e7e3024ad0cad47`, was loaded into a disposable local validator with current DAMM v2, Token-2022 and Metaplex binaries. All five curve round-trip tests and all nine launch-fee lifecycle tests passed, including accounting, claims and graduation. These were local transactions, not mainnet acceptance or recovered-multisig collection receipts.
+
+DBC 0.2.2 creates version-1 configs. Its [migration handler](https://github.com/MeteoraAg/dynamic-bonding-curve/blob/91e696eef6a3764157220f6c104f079b7830fc04/programs/dynamic-bonding-curve/src/instructions/migration/dynamic_amm_v2/migrate_damm_v2_initialize_pool.rs#L645-L675) retains the original migration path for SPL/SOL without transfer fees. The custody review now admits only that version-0 → 1 transition, requires the tested executable hash, and requires all 14 SDK `padding0` bytes to remain zero (they contain the newly introduced transfer-fee fields). Token-2022, non-SOL quotes, nonzero reserved fields, other version transitions and changed executables remain rejected. Ordinary comparisons do not gain this exception.
 
 ## Mainnet rollout
 
-Do these in order. Each step is reversible until the config switch has launched a market.
+The pre-incident creation procedure is retired: it loaded an exposed partner key and assigned new rights to exposed recipients. Existing markets keep their historical configs; do not reuse those configs for new launches or restart the general replay worker.
 
-1. **Deploy this code to worker and web** with `DBC_CONFIG` unchanged. It accepts both configs and shows launch-fee copy only for configs that have one. Check quotes, Launch facts and `reconcile:repo` on existing markets.
-2. **Review the creation** on the operator Mac (Railway read-only for the RPC, or set `SOLANA_RPC_URL`):
+1. **Review one ordinary-launch replacement** using an independently custody-backed fresh config public address and an explicit HTTPS `SOLANA_RPC_URL`:
    ```sh
-   node scripts/create-launch-fee-config.mjs
+   node scripts/create-launch-fee-config.mjs --config <public-address>
    ```
-   The first run creates `secrets/launch-fee-config-keypair.json` (ignored by Git, mode 0600). Check `differsFromReferenceOnlyIn` lists only the six fee fields, `feeAtSeconds`, `totalDebitLamports` (5,984,080 expected) and the partner balance. Nothing is sent.
-3. **Create the config** after approving the exact address, instruction hash and debit:
-   ```sh
-   APPROVED_LAUNCH_FEE_CONFIG=<config> APPROVED_LAUNCH_FEE_INSTRUCTION_SHA256=<instructionSha256> \
-   APPROVED_LAUNCH_FEE_DEBIT_LAMPORTS=<totalDebitLamports> node scripts/create-launch-fee-config.mjs --execute
-   ```
-   It loads the partner key from Keychain (`repo.ing.dbc.partner`), runs a signed preflight, waits for finality and verifies the finalized account bytes equal the reviewed simulation. Record the signature here. If the send is ambiguous, inspect the address; never re-run blindly.
-4. **Worker first** (Railway service `worker`; it must recognise new-config markets before web can launch one): `DBC_LEGACY_CONFIGS=2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M,261xpZVAz5k3ZfwfxXdgkgLowiH6NUzFEHtihhD4YMq1,D7oz8xQ4seaNaEgiDS4fu3YJfmUvR5iPuznxuqKV4u1c` (the two current legacy configs plus `2YbBp7…`) and `DBC_CONFIG=<new config>`. Redeploy; confirm fee cycles are `OK` for every existing market.
-5. **Then web** (service `web`): the same `DBC_LEGACY_CONFIGS` and `DBC_CONFIG`, and `BUILDER_ALLOCATION_CONFIGS=2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M,<new config>` (keep `2YbBp7…`: enrolled markets need it to claim their allocation). Redeploy.
-6. **Check**: the launch page shows the launch-fee line and "Your initial buy pays the regular 1.75% fee"; `/api/launch` 1/2/Max 3% quotes are unchanged (3% = 856011397 lamports, fee 1.75%); existing markets quote `launchFee: null`, `feeNumerator: "17500000"`; How it works shows the section within 5 minutes; reconciliation stays `MATCH`. Trend candidates approved for the old config need re-approval (`approvedConfig` must equal `DBC_CONFIG`).
-7. **First launch on the new config**: confirm on the explorer that the launch transaction's initial buy paid 1.75%, the trade panel showed the launch fee for 3 minutes, and fees indexed and reconcile `MATCH`.
-8. **Static docs**: the site copy follows the config by itself, but `README.md` (fee shares), `docs/USER_GUIDE.md` and this page's status line are static. Update them in the same PR that records the config address and creation signature.
+   The tool only simulates; it neither creates keys nor signs/sends. Both immutable recipients must be recovered vault `3dHCTpgdx15yXyVGh7DK1woQ1XisQpmFCxncURrq63Gs`; payer is the recovered operator. The comparison permits only the six launch-fee fields, `feeClaimer`, `leftoverReceiver` and the narrowly reviewed version transition above. Every other curve, allocation and fee-share field must match the reference. Custody does not decide ultimate beneficiary allocations.
+2. **Approve exact creation funding and signing separately.** Review the config signer backup, unsigned instruction hash, simulated account hash, payer debit and vault governance. `--execute` is deliberately unavailable; a separate reviewed one-send signing path must retain the exact message and reconcile any uncertain submission before further action. Historical fee estimates above are not funding approval.
+3. **Accept the complete new-launch path before enabling it:** safe creator authority, GitHub identity, token creation, initial buy, trading, graduation, fee indexing, multisig collection and beneficiary attribution. Preserve historical configs for existing markets. Bundles need their own safe router/config acceptance; this ordinary-launch review does not cover them.
+4. **Roll out the independently accepted launch path** without changing existing-market recovery guards or enabling archived jobs. Keep claim/payout gates closed until their separate receipt and recipient acceptance passes. Record the finalized config, creation receipt, image and acceptance evidence.
 
-**Rollback**: set `DBC_CONFIG` back to `2YbBp7…` on web and worker and keep the new config in `DBC_LEGACY_CONFIGS` (and `BUILDER_ALLOCATION_CONFIGS`) permanently once any market uses it. Never remove an approved config that has markets.
+**Rollback:** disable new launches while preserving trading and all configs already used by markets. Never revert new launches to an exposed configuration.
 
 ## Risks
 
