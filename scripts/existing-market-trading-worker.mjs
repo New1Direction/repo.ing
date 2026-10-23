@@ -148,7 +148,10 @@ export class PublicSite extends Container {
         HOOK_WALLET_IDENTITY_ENABLED: 'false',
         HOOK_SELECTED_HOOKS_ENABLED: 'false',
       }
-      return super.fetch(request)
+      const upstream = await super.fetch(request)
+      const response = new Response(upstream.body, upstream)
+      response.headers.set('X-Repoing-Runtime-Policy', 'discovery-origin-v1')
+      return response
     })
   }
 }
