@@ -1,4 +1,4 @@
-# Restoration checkpoint — 2026-10-23 20:15 UTC
+# Restoration checkpoint — 2026-10-23 20:43 UTC
 
 ## Delivery and instructions
 - Repository: New1Direction/repo.ing; working branch: repair/creator-selected-hooks.
@@ -14,20 +14,33 @@
 - LIVE 19:40 UTC: `/api/mcp/readonly` and read-only `/api/mcp` alias; market lookup/totals work, unknown trade tool rejected, all 12 financial-denial checks passed again for this changed image.
 - LIVE: bounded discovery writer and restricted public/operational database readers; historical accounting repair accepted.
 - LIVE 20:04 UTC: chart-only finalized-chain indexing and fresh graduation observations; all 77 markets passed one complete scan, 59 new swaps inserted on the initial pass. Curve and graduated charts rendered and screenshots inspected.
-- VERIFIED 20:14 UTC after safety rollback: `/api/health` reports ok, public submission returns 403, durable test run disabled/stopped with zero signed/broadcast/finalized swaps and zero reserved spending.
+- VERIFIED 20:35 UTC after owner wallet correction: durable test run disabled, phase ready, pending null; zero signed/broadcast/finalized swaps and zero reserved spending. Original unsigned session remains archived.
 - GATED: existing-market execution; six wallet-restricted swaps have not completed finalized acceptance.
 - GATED: ordinary launches, bundles, Hook Playground activation, beneficiary claims/payouts.
 - DISABLED: historical replay/general worker; do not restart it. Credits/inference restoration is deferred.
 - Public notice now distinguishes read-only finalized-chain charts from still-unverified fee accounting/payouts. Transient RPC failures can withhold individual progress after its five-minute freshness deadline; they never fabricate fresh timestamps.
-- Production image is standalone ff52bd7a4f393fa5c821a5309b78419b73c030f12525d50241ca35e3210fd3c9; Worker b4c3856c-d857-45b2-ab6b-33661ae406cb; test stage is unarmed and submission disabled. Active config: .amp/in/cloudflare-compatibility-20261022/trading-test-unarmed.jsonc.
+- Production image is standalone ff52bd7a4f393fa5c821a5309b78419b73c030f12525d50241ca35e3210fd3c9; Worker 22bc30b9-dbff-4172-80a0-e1a37406473a; restricted test-stage submission binding is true, but the durable run is disabled. Token/wallet/one-use guards remain; public trading is closed. Active config: .amp/in/cloudflare-compatibility-20261022/trading-test-standalone.jsonc. Accepted unarmed rollback Worker: b4c3856c-d857-45b2-ab6b-33661ae406cb, same image.
 
-## Required owner decision: unintended unsigned first preparation
+## Original unsigned preparation and one replacement authorization
 - At 20:12:43 UTC, a local console security probe intended to test a forged Host header instead prepared swap 1. Node fetch ignored its Host override; this was a test-harness mistake, not a bypass of the server Host check.
-- No wallet was connected to the console; no signature, broadcast, settlement or swap spending occurred. Durable state: step 0, spent 0, history empty, pending signature null. Session 1e1ac587-13aa-4ee9-af41-e15fc86fe409 remains retained, never replaced.
+- No wallet was connected to the console; no signature, broadcast, settlement or swap spending occurred. Session 1e1ac587-13aa-4ee9-af41-e15fc86fe409 remains retained byte-for-byte in retired-unsigned-session-original.json and durable state.retiredUnsignedSessions[0].
 - At 20:13 UTC the run was disabled and marked stopped, preserving its pending message, and production automatically returned to the accepted unarmed Worker on the same healthy image. A subsequent native http GET probe verified forged Host denial without any mutating route.
-- The no-replacement rule requires an owner decision before replacing this expired unsigned message. Do not rearm/reset the run or prepare another swap under the existing authorization.
+- Owner subsequently authorized exactly one unsigned replacement. Two finalized providers confirmed the original blockhash expired and complete wallet history since before preparation was empty; wire signatures were zero and no signed/submitted record existed. Original SHA256: 0cbc819f4c6387e1b85a0c4279db94f42fe4cdc7138ea5d30a1f781c125e859f. Native-http GET /state with forged Host returned 403 with unchanged DB state; no POST security probe is permitted.
+- The authorization was recorded once and the original archived before rearming. No replacement message has been prepared. Do not repeat authorize-one-unsigned-replacement.mjs or reset history/spending. Current pause changes enabled only; phase ready, step 0, spent 0, history empty, pending null.
 - Evidence: unsigned-probe-stop.json, six-swap-console-events.jsonl, post-stop-safety.json, unsigned-probe-unarmed-rollback.log under the existing-market artifact directory.
-- Loopback console remains on port 3148, browser space 3 page p2; all signing is disabled. Sources .amp/in/six-swap-{console,client}.mjs; only the server holds the restricted API token, no private signing key. Owner's space 2 was untouched.
+- Loopback console on port 3148 was STOPPED after owner said they do not possess the assumed Backpack wallet. Browser space 3 was handed off; do not reclaim it. Owner's space 2 was untouched. Sources .amp/in/six-swap-{console,client}.mjs are historical, not the new signing path.
+- Evidence: unsigned-replacement-verification.json, one-unsigned-replacement-authorization.json, one-replacement-stage-readiness.json and wallet-control-handoff-stopped.json.
+
+## Agent signer investigation: funding allocation is the remaining decision
+- Latest owner requests agent execution, not a Backpack handoff. No new trade preparation or signature may rely on assumed owner browser-wallet control.
+- DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9 is the locally created controlled-test-identities-v1/dedicated-creator, selected from historical canary pins. Existing encrypted custody verifier successfully authenticated/decrypted and derived its public address without exporting keys or signing. Its 0.017862160 SOL is the remainder of a 0.05 SOL Hook canary transfer from the operational payer; do not silently reallocate it.
+- DrAhCGXsHLNdJ9ihhRBkyKZSzY446qKg1Dcx6zEm9dmi is the separate locally created agent-test-wallet-v1/test-wallet. Its custody verifier also passed. Both finalized providers observed 0.1 SOL; complete history contains only the Oct17 funding transfer 24iVv9BBgKkatAhH1sDuJYBjiN5EcnFaTX2n9xgxPHy53iCsnPH3eFisj4miMPDL4QwLGQrqxswEMAcZRcvtunxD from FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy (documented custody buyback wallet).
+- Original human provenance recovered from thread T-01a146fc-4b3c-70aa-ba5a-afef1de4145f: owner requested this wallet, reported sending 0.10 SOL and explicitly allowed agent buy/sell. That discussion allocated 0.04 SOL to the Hook smoke test and protected 0.06 SOL untouched. It does NOT establish unrestricted funds for existing-market tests; do not describe it as such.
+- Neither test identity appears on the documented exposed hosted-key list; that alone is not absolute non-exposure proof. No exposed key, vault assets, beneficiary liability, new transfer or multisig bypass was used.
+- Proposed narrow decision: rebind the six-swap wallet to DrAh and reallocate at most 0.021225960 SOL from its existing 0.04 SOL Hook-test allocation, only if this allocation is cleared of buyback/beneficiary obligations. Preserve its 0.06 SOL reserve, the original unsigned evidence, one-replacement limit, markets/order/amounts and no-retry rules. No top-up is required. No source/Worker wallet binding has changed yet.
+- Existing keyserve helper can release the role through a private FIFO with a per-application Keychain grant; custody verification is not proof of that helper's current access or a tested exact-message signing adapter. Do not export keys, change Keychain ACLs, or treat prior synthetic signing tests as live execution.
+- Artifacts: wallet-provenance-current.json, dedicated-creator-access-check.log, agent-test-wallet-access-check.log. No SOL spent in this investigation.
+- Finalized slot 460579006 confirms H7TK remains feeClaimer on all four historical configs: accrued/new DBC partner trading fees and eligible partner surplus remain claimable. Creator trading fee share is 71%; migration fee percentage is zero. Last two configs still name H7TK as leftover receiver. DAMM NFT custody migration did not revoke these rights. Evidence: dbc-remaining-rights-detail.json. Public reopening still requires explicit exposure settlement and six-swap acceptance.
 
 ## Read-only indexer and verification
 - scripts/recovery-chart-indexer.mjs uses independent finalized providers, canonical DBC/DAMM parsers and separate recovery_charts cursors/observations. It never advances accounting cursors or loads signing keys.
@@ -66,15 +79,15 @@
 - 82 tests passed, zero failed/skipped, including synthetic Unix-socket-only PostgreSQL 17 integration, rollback, concurrency and DAMM compatibility.
 - Log: .amp/in/artifacts/dbc-batch-receipts-20261023/focused-final.tap. Disposable database was stopped/removed.
 - NOT applied to shared DB: 0085. It is intentionally not registered in drizzle/meta/_journal.json yet.
-- Before DBC imports: make reconcile.mjs phase-aware (all held liabilities versus DAMM withdrawals); existing default fails closed with DBC rows.
+- DONE locally after checkpoint: reconcile.mjs includes all phases' held creator liabilities, but only DAMM collections in DAMM creator/partner withdrawal comparisons. Regression reproduced the old phase-selection failure, then passed on disposable Unix-socket PostgreSQL with mixed DBC/DAMM collections and partial payouts. 24/24 targeted reconciliation tests pass, no skips; prior unchanged 82 custody tests were not repeated. This follow-up is not in the production image.
 - Before deployment of ledger consumers: install the reviewed schema; new ledger queries require the new columns.
 - Before real acceptance: validate exact DBC CPI/evidence shape against independently retained finalized execution; fixtures are not chain proof.
 - No collector/request endpoint or transaction execution was enabled by this checkpoint.
 
 ## Open blockers and remaining owner actions
 - Image and read-only restoration are deployed; source checkpoint e6a6d1113803ac517250aee3a164ff7e39aa630f was pushed to backup/restoration-checkpoint-20261023 and the exact remote SHA verified, including packaging 1288e0d and MCP 2e5a0a2. Main is untouched. This status-only follow-up uses the same authorized backup destination.
-- Temporary render-debug container removed and disposable chart PostgreSQL stopped; existing containers, the live chart LaunchAgent and disabled loopback signing console are preserved.
-- First unblock the unsigned-message replacement decision above; only then obtain human signatures and continue exact six-step acceptance. No automatic retry is authorized.
+- Temporary render-debug container removed and disposable chart PostgreSQL stopped; existing containers and the live chart LaunchAgent are preserved. Loopback signing console is stopped.
+- Resolve the exact agent-test wallet/funding reallocation above, then verify private helper access and exact-message agent execution. Do not ask the owner to connect DkD5 in Backpack. One unsigned replacement is already authorized; do not consume it before the signer and funding gates pass. No automatic retry is authorized.
 - Trading: fresh exact messages, wallet signatures, six-step finality/fees/refunds/session/DAMM checks still required. Do not infer execution from an HTTP 200.
 - Owner accepted continued historical DBC fee-claimer exposure for reopening; moving pool custody did not revoke immutable fee-claimer/leftover rights.
 - New launches: choose/bind safe replacement configs and fee destinations under recovered custody; never exposed keys.

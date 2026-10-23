@@ -174,7 +174,8 @@ export function createReconciler({ pool, connection, config, earlyAccess = null,
           return { ...base, status: 'UNAVAILABLE', reason: POOL_IDENTITY_MISMATCH }
         }
         const graduated = await graduatedFees.read(market, state)
-        const custodyFunds = custodyRecovery ? await custodyBalance(client, repoId) : null
+        const custodyFunds = custodyRecovery ? await custodyBalance(client, repoId, { phase: 'all' }) : null
+        const dammCustody = custodyRecovery && graduated ? await custodyBalance(client, repoId, { phase: 'DAMM' }) : null
         if (custodyFunds) await verifyCustodySolvency(client, connection)
         // Moving earned fees into the vault does not pay the beneficiary or erase their entitlement.
         const onchainCreatorFee = BigInt(state.poolState.creatorQuoteFee.toString()) + (graduated?.available ?? 0n) + (custodyFunds?.creator.held ?? 0n)
@@ -186,7 +187,7 @@ export function createReconciler({ pool, connection, config, earlyAccess = null,
             from platform_fee_events where github_repo_id=$1`, [String(repoId)])
           const { rows: [paid] } = await client.query(`select coalesce(sum(amount),0)::text as paid
             from platform_fee_claims where github_repo_id=$1 and phase='DAMM' and status='settled'`, [String(repoId)])
-          platform = { earned: BigInt(events.earned), claimed: BigInt(paid.paid) + (custodyFunds?.partner.collected ?? 0n),
+          platform = { earned: BigInt(events.earned), claimed: BigInt(paid.paid) + (dammCustody?.partner.collected ?? 0n),
             onchainEarned: graduated.partner.earned, onchainClaimed: graduated.partner.claimed }
           if (platform.earned !== platform.onchainEarned || platform.claimed !== platform.onchainClaimed)
             return { ...base, onchainCreatorFee, platform, status: 'MISMATCH', reason: PARTNER_CAPTURE_MISMATCH }
@@ -199,7 +200,7 @@ export function createReconciler({ pool, connection, config, earlyAccess = null,
             coalesce((select sum(damm_amount_base_units) from repo_claims where github_repo_id=$1 and status='settled' and evidence_source='signed-intent'),0)::text as paid,
             coalesce((select sum((receipt::jsonb->>'dammClaimed')::numeric) from builder_fee_collections
               where github_repo_id=$1 and status='settled'),0)::text as collected`,[String(repoId)])
-          if (BigInt(damm.collected) < 0n || BigInt(damm.paid) + BigInt(damm.collected) + (custodyFunds?.creator.collected ?? 0n) !== graduated.claimed)
+          if (BigInt(damm.collected) < 0n || BigInt(damm.paid) + BigInt(damm.collected) + (dammCustody?.creator.collected ?? 0n) !== graduated.claimed)
             return { ...base, onchainCreatorFee, platform, status: 'MISMATCH', reason: GRADUATED_WITHDRAWAL_MISMATCH }
         }
         const difference = onchainCreatorFee - expectedRemaining
