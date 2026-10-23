@@ -1,0 +1,275 @@
+import { readFileSync, existsSync } from 'node:fs'
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { Script, createContext } from 'node:vm'
+import { createHash, webcrypto } from 'node:crypto'
+
+// Integrated Worker behavior with only the Cloudflare runtime substituted.
+// The committed public manifest is not a credential or signing authority.
+const workerUrl = new URL('../scripts/existing-market-trading-worker.mjs', import.meta.url)
+const manifest = readFileSync(new URL('../config/existing-market-custody.json', import.meta.url), 'utf8')
+const configs = [...new Set(JSON.parse(manifest).poolCreators.map(row => row.config))]
+const inputs = { configs, custody: { sha256: '2c31354ba8009acb0da1319b068f479216b0615120328510cba50665f0ecd888' },
+  proposedEnvironment: { EXISTING_MARKET_TRADING_ONLY: 'true', EXISTING_MARKET_TRADING_STAGE: 'review',
+    DBC_CONFIG: configs[0], DBC_LEGACY_CONFIGS: configs.slice(1).join(','),
+    TRADING_CUSTODY_RECOVERY_SHA256: '2c31354ba8009acb0da1319b068f479216b0615120328510cba50665f0ecd888' } }
+const mint = '59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be'
+const hookFlags = ['HOOK_PRODUCTION_BOOTSTRAP', 'HOOK_NATIVE_LAUNCH_ENABLED', 'HOOK_NATIVE_LAUNCHES_ENABLED', 'HOOK_INCLUSIVE_TRADING_ENABLED', 'HOOK_NATIVE_TRADING_ENABLED', 'HOOK_WALLET_FUNDING_ENABLED', 'HOOK_WALLET_IDENTITY_ENABLED', 'HOOK_SELECTED_HOOKS_ENABLED']
+
+async function fixture() {
+  assert(existsSync(workerUrl), 'deployable review worker must exist')
+  const storage = new Map()
+  const runtime = { env: { DATABASE_URL: 'old-reader' }, starts: 1, calls: [], failDestroy: false, failStorage: false, hold: null, html: false }
+  let queue = Promise.resolve()
+  const ctx = { storage: {
+    get: async key => storage.get(key),
+    delete: async key => storage.delete(key),
+    put: async (key, value) => {
+      if (runtime.failStorage) throw Error('storage failed')
+      storage.set(key, value)
+    },
+  }, blockConcurrencyWhile(fn) {
+    const result = queue.then(fn)
+    queue = result.catch(() => {})
+    return result
+  } }
+  class Container {
+    constructor(ctx) { this.ctx = ctx }
+    async destroy() {
+      if (runtime.failDestroy) throw Error('restart failed')
+      runtime.env = null
+    }
+    async fetch(request) {
+      if (runtime.hold) await runtime.hold
+      if (!runtime.env) { runtime.env = { ...this.envVars }; runtime.starts++ }
+      runtime.calls.push({ request, env: { ...runtime.env }, body: request.body ? await request.text() : null })
+      return runtime.html
+        ? new Response('<body>App</body>', { headers: { 'Content-Type': 'text/html', 'Set-Cookie': 'unsafe=session' } })
+        : Response.json(runtime.env, { headers: { 'Set-Cookie': 'unsafe=session' } })
+    }
+  }
+  class HTMLRewriter {
+    on(selector, handler) { this.handler = handler; return this }
+    transform(response) {
+      let notice = ''
+      this.handler.element({ getAttribute: () => '', setAttribute() {}, append: text => { notice = text } })
+      return new Response(notice, response)
+    }
+  }
+  const context = createContext({ Request, Response, Headers, URL, TextEncoder, TextDecoder, Uint8Array, crypto: webcrypto, HTMLRewriter, Container })
+  const source = readFileSync(workerUrl, 'utf8')
+  assert.equal((source.match(/^import /gm) ?? []).length, 1)
+  const module = new Script(source.replace("import { Container } from '@cloudflare/containers'", '')
+    .replace('export class PublicSite', 'class PublicSite').replace('export default {', 'const worker = {')
+    + '\n;({ PublicSite, worker })').runInContext(context)
+  const env = {
+    ...inputs.proposedEnvironment,
+    PUBLIC_DATABASE_URL: 'public-reader', TRADING_DATABASE_URL: 'trade-only',
+    TRADING_CUSTODY_RECOVERY_JSON: manifest,
+    DATABASE_URL: 'ignored-owner', PRIVATE_KEY: 'ignored-key',
+    ...Object.fromEntries(hookFlags.map(key => [key, 'true'])),
+  }
+  const instance = new module.PublicSite(ctx, { PUBLIC_DATABASE_URL: 'stale-constructor' })
+  env.PUBLIC_SITE = { getByName(name) { assert.equal(name, 'public-readonly'); return instance } }
+  const fetch = request => module.worker.fetch(request, env)
+  const request = (path = '/stats', options = {}) => fetch(new Request('https://repo.ing' + path, options))
+  const trade = (action = 'quote', headers = {}) => request('/api/trade', {
+    method: 'POST', headers: { origin: 'https://repo.ing', 'content-type': 'application/json', ...headers }, body: JSON.stringify({ action }),
+  })
+  return { env, runtime, storage, request, trade, fetch, instance }
+}
+
+test('only the five explicit review actions and two balance routes reach the container', async () => {
+  const f = await fixture()
+  for (const action of ['depth', 'quote', 'costs', 'prepare', 'status']) {
+    assert.equal((await f.trade(action)).status, 200)
+    assert.deepEqual(JSON.parse(f.runtime.calls.at(-1).body), { action })
+  }
+  for (const path of ['/api/wallet/balance?wallet=test', `/api/market/${mint}/balance?wallet=test`]) {
+    for (const method of ['GET', 'HEAD']) assert.equal((await f.request(path, { method })).status, 200)
+  }
+  for (const action of ['submit', 'claim', 'replay', '', null]) assert.equal((await f.trade(action)).status, 403)
+  assert.equal(f.runtime.calls.length, 9)
+})
+
+test('policy fallback retains the exact public GET/HEAD allowlist and rejects private/mutation routes', async () => {
+  const f = await fixture()
+  const allowed = ['/', '/launch', '/explore', '/builders', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks', `/token/${mint}`, ...['trades', 'metrics', 'curve', 'traders', 'activity', 'pulse'].map(s => `/api/market/${mint}/${s}`), `/api/token-image/${mint}`, '/api/repo-logo/123', '/api/growth', '/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png', ...['art', 'badges', 'launch-icons', 'hook-icons', 'credits'].map(s => `/${s}/test-image.webp`), '/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4', '/_next/static/chunks/test.js']
+  for (const path of allowed) for (const method of ['GET', 'HEAD']) assert.equal((await f.request(path, { method })).status, 200, `${method} ${path}`)
+  const before = f.runtime.calls.length
+  for (const path of ['/api/trade', '/api/trade/', '/api/auth/session', '/api/wallet/overview', '/api/launch', '/api/hook-lab/native-launch', '/api/hook-lab/inclusive-trade', '/api/builders/claim', '/api/bundles', '/api/replay', '/api/actions/trade', '/api/mcp', '/builders?owner=x', '/admin/restart', '/api/market/not-a-mint/balance', `/api/market/${mint}/balance/`, '/stats/', '/art/image.svg']) {
+    for (const method of ['GET', 'HEAD', 'POST', 'OPTIONS', 'PUT', 'DELETE']) assert.equal((await f.request(path, { method })).status, 403, `${method} ${path}`)
+  }
+  assert.equal(f.runtime.calls.length, before)
+  assert.equal((await f.request('/stats', { headers: { upgrade: 'websocket' } })).status, 403)
+})
+
+test('strips legacy credentials and spoofed forwarding headers, keeps trusted IP on trading requests', async () => {
+  const f = await fixture()
+  const unsafe = { cookie: 'legacy', authorization: 'Bearer legacy', 'x-api-key': 'legacy', 'x-forwarded-for': 'spoof', 'x-real-ip': 'spoof', 'cf-connecting-ip': '192.0.2.10', 'x-database-url': 'spoof', 'x-existing-market-trading-stage': 'live' }
+  const response = await f.trade('prepare', unsafe)
+  const upstream = f.runtime.calls.at(-1).request
+  assert.equal(upstream.redirect, 'manual')
+  assert.equal(upstream.headers.get('cf-connecting-ip'), '192.0.2.10')
+  for (const key of Object.keys(unsafe).filter(key => key !== 'cf-connecting-ip')) assert.equal(upstream.headers.has(key), false)
+  assert.equal(response.headers.has('set-cookie'), false)
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  assert.match(response.headers.get('content-security-policy'), /connect-src 'self'; frame-src 'none'/)
+  assert.equal(response.headers.get('referrer-policy'), 'no-referrer')
+  await f.request('/stats', { headers: { ...unsafe, rsc: '1', range: 'bytes=0-10' } })
+  const pageHeaders = f.runtime.calls.at(-1).request.headers
+  for (const key of Object.keys(unsafe)) assert.equal(pageHeaders.has(key), false)
+  assert.equal(pageHeaders.get('rsc'), '1')
+  assert.equal(pageHeaders.get('range'), 'bytes=0-10')
+  const preview = await f.fetch(new Request('https://review.workers.dev/stats'))
+  assert.equal(preview.headers.get('x-robots-tag'), 'noindex, nofollow, noarchive')
+})
+
+test('rejects cross-origin, non-JSON, malformed, streamed oversized and unreadable bodies before dispatch', async () => {
+  const f = await fixture()
+  assert.equal((await f.trade('quote', { origin: 'https://attacker.invalid' })).status, 403)
+  assert.equal((await f.trade('quote', { 'content-type': 'text/plain' })).status, 403)
+  for (const body of ['{', 'null', '[]', '{}']) assert.equal((await f.request('/api/trade', { method: 'POST', headers: { origin: 'https://repo.ing', 'content-type': 'application/json' }, body })).status, 403)
+  let cancelled = false
+  const body = new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array(8193)) }, cancel() { cancelled = true } })
+  const options = { method: 'POST', headers: { origin: 'https://repo.ing', 'content-type': 'application/json', 'content-length': '1' }, duplex: 'half' }
+  assert.equal((await f.request('/api/trade', { ...options, body })).status, 403)
+  assert(cancelled)
+  assert.equal((await f.request('/api/trade', { ...options, body: new ReadableStream({ start(c) { c.error(Error('broken input')) } }) })).status, 403)
+  assert.equal(f.runtime.calls.length, 0)
+  assert.equal(f.storage.size, 0)
+})
+
+test('binds only the reader, separate trading credential and exact public review inputs; all eight Hook flags stay false', async () => {
+  const f = await fixture()
+  const body = await (await f.request()).json()
+  assert.equal(body.DATABASE_URL, 'public-reader')
+  assert.equal(body.TRADING_DATABASE_URL, 'trade-only')
+  for (const [key, value] of Object.entries(inputs.proposedEnvironment)) assert.equal(body[key], value)
+  assert.equal(body.TRADING_CUSTODY_RECOVERY_JSON, manifest)
+  for (const key of hookFlags) assert.equal(body[key], 'false')
+  assert.equal(body.PRIVATE_KEY, undefined)
+  assert.equal(body.PUBLIC_DATABASE_URL, undefined)
+  assert.equal(body.SOLANA_RPC_URL, 'https://api.mainnet-beta.solana.com')
+  assert.equal(f.runtime.starts, 2)
+  await f.request()
+  assert.equal(f.runtime.starts, 2)
+  assert(!JSON.stringify([...f.storage]).includes('public-reader'))
+  assert(!JSON.stringify([...f.storage]).includes(manifest.slice(0, 30)))
+  // Independent expected digest: notably both raw manifest bytes and its pin,
+  // and both credentials must participate even though only review is accepted.
+  const expected = createHash('sha256').update(JSON.stringify({
+    PUBLIC_DATABASE_URL: 'public-reader',
+    TRADING_DATABASE_URL: 'trade-only',
+    DBC_CONFIG: inputs.proposedEnvironment.DBC_CONFIG,
+    DBC_LEGACY_CONFIGS: inputs.proposedEnvironment.DBC_LEGACY_CONFIGS,
+    TRADING_CUSTODY_RECOVERY_SHA256: inputs.custody.sha256,
+    TRADING_CUSTODY_RECOVERY_JSON: manifest,
+    EXISTING_MARKET_TRADING_ONLY: 'true',
+    EXISTING_MARKET_TRADING_STAGE: 'review',
+  })).digest('hex')
+  assert.equal([...f.storage.values()][0], expected)
+})
+
+test('missing or mismatched bindings fail closed, including live activation and changed manifest bytes', async () => {
+  const f = await fixture()
+  await f.request()
+  const required = ['PUBLIC_DATABASE_URL', 'TRADING_DATABASE_URL', 'EXISTING_MARKET_TRADING_ONLY', 'EXISTING_MARKET_TRADING_STAGE', 'DBC_CONFIG', 'DBC_LEGACY_CONFIGS', 'TRADING_CUSTODY_RECOVERY_JSON', 'TRADING_CUSTODY_RECOVERY_SHA256']
+  for (const key of required) {
+    const prior = f.env[key]
+    delete f.env[key]
+    assert.equal((await f.request()).status, 503, key)
+    f.env[key] = prior
+  }
+  for (const [key, value] of [['EXISTING_MARKET_TRADING_STAGE', 'live'], ['EXISTING_MARKET_TRADING_ONLY', 'false'], ['DBC_CONFIG', mint], ['DBC_LEGACY_CONFIGS', mint], ['TRADING_CUSTODY_RECOVERY_SHA256', '0'.repeat(64)], ['TRADING_CUSTODY_RECOVERY_JSON', manifest + '\n'], ['TRADING_DATABASE_URL', 'public-reader']]) {
+    const prior = f.env[key]
+    f.env[key] = value
+    assert.equal((await f.request()).status, 503, key)
+    assert.notEqual((await f.trade('submit')).status, 200)
+    f.env[key] = prior
+  }
+  assert.equal(f.runtime.calls.length, 1)
+})
+
+test('the DO itself rejects unvalidated raw fetch and invalid binding RPCs', async () => {
+  const f = await fixture()
+  assert.equal((await f.instance.fetch(new Request('https://repo.ing/stats'))).status, 503)
+  await assert.rejects(f.instance.fetchWithReviewBindings(new Request('https://repo.ing/stats'), { ...f.env, EXISTING_MARKET_TRADING_STAGE: 'live' }), /bindings/i)
+  assert.equal(f.runtime.calls.length, 0)
+  assert.equal(f.storage.size, 0)
+})
+
+test('both DB bindings and raw config changes restart warm instances; rollback restarts too', async () => {
+  const f = await fixture()
+  await f.request()
+  for (const [key, value] of [['PUBLIC_DATABASE_URL', 'rotated-reader'], ['TRADING_DATABASE_URL', 'rotated-trader'], ['DBC_LEGACY_CONFIGS', inputs.configs.slice(1).reverse().join(',')], ['TRADING_DATABASE_URL', 'trade-only']]) {
+    const starts = f.runtime.starts
+    f.env[key] = value
+    const body = await (await f.request()).json()
+    assert.equal(body[key === 'PUBLIC_DATABASE_URL' ? 'DATABASE_URL' : key], value)
+    assert.equal(f.runtime.starts, starts + 1)
+  }
+})
+
+test('review cutover invalidates the legacy reader-only fingerprint so rollback cannot reuse a trading process', async () => {
+  const f = await fixture()
+  f.storage.set('database-binding-sha256', createHash('sha256').update('public-reader').digest('hex'))
+  assert.equal((await f.request()).status, 200)
+  assert.equal(f.storage.has('database-binding-sha256'), false)
+  assert.equal(f.storage.size, 1)
+  // The old wrapper leaves our new key intact but writes its own key after a
+  // rollback. Re-entering review with identical bindings must still restart.
+  f.storage.set('database-binding-sha256', createHash('sha256').update('public-reader').digest('hex'))
+  f.runtime.env = { DATABASE_URL: 'public-reader' }
+  const starts = f.runtime.starts
+  assert.equal((await (await f.request()).json()).TRADING_DATABASE_URL, 'trade-only')
+  assert.equal(f.runtime.starts, starts + 1)
+  assert.equal(f.storage.has('database-binding-sha256'), false)
+})
+
+test('restart/storage failure and an old DO implementation return retryable unavailability, never stale content', async () => {
+  for (const failure of ['failDestroy', 'failStorage']) {
+    const f = await fixture()
+    await f.request()
+    f.env.TRADING_DATABASE_URL = 'rotated-trader'
+    f.runtime[failure] = true
+    const response = await f.request()
+    assert.equal(response.status, 503)
+    assert.equal(response.headers.get('retry-after'), '5')
+    assert.equal(f.runtime.calls.length, 1)
+    assert(!JSON.stringify([...f.storage]).includes('rotated-trader'))
+    f.runtime[failure] = false
+    assert.equal((await (await f.request()).json()).TRADING_DATABASE_URL, 'rotated-trader')
+  }
+  const f = await fixture()
+  f.env.PUBLIC_SITE.getByName = () => ({ fetchWithDatabase() { throw Error('obsolete method') } })
+  assert.equal((await f.request()).status, 503)
+  assert.equal(f.runtime.calls.length, 0)
+})
+
+test('binding refresh cannot race dispatch into the previous or next process environment', async () => {
+  const f = await fixture()
+  let release
+  f.runtime.hold = new Promise(resolve => { release = resolve })
+  const first = f.request()
+  // Reach the container fetch, not merely Worker digest validation.
+  while (f.storage.size === 0) await new Promise(resolve => setImmediate(resolve))
+  f.env.TRADING_DATABASE_URL = 'second-trader'
+  const second = f.request()
+  release()
+  assert.equal((await (await first).json()).TRADING_DATABASE_URL, 'trade-only')
+  assert.equal((await (await second).json()).TRADING_DATABASE_URL, 'second-trader')
+})
+
+test('HTML review notice does not imply live trading or live accounting', async () => {
+  const f = await fixture()
+  f.runtime.html = true
+  const response = await f.request()
+  const html = await response.text()
+  assert.match(html, /unsigned preparation only/i)
+  assert.match(html, /do not sign/i)
+  assert.match(html, /launches.*claims.*replay.*paused/i)
+  assert.match(html, /history snapshot.*not live accounting/i)
+  assert.doesNotMatch(html, /do not connect a wallet/i)
+  assert.equal(response.headers.has('set-cookie'), false)
+})
