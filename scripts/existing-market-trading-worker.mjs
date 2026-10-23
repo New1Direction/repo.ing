@@ -217,13 +217,12 @@ export default {
     const safe = new Response(response.body, response)
     safe.headers.delete('set-cookie')
     for (const [key, value] of Object.entries(headers)) safe.headers.set(key, value)
-    if (safe.headers.get('Content-Type')?.includes('text/html')) {
+    // Live recovery notices belong to the React root and survive hydration.
+    if (bindings.EXISTING_MARKET_TRADING_STAGE !== 'live' && safe.headers.get('Content-Type')?.includes('text/html')) {
       return new HTMLRewriter().on('body', {
         element(body) {
           body.setAttribute('style', `${body.getAttribute('style') || ''};padding-bottom:80px`)
-          const notice = bindings.EXISTING_MARKET_TRADING_STAGE === 'live'
-            ? 'Existing-market trading is live. New launches, claims and hooks remain paused. Historical DBC partner-fee rights remain exposed.'
-            : bindings.EXISTING_MARKET_TRADING_STAGE === 'test'
+          const notice = bindings.EXISTING_MARKET_TRADING_STAGE === 'test'
             ? `Authorized six-swap test only · ${bindings.EXISTING_MARKET_TEST_SUBMISSION === 'true' ? 'Operator-gated wallet test.' : 'Unsigned preparation only. Do not sign.'} Public trading, launches, claims and replay are paused.`
             : 'Existing-market trading review · Unsigned preparation only. Do not sign. Submission, launches, claims and replay are paused.'
           body.append(`<aside role="note" id="recovery-notice" style="position:fixed;bottom:0;left:0;right:0;z-index:2147483647;padding:10px 16px;background:#fff3cd;color:#332500;border-top:1px solid #b89b46;font:600 13px/1.4 system-ui;text-align:center">${notice} Charts use read-only finalized-chain indexing. Fee accounting and payouts remain under verification.</aside>`, { html: true })

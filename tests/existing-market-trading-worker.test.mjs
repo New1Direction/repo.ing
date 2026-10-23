@@ -278,9 +278,7 @@ test('live stage exposes only existing-market trades while launches, hooks, clai
   assert.equal((await f.trade('submit', { origin: 'https://evil.example' })).status, 403)
   f.runtime.html = true
   const html = await (await f.request()).text()
-  assert.match(html, /existing-market trading is live/i)
-  assert.match(html, /launches.*claims.*hooks.*paused/i)
-  assert.doesNotMatch(html, /do not sign|unsigned preparation only/i)
+  assert.equal(html, '<body>App</body>', 'the app owns the hydrated live recovery notice; the Worker must not inject a duplicate')
 })
 
 test('both DB bindings and raw config changes restart warm instances; rollback restarts too', async () => {
