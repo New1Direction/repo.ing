@@ -149,7 +149,7 @@ function validateExecution({ plan, tx, finality, review, multisigPlan, governanc
     Number.isSafeInteger(tx.slot) && tx.slot > 0 && tx.slot === finality.slot &&
     tx.transaction?.signatures?.[0] === finality.signature && typeof finality.signature === 'string' && finality.signature.length > 0)
   requireThat(multisigPlan && same(plan.instructions.map(canonical), multisigPlan.instructions.map(canonical)))
-  const governance = validateCustodyGovernance({ plan: multisigPlan, proof: governanceProof, slot: tx.slot })
+  const governance = validateCustodyGovernance({ plan: multisigPlan, proof: governanceProof, slot: tx.slot, signature: finality.signature })
   const expected = prepareCustodyMultisig(multisigPlan)
   const message = tx.transaction.message
   requireThat(!message.addressTableLookups?.length && !tx.meta.loadedAddresses?.writable?.length && !tx.meta.loadedAddresses?.readonly?.length)

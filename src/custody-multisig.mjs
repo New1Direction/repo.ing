@@ -3,6 +3,7 @@
 // No ALTs, ephemeral signers, batches, config transactions, or spending-limit executes.
 import { createHash } from 'node:crypto'
 import { PublicKey, SystemProgram, TransactionInstruction, TransactionMessage } from '@solana/web3.js'
+import bs58 from 'bs58'
 
 export const SQUADS_PROGRAM = 'SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf'
 export const CUSTODY_MULTISIG = 'Fib7FBLr2wF4uNS15woRRBHj4bimPiW1871tF2AJqfA4'
@@ -75,9 +76,12 @@ const account = (proof, expected, name) => {
 // is a COMPLETE owner/discriminator/multisig-filtered program scan, not a paginated subset.
 // This checks the supplied proof; it does not perform RPC, attest RPC provenance, or
 // establish present-day control. The caller must archive the trusted readback evidence.
-export function validateCustodyGovernance({ plan, proof, slot }) {
+// Alternatively, collectCustodyGovernance proves a later snapshot unchanged through
+// complete finalized blocks, retaining its real context slots instead of relabeling them.
+export function validateCustodyGovernance({ plan, proof, slot, signature }) {
   custodyAssert(Number.isSafeInteger(slot) && slot > 0 && proof?.slot === slot && proof.commitment === 'finalized' &&
     proof.spendingLimitsComplete === true && Array.isArray(proof.spendingLimits) && proof.spendingLimits.length === 0)
+  if (proof.snapshot) validateSnapshotBoundary(plan, proof, signature, slot)
   const expected = prepareCustodyMultisig(plan)
   custodyAssert(plan.messageHash === expected.messageHash && plan.transaction === expected.transaction && plan.proposal === expected.proposal)
   const m = account(proof.multisig, CUSTODY_MULTISIG, 'Multisig')
@@ -103,4 +107,78 @@ export function validateCustodyGovernance({ plan, proof, slot }) {
   return Object.freeze({ multisig: CUSTODY_MULTISIG, vault: MULTISIG_VAULT, vaultIndex: 0, transaction: expected.transaction,
     proposal: expected.proposal, transactionIndex: plan.transactionIndex, messageHash: expected.messageHash, approved: Object.freeze(approved),
     slot, vaultControlVerified: true, scope: 'supplied-finalized-execution-slot-proof-not-current-control' })
+}
+
+function validateSnapshotBoundary(plan, proof, signature, executionSlot) {
+  const s = proof.snapshot, controls = [CUSTODY_MULTISIG, plan.transaction, plan.proposal]
+  custodyAssert(s.executionSignature === signature && typeof signature === 'string' && signature.length > 0 &&
+    Number.isSafeInteger(s.accountsContextSlot) && s.accountsContextSlot >= executionSlot &&
+    Number.isSafeInteger(s.limitsContextSlot) && s.limitsContextSlot >= s.accountsContextSlot &&
+    Array.isArray(s.blocks) && s.blocks.length > 0)
+  let expectedSlot = s.limitsContextSlot, expectedHash = null, execution = null
+  for (const [index, { slot, block }] of s.blocks.entries()) {
+    custodyAssert(slot === expectedSlot && slot >= executionSlot && block && Array.isArray(block.transactions) &&
+      typeof block.blockhash === 'string' && (!expectedHash || block.blockhash === expectedHash) &&
+      Number.isSafeInteger(block.parentSlot) && block.parentSlot < slot && typeof block.previousBlockhash === 'string')
+    let start = 0
+    if (slot === executionSlot) {
+      const matches = block.transactions.flatMap((t, i) => t.transaction?.signatures?.[0] === signature ? [i] : [])
+      custodyAssert(matches.length === 1 && index === s.blocks.length - 1)
+      execution = { ...block.transactions[matches[0]], slot, blockTime: block.blockTime }
+      custodyAssert(execution.meta?.err === null)
+      start = matches[0] + 1
+    }
+    for (const t of block.transactions.slice(start)) {
+      custodyAssert(t.meta && Object.hasOwn(t.meta, 'err') && ['legacy', 0].includes(t.version))
+      const message = t.transaction?.message
+      const keys = message?.staticAccountKeys ?? message?.accountKeys
+      custodyAssert(Array.isArray(keys))
+      const loaded = t.meta.loadedAddresses
+      custodyAssert(!message.addressTableLookups?.length || (Array.isArray(loaded?.writable) && Array.isArray(loaded?.readonly)))
+      const references = [...keys, ...(loaded?.writable ?? []), ...(loaded?.readonly ?? [])].map(addr)
+      custodyAssert(t.meta.err !== null || !references.some(k => controls.includes(k)))
+    }
+    expectedSlot = block.parentSlot; expectedHash = block.previousBlockhash
+  }
+  custodyAssert(execution)
+  return execution
+}
+
+// Read-only trusted-RPC collector. Address-history indexes may lag finalized state;
+// only complete finalized blocks establish absence of intervening control activity.
+// Conservative: even an unrelated successful read of a control account needs review.
+// The target execute must still pass the exact claim/payout transcript validator.
+export async function collectCustodyGovernance({ connection, plan, signature, maxBlocks = 128 }) {
+  custodyAssert(typeof signature === 'string' && signature.length > 0 && Number.isSafeInteger(maxBlocks) && maxBlocks > 0)
+  const { value: statuses } = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })
+  const status = statuses?.[0]
+  custodyAssert(status?.err === null && status.confirmationStatus === 'finalized' && Number.isSafeInteger(status.slot) && status.slot > 0)
+  const addresses = [CUSTODY_MULTISIG, plan.transaction, plan.proposal]
+  const accounts = await connection.getMultipleAccountsInfoAndContext(addresses.map(pk), { commitment: 'finalized', minContextSlot: status.slot })
+  custodyAssert(Number.isSafeInteger(accounts.context?.slot) && accounts.context.slot >= status.slot && accounts.value?.length === 3 && accounts.value.every(Boolean))
+  const limits = await connection.getProgramAccounts(pk(SQUADS_PROGRAM), { commitment: 'finalized', withContext: true,
+    minContextSlot: accounts.context.slot, filters: [
+      { memcmp: { offset: 0, bytes: bs58.encode(tag('account', 'SpendingLimit')) } },
+      { memcmp: { offset: 8, bytes: CUSTODY_MULTISIG } },
+    ] })
+  custodyAssert(Number.isSafeInteger(limits.context?.slot) && limits.context.slot >= accounts.context.slot &&
+    Array.isArray(limits.value) && limits.value.length === 0)
+  const blocks = []
+  let slot = limits.context.slot
+  while (slot >= status.slot && blocks.length < maxBlocks) {
+    const block = await connection.getBlock(slot, { commitment: 'finalized', transactionDetails: 'full',
+      maxSupportedTransactionVersion: 0, rewards: false })
+    custodyAssert(block && Number.isSafeInteger(block.parentSlot) && block.parentSlot < slot)
+    blocks.push({ slot, block })
+    if (slot === status.slot) break
+    slot = block.parentSlot
+  }
+  const raw = i => ({ address: addresses[i], owner: addr(accounts.value[i].owner), executable: accounts.value[i].executable,
+    data: Buffer.from(accounts.value[i].data) })
+  const governanceProof = { slot: status.slot, commitment: 'finalized', multisig: raw(0), transaction: raw(1), proposal: raw(2),
+    spendingLimitsComplete: true, spendingLimits: [], snapshot: { executionSignature: signature,
+      accountsContextSlot: accounts.context.slot, limitsContextSlot: limits.context.slot, blocks } }
+  const tx = validateSnapshotBoundary(plan, governanceProof, signature, status.slot)
+  validateCustodyGovernance({ plan, proof: governanceProof, slot: status.slot, signature })
+  return { tx, governanceProof, finality: { signature, slot: status.slot, confirmationStatus: 'finalized', err: null } }
 }
