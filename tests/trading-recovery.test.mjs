@@ -18,6 +18,21 @@ const binding = {
 }
 const manifest = { version: 1, poolCreators: [binding], positions: [] }
 
+test('test stage denies submission without explicit enablement and rejects public-live fallback', async () => {
+  process.env.EXISTING_MARKET_TRADING_ONLY = 'true'
+  try {
+    for (const stage of ['review', 'test', 'live']) {
+      process.env.EXISTING_MARKET_TRADING_STAGE = stage
+      const result = await POST(new Request('https://repo.ing/api/trade', { method: 'POST', body: JSON.stringify({ action: 'submit' }) }))
+      assert.equal(result.status, 403)
+      assert.equal((await result.json()).error, 'TRADING_EXECUTION_DISABLED')
+    }
+  } finally {
+    delete process.env.EXISTING_MARKET_TRADING_ONLY
+    delete process.env.EXISTING_MARKET_TRADING_STAGE
+  }
+})
+
 test('trading-only image loads the committed custody file without an oversized environment value and still requires its exact digest', () => {
   process.env.EXISTING_MARKET_TRADING_ONLY = 'true'
   delete process.env.TRADING_CUSTODY_RECOVERY_JSON

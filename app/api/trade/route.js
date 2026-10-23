@@ -11,6 +11,7 @@ import { settleConfirmedTrade } from '../../lib/trade-settlement.mjs'
 import { tradeRouter as trader } from '../../lib/trader.mjs'
 import { tradeSessions } from '../../lib/trade-sessions.mjs'
 import { tradingCustodyRecovery, tradingDatabase as database } from '../../lib/trading-recovery.mjs'
+import { existingMarketTest } from '../../lib/existing-market-test.mjs'
 import { publicError } from '../../lib/public-error.mjs'
 import { refuseOverLimit } from '../../lib/request-limits.mjs'
 import { statusOutcome, submitOutcome, trackTradeOutcome } from '../../lib/trade-tracking.mjs'
@@ -42,8 +43,18 @@ export async function POST(request) {
     const body = await request.json()
     if (process.env.EXISTING_MARKET_TRADING_ONLY === 'true') {
       const stage = process.env.EXISTING_MARKET_TRADING_STAGE
-      if (!['review', 'live'].includes(stage) || (body.action === 'submit' && stage !== 'live')) {
+      if (!['review', 'test'].includes(stage) || (body.action === 'submit' &&
+        (stage !== 'test' || process.env.EXISTING_MARKET_TEST_SUBMISSION !== 'true'))) {
         return Response.json({ error: 'TRADING_EXECUTION_DISABLED' }, { status: 403, headers: { 'Cache-Control': 'no-store' } })
+      }
+      if (stage === 'test') {
+        const token = process.env.EXISTING_MARKET_TEST_ACCESS_TOKEN
+        if (!/^[a-f0-9]{64}$/.test(token ?? '') || request.headers.get('authorization') !== `Bearer ${token}`) {
+          return Response.json({ error: 'TRADING_EXECUTION_DISABLED' }, { status: 403, headers: { 'Cache-Control': 'no-store' } })
+        }
+        const refused = body.action === 'submit' ? null : refuseOverLimit(request, body.action === 'status' ? 'trade:status' : 'trade:prepare')
+        if (refused) return refused
+        return Response.json(await existingMarketTest()(body), { headers: { 'Cache-Control': 'no-store' } })
       }
     }
     // Each read action is counted against its address after the checks beside it and before anything is read

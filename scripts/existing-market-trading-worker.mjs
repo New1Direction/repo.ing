@@ -2,7 +2,7 @@ import { Container } from '@cloudflare/containers'
 // Wrangler Text module: preserve exact bytes without a >5KB environment binding.
 import custodyManifest from '../config/existing-market-custody.json'
 
-// Review-only successor to the accepted recovery wrapper. Keep the existing
+// Review/test-only successor to the accepted recovery wrapper. Keep the existing
 // PublicSite/PUBLIC_SITE/public-readonly migration identity. This module is not
 // a live activation mechanism: changing a binding to `live` fails closed.
 const pages = new Set(['/', '/launch', '/explore', '/builders', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks'])
@@ -16,6 +16,7 @@ const custodyDigest = '2c31354ba8009acb0da1319b068f479216b0615120328510cba50665f
 const primaryConfig = '2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M'
 const legacyConfigs = ['8TXNGgx6g5TcsVCYt7wz3cAxJkynzzBZWXeQtXZaz6A3', '261xpZVAz5k3ZfwfxXdgkgLowiH6NUzFEHtihhD4YMq1', 'D7oz8xQ4seaNaEgiDS4fu3YJfmUvR5iPuznxuqKV4u1c']
 const bindingNames = ['PUBLIC_DATABASE_URL', 'TRADING_DATABASE_URL', 'DBC_CONFIG', 'DBC_LEGACY_CONFIGS', 'TRADING_CUSTODY_RECOVERY_SHA256', 'TRADING_CUSTODY_RECOVERY_JSON', 'EXISTING_MARKET_TRADING_ONLY', 'EXISTING_MARKET_TRADING_STAGE']
+const testBindingNames = ['EXISTING_MARKET_TEST_PLAN', 'EXISTING_MARKET_TEST_SUBMISSION', 'EXISTING_MARKET_TEST_ACCESS_TOKEN']
 
 async function sha256(value) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
@@ -23,14 +24,18 @@ async function sha256(value) {
 }
 
 function snapshotBindings(env) {
-  return Object.fromEntries(bindingNames.map(name => [name, env[name]]))
+  return Object.fromEntries([...bindingNames, ...testBindingNames].map(name => [name, env[name]]))
 }
 
 async function validateBindings(bindings) {
+  if (bindings.EXISTING_MARKET_TRADING_STAGE === 'test' &&
+    (bindings.EXISTING_MARKET_TEST_PLAN !== 'existing-markets-six-swaps-v1' ||
+      !['false', 'true'].includes(bindings.EXISTING_MARKET_TEST_SUBMISSION) ||
+      !/^[a-f0-9]{64}$/.test(bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN ?? ''))) throw Error('Test bindings missing or mismatched')
   if (bindingNames.some(name => typeof bindings[name] !== 'string' || !bindings[name].trim())
     || bindings.PUBLIC_DATABASE_URL === bindings.TRADING_DATABASE_URL
     || bindings.EXISTING_MARKET_TRADING_ONLY !== 'true'
-    || bindings.EXISTING_MARKET_TRADING_STAGE !== 'review'
+    || !['review', 'test'].includes(bindings.EXISTING_MARKET_TRADING_STAGE)
     || bindings.DBC_CONFIG !== primaryConfig
     || bindings.DBC_LEGACY_CONFIGS.split(',').sort().join(',') !== [...legacyConfigs].sort().join(',')
     || bindings.TRADING_CUSTODY_RECOVERY_SHA256 !== custodyDigest
@@ -42,14 +47,17 @@ async function validateBindings(bindings) {
 // Integrated from the prepared edge-policy.mjs, narrowed to review only.
 // A null result MUST fall back to the unchanged public GET/HEAD allowlist.
 // A Request is the only result allowed to bypass that read-only list.
-async function tradeBoundary(request, stage) {
+async function tradeBoundary(request, bindings) {
+  const stage = bindings.EXISTING_MARKET_TRADING_STAGE
   const url = new URL(request.url)
   const deny = () => Response.json({ error: 'TRADING_EXECUTION_DISABLED' }, { status: 403 })
   if (request.headers.has('upgrade')) return deny()
-  const active = stage === 'review'
+  const active = ['review', 'test'].includes(stage)
   const balance = url.pathname === '/api/wallet/balance' || marketBalance.test(url.pathname)
   if (['GET', 'HEAD'].includes(request.method) && !(active && balance)) return null
   if (!active || (!balance && url.pathname !== '/api/trade') || (balance && !['GET', 'HEAD'].includes(request.method))) return deny()
+  if (stage === 'test' && (!/^[a-f0-9]{64}$/.test(bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN ?? '') ||
+    request.headers.get('authorization') !== `Bearer ${bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN}`)) return deny()
   let body
   if (!balance) {
     if (request.method !== 'POST' || request.headers.get('origin') !== url.origin
@@ -72,7 +80,9 @@ async function tradeBoundary(request, stage) {
     for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength }
     let payload
     try { payload = JSON.parse(new TextDecoder().decode(body)) } catch { return deny() }
-    if (!payload || !['depth', 'quote', 'costs', 'prepare', 'status'].includes(payload.action)) return deny()
+    const actions = stage === 'test' ? ['prepare', 'status', ...(bindings.EXISTING_MARKET_TEST_SUBMISSION === 'true' ? ['submit'] : [])]
+      : ['depth', 'quote', 'costs', 'prepare', 'status']
+    if (!payload || !actions.includes(payload.action)) return deny()
   }
   const headers = new Headers()
   // cf-connecting-ip is set by Cloudflare at ingress; never trust caller-supplied
@@ -80,6 +90,7 @@ async function tradeBoundary(request, stage) {
   for (const name of ['accept', 'content-type', 'origin', 'cf-connecting-ip']) {
     if (request.headers.has(name)) headers.set(name, request.headers.get(name))
   }
+  if (stage === 'test') headers.set('authorization', request.headers.get('authorization'))
   return new Request(request.url, { method: request.method, headers, body, redirect: 'manual' })
 }
 
@@ -121,6 +132,9 @@ export class PublicSite extends Container {
         TRADING_CUSTODY_RECOVERY_SHA256: bindings.TRADING_CUSTODY_RECOVERY_SHA256,
         EXISTING_MARKET_TRADING_ONLY: bindings.EXISTING_MARKET_TRADING_ONLY,
         EXISTING_MARKET_TRADING_STAGE: bindings.EXISTING_MARKET_TRADING_STAGE,
+        EXISTING_MARKET_TEST_PLAN: bindings.EXISTING_MARKET_TRADING_STAGE === 'test' ? bindings.EXISTING_MARKET_TEST_PLAN : '',
+        EXISTING_MARKET_TEST_SUBMISSION: bindings.EXISTING_MARKET_TRADING_STAGE === 'test' ? bindings.EXISTING_MARKET_TEST_SUBMISSION : 'false',
+        EXISTING_MARKET_TEST_ACCESS_TOKEN: bindings.EXISTING_MARKET_TRADING_STAGE === 'test' ? bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN : '',
         SOLANA_RPC_URL: 'https://api.mainnet-beta.solana.com',
         HOOK_PRODUCTION_BOOTSTRAP: 'false',
         HOOK_NATIVE_LAUNCH_ENABLED: 'false',
@@ -148,7 +162,7 @@ export default {
     }
     if (url.hostname.endsWith('.workers.dev')) headers['X-Robots-Tag'] = 'noindex, nofollow, noarchive'
     const bindings = snapshotBindings({ ...env, TRADING_CUSTODY_RECOVERY_JSON: custodyManifest })
-    const boundary = await tradeBoundary(request, bindings.EXISTING_MARKET_TRADING_STAGE)
+    const boundary = await tradeBoundary(request, bindings)
     if (boundary instanceof Response) {
       for (const [key, value] of Object.entries(headers)) boundary.headers.set(key, value)
       return boundary
@@ -192,7 +206,10 @@ export default {
       return new HTMLRewriter().on('body', {
         element(body) {
           body.setAttribute('style', `${body.getAttribute('style') || ''};padding-bottom:80px`)
-          body.append('<aside role="note" id="recovery-notice" style="position:fixed;bottom:0;left:0;right:0;z-index:2147483647;padding:10px 16px;background:#fff3cd;color:#332500;border-top:1px solid #b89b46;font:600 13px/1.4 system-ui;text-align:center">Existing-market trading review · Unsigned preparation only. Do not sign. Submission, launches, claims and replay are paused. Market history snapshot through Oct 22, 14:48 UTC — not live accounting.</aside>', { html: true })
+          const notice = bindings.EXISTING_MARKET_TRADING_STAGE === 'test'
+            ? `Authorized six-swap test only · ${bindings.EXISTING_MARKET_TEST_SUBMISSION === 'true' ? 'Operator-gated wallet test.' : 'Unsigned preparation only. Do not sign.'} Public trading, launches, claims and replay are paused.`
+            : 'Existing-market trading review · Unsigned preparation only. Do not sign. Submission, launches, claims and replay are paused.'
+          body.append(`<aside role="note" id="recovery-notice" style="position:fixed;bottom:0;left:0;right:0;z-index:2147483647;padding:10px 16px;background:#fff3cd;color:#332500;border-top:1px solid #b89b46;font:600 13px/1.4 system-ui;text-align:center">${notice} Market history snapshot through Oct 22, 14:48 UTC — not live accounting.</aside>`, { html: true })
         },
       }).transform(safe)
     }

@@ -285,3 +285,27 @@ test('HTML review notice does not imply live trading or live accounting', async 
   assert.doesNotMatch(html, /do not connect a wallet/i)
   assert.equal(response.headers.has('set-cookie'), false)
 })
+
+test('test-only stage needs pinned plan and operator access; sending remains separately disabled', async () => {
+  const f = await fixture()
+  f.env.EXISTING_MARKET_TRADING_STAGE = 'test'
+  assert.equal((await f.request()).status, 503)
+  f.env.EXISTING_MARKET_TEST_PLAN = 'existing-markets-six-swaps-v1'
+  f.env.EXISTING_MARKET_TEST_SUBMISSION = 'false'
+  f.env.EXISTING_MARKET_TEST_ACCESS_TOKEN = 'a'.repeat(64) // fixture, not a credential
+  assert.equal((await f.request()).status, 200)
+  assert.equal((await f.trade('prepare')).status, 403)
+  assert.equal((await f.trade('prepare', { authorization: `Bearer ${'b'.repeat(64)}` })).status, 403)
+  const auth = { authorization: `Bearer ${'a'.repeat(64)}` }
+  assert.equal((await f.trade('prepare', auth)).status, 200)
+  assert.equal(f.runtime.calls.at(-1).request.headers.get('authorization'), auth.authorization)
+  assert.equal((await f.trade('submit', auth)).status, 403)
+  f.env.EXISTING_MARKET_TEST_SUBMISSION = 'true'
+  const starts = f.runtime.starts
+  assert.equal((await f.trade('submit', auth)).status, 200)
+  assert.equal(f.runtime.starts, starts + 1, 'approval change restarts the process')
+  for (const action of ['claim', 'replay', 'depth', 'quote', 'costs']) assert.equal((await f.trade(action, auth)).status, 403)
+  for (const path of ['/api/launch', '/api/actions/trade', '/api/replay']) assert.equal((await f.request(path, { method: 'POST', headers: auth })).status, 403)
+  f.runtime.html = true
+  assert.match(await (await f.request()).text(), /six-swap test only/i)
+})
