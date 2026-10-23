@@ -72,7 +72,8 @@
 - No collector/request endpoint or transaction execution was enabled by this checkpoint.
 
 ## Open blockers and remaining owner actions
-- Image and read-only restoration are deployed; authorized backup-branch delivery includes packaging 1288e0d, MCP 2e5a0a2 and this chart recovery checkpoint. Verify the backup remote equals local HEAD after pushing; main stays untouched.
+- Image and read-only restoration are deployed; source checkpoint e6a6d1113803ac517250aee3a164ff7e39aa630f was pushed to backup/restoration-checkpoint-20261023 and the exact remote SHA verified, including packaging 1288e0d and MCP 2e5a0a2. Main is untouched. This status-only follow-up uses the same authorized backup destination.
+- Temporary render-debug container removed and disposable chart PostgreSQL stopped; existing containers, the live chart LaunchAgent and disabled loopback signing console are preserved.
 - First unblock the unsigned-message replacement decision above; only then obtain human signatures and continue exact six-step acceptance. No automatic retry is authorized.
 - Trading: fresh exact messages, wallet signatures, six-step finality/fees/refunds/session/DAMM checks still required. Do not infer execution from an HTTP 200.
 - Owner accepted continued historical DBC fee-claimer exposure for reopening; moving pool custody did not revoke immutable fee-claimer/leftover rights.
