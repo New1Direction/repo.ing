@@ -1,4 +1,3 @@
-import { builderCollectionState } from './builder-collection-state.mjs'
 import { isBundleMarket } from './bundles.mjs'
 import { isEarlyAccessMarket } from './early-access.mjs'
 import { PublicKey } from '@solana/web3.js'
@@ -6,8 +5,8 @@ import { createMarketConfigResolver } from './market-config.mjs'
 import { NATIVE_MINT } from '@solana/spl-token'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { drizzle } from 'drizzle-orm/node-postgres'
-import { eq, sql } from 'drizzle-orm'
-import { markets, repoClaims } from './db/schema.mjs'
+import { eq } from 'drizzle-orm'
+import { markets } from './db/schema.mjs'
 
 import { createGraduatedFees } from './graduated-fees.mjs'
 import { createCustodyRecovery } from './custody-recovery.mjs'
@@ -148,19 +147,22 @@ export function createReconciler({ pool, connection, config, earlyAccess = null,
         if (!deriveDbcPoolAddress(NATIVE_MINT, mintKey, configKey).equals(poolKey)) {
           throw new Error('Canonical market does not match fixed DBC config')
         }
-        const { rows: [credits] } = await client.query('select coalesce(sum(amount_base_units),0)::text as total from builder_fee_credits where github_repo_id=$1',[String(repoId)])
-        const [claims] = await db.select({ pending: sql`count(*) filter (where ${repoClaims.status} = 'pending')::int` })
-          .from(repoClaims).where(eq(repoClaims.githubRepoId, repoId))
-        const [settled] = await db.select({ total: sql`coalesce(sum(${repoClaims.amountBaseUnits}), 0)::text` })
-          .from(repoClaims).where(sql`${repoClaims.githubRepoId} = ${repoId} and ${repoClaims.status} = 'settled'`)
-        const collection = await builderCollectionState(client, repoId)
-        const recordedEarned = BigInt(credits.total)
-        const recordedClaimed = BigInt(settled.total)
-        const expectedRemaining = recordedEarned - recordedClaimed - collection.collected
-        const base = { githubRepoId: repoId, pool: market.pool, recordedEarned, recordedClaimed, platformCollected: collection.collected,
+        // One statement gives the locked ledger totals one snapshot, without four network round trips.
+        // Aggregate each table separately: joining its individual rows would multiply credits and withdrawals.
+        const { rows: [ledger] } = await client.query(`select
+          (select coalesce(sum(amount_base_units),0)::text from builder_fee_credits where github_repo_id=$1) as earned,
+          (select coalesce(sum(amount_base_units),0)::text from repo_claims where github_repo_id=$1 and status='settled') as claimed,
+          (select coalesce(sum(amount),0)::text from builder_fee_collections where github_repo_id=$1 and status='settled') as collected,
+          (select count(*) from repo_claims where github_repo_id=$1 and status='pending') +
+          (select count(*) from builder_fee_collections where github_repo_id=$1 and status='pending') as pending`, [String(repoId)])
+        const recordedEarned = BigInt(ledger.earned)
+        const recordedClaimed = BigInt(ledger.claimed)
+        const platformCollected = BigInt(ledger.collected)
+        const expectedRemaining = recordedEarned - recordedClaimed - platformCollected
+        const base = { githubRepoId: repoId, pool: market.pool, recordedEarned, recordedClaimed, platformCollected,
           expectedRemaining, onchainCreatorFee: null, difference: null }
-        if (Number(claims.pending) + collection.pending > 0) return { ...base, status: 'PENDING_REVIEW',
-          reason: `${Number(claims.pending) + collection.pending} unresolved payout or collection intent(s)` }
+        if (Number(ledger.pending) > 0) return { ...base, status: 'PENDING_REVIEW',
+          reason: `${Number(ledger.pending)} unresolved payout or collection intent(s)` }
 
         let state
         try {
