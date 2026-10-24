@@ -1,6 +1,6 @@
 import bs58 from 'bs58'
 import { createQuoteAwareConfigResolver, readPoolConfig } from './market-config.mjs'
-import { PublicKey } from '@solana/web3.js'
+import { PublicKey, Transaction } from '@solana/web3.js'
 import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, getTransferHook, unpackMint } from '@solana/spl-token'
 import { ActivationType, DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { usesActivationClock } from './launch-clock.mjs'
@@ -9,6 +9,8 @@ import { earlyAccessDbcConfig, isEarlyAccessMarket } from './early-access.mjs'
 import { hasFairRamp, marketHookRules, rulesMatch } from './early-access-rules.mjs'
 import { bundleCurveConfig, isBundleMarket } from './bundles.mjs'
 import { BUNDLE_VAULT_PROGRAM_ID, STATUS, bundleAddress, decodeBundle } from './bundle-vault.mjs'
+import { MULTISIG_VAULT } from './custody-multisig.mjs'
+import { RECOVERED_LAUNCH_CONFIG, readLaunchCustodyHandoff } from './launch-custody.mjs'
 
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 // SDK 1.5.13 IDL: initializeVirtualPoolWithSplToken.
@@ -74,17 +76,23 @@ export function createLaunchEvidenceVerifier({ connection, config, earlyAccessCo
     const message = transaction.transaction.message
     const keys = message.accountKeys ?? message.staticAccountKeys
     if (!keys) return { state: 'invalid', reason: 'Launch transaction has no account keys' }
+    let initialCreator = creator
+    if (configKey.toBase58() === RECOVERED_LAUNCH_CONFIG) {
+      if (creator.toBase58() !== MULTISIG_VAULT) return { state: 'mismatch', reason: 'Recovered launch must record the custody vault as creator' }
+      try { initialCreator = readLaunchCustodyHandoff(Transaction.populate(message), { mint, pool, launcher }) }
+      catch { return { state: 'mismatch', reason: 'Recovered launch custody handoff is missing or inconsistent' } }
+    }
     const isKey = (index, expected) => keys[index]?.equals(expected)
     const createInstruction = message.instructions?.find(ix => {
       if (!isKey(ix.programIdIndex, DBC_PROGRAM)) return false
       const discriminator = Buffer.from(bs58.decode(ix.data)).subarray(0, 8)
       return discriminator.equals(CREATE_SPL_POOL_DISCRIMINATOR) &&
-        isKey(ix.accounts[0], configKey) && isKey(ix.accounts[2], creator) &&
+        isKey(ix.accounts[0], configKey) && isKey(ix.accounts[2], initialCreator) &&
         isKey(ix.accounts[3], mint) && isKey(ix.accounts[5], pool) &&
         isKey(ix.accounts[10], launcher)
     })
     const signers = keys.slice(0, message.header.numRequiredSignatures)
-    if (!createInstruction || ![creator, mint, launcher].every(key => signers.some(signer => signer.equals(key)))) {
+    if (!createInstruction || ![initialCreator, mint, launcher].every(key => signers.some(signer => signer.equals(key)))) {
       return { state: 'mismatch', reason: 'Launch signature is not a DBC SPL pool creation by the recorded accounts' }
     }
     if (!state || !mintInfo) return { state: 'missing', reason: 'Finalized DBC pool or SPL mint account is missing' }

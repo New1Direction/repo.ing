@@ -5,6 +5,17 @@ import { TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { prepareLaunchSigning, DefinitiveLaunchError } from '../src/meteora-launch.mjs'
 import { createWalletProvider, SOLANA_MAINNET_CHAIN } from '../app/lib/solana-wallet.mjs'
 import { estimateLaunchCosts } from '../src/launch-costs.mjs'
+import { launchCustodyHandoff } from '../src/launch-custody.mjs'
+import { CUSTODY_MEMBERS, MULTISIG_VAULT } from '../src/custody-multisig.mjs'
+
+test('recovered handoff refuses compromised and protected custody accounts as online bootstrap signers', () => {
+  const pool = Keypair.generate().publicKey
+  for (const creator of [...CUSTODY_MEMBERS, MULTISIG_VAULT, 'FeZX15P6abpTZZdRaFaGgewrudBPHywe7X21iT7DYnX1',
+    'H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3', '3eCFwDiKetHe9pg1zNEkTohUECu2vtsZDRMZ3jeR4g5o']) {
+    assert.throws(() => launchCustodyHandoff({ pool, creator }), /bootstrap signer/, creator)
+  }
+  assert.equal(launchCustodyHandoff({ pool, creator: Keypair.generate().publicKey }).keys[3].pubkey.toBase58(), MULTISIG_VAULT)
+})
 
 function fixture() {
   const payer = Keypair.generate(), creator = Keypair.generate(), mint = Keypair.generate()

@@ -176,7 +176,7 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
       const rules = earlyAccess?.rules ?? RULES.EARLY_ACCESS
       const starsAtLaunch = snapshot && hasStarUnlocks(rules) ? await readRepositoryStars(String(repo.githubRepoId), fetchImpl) : repo.stars
       if (snapshot && hasStarUnlocks(rules) && starsAtLaunch === null) throw new EarlyAccessError(STARS_UNREADABLE)
-      let prepared = await launcher.prepare({ launcherWallet: wallet, tokenName, tokenSymbol, initialBuyLamports,
+      let prepared = await launcher.prepare({ launcherWallet: wallet, repoId: String(repo.githubRepoId), tokenName, tokenSymbol, initialBuyLamports,
         ...snapshot ? { earlyAccess: { windowSeconds: earlyAccess.windowSeconds, repoId: String(repo.githubRepoId), keepLauncher: snapshot.keepLauncher,
           rules, starsAtLaunch } } : {},
         ...bundle ? { bundle: { id: String(bundle.id) } } : {} })

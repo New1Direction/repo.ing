@@ -88,6 +88,34 @@ test('a definitive preparation failure leaves no confirmed market and retry succ
   assert.equal((await drizzle(pool).select().from(markets)).length, 1)
 })
 
+test('short ordinary metadata hides unsent attempts and follows the unique sent market without caching uncertainty', async () => {
+  const { GET } = await import('../app/m/[id]/route.js')
+  const saved = { url: process.env.DATABASE_URL, origin: process.env.APP_ORIGIN, pool: globalThis.__gitfunPool }
+  process.env.DATABASE_URL = databaseUrl
+  process.env.APP_ORIGIN = 'https://repo.ing'
+  globalThis.__gitfunPool = pool
+  try {
+    const market = await createLaunchCoordinator({ pool, launcher: fakeLauncher(), fetchImpl: fakeFetch }).launch(request())
+    const read = id => GET(new Request(`https://repo.ing/m/${id}`), { params: Promise.resolve({ id }) })
+    for (const status of ['reserved', 'prepared', 'failed', 'submitted', 'ambiguous', 'confirmed']) {
+      await pool.query('update markets set status = $1 where github_repo_id = 123', [status])
+      const response = await read('123')
+      const sent = ['submitted', 'ambiguous', 'confirmed'].includes(status)
+      assert.equal(response.status, sent ? 200 : 404, status)
+      if (sent) {
+        assert.equal((await response.json()).name, market.tokenName)
+        assert.equal(response.headers.get('cache-control'), status === 'confirmed' ? 'public, max-age=300' : 'no-store')
+      }
+    }
+    // A valid but absent model-market ID is not mistaken for an invalid GitHub ID.
+    assert.equal((await read('7000000000000000')).status, 404)
+  } finally {
+    if (saved.url === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = saved.url
+    if (saved.origin === undefined) delete process.env.APP_ORIGIN; else process.env.APP_ORIGIN = saved.origin
+    globalThis.__gitfunPool = saved.pool
+  }
+})
+
 test('concurrent requests serialize before preparing and both return one market', async () => {
   let release
   const gate = new Promise(resolve => { release = resolve })

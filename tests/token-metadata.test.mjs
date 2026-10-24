@@ -39,8 +39,9 @@ test('community tokens name their repository, keep the disclaimer and link their
   assert.equal(json.website, `${origin}/token/${other}`)
 })
 
-// The short link early access launches carry (/m/<GitHub repository id>) serves what /api/token-metadata/<mint> serves for that
-// repository's market; anything but a GitHub repository id is refused before the database is read.
+// The short launch link (/m/<canonical market id>) serves what /api/token-metadata/<mint> serves for that
+// market; malformed IDs are refused before the database is read. Actual status/privacy queries run against PostgreSQL
+// in launch-coordinator.test.mjs.
 test('the short metadata link reads the market by repository id; the mint link by mint', async () => {
   const { GET: byRepo } = await import('../app/m/[id]/route.js')
   const { GET: byMint } = await import('../app/api/token-metadata/[mint]/route.js')
@@ -56,9 +57,6 @@ test('the short metadata link reads the market by repository id; the mint link b
     const json = await short.json()
     assert.deepEqual([json.name, json.symbol, json.external_url, json.github], ['Hello', 'HELLO', `${origin}/token/${mint}`, 'https://github.com/octocat/Hello-World'])
     assert.equal(short.headers.get('cache-control'), 'public, max-age=300')
-    // By repository id: early access markets only, and only once the launch was sent (an id is guessable, an unsent mint is not).
-    assert.match(sqls[0], /m\.early_access_end is not null and m\.status in \('submitted', 'confirmed', 'ambiguous'\)/)
-    assert.doesNotMatch(sqls[0], /prepared/)
     const long = await byMint(new Request(`https://repo.ing/api/token-metadata/${mint}`), { params: Promise.resolve({ mint }) })
     assert.deepEqual(await long.json(), json)
     assert.match(sqls[1], /m\.mint = \$1 and m\.status in \('prepared', 'submitted', 'confirmed', 'ambiguous'\)/)
