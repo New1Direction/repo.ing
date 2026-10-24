@@ -54,7 +54,7 @@ export async function sendLaunch(connection, { raw, signature, blockhash, lastVa
   try { height = await connection.getBlockHeight('confirmed') }
   catch { throw new DefinitiveLaunchError('Could not reach Solana to send the launch, so nothing was sent or charged. Refresh the review and try again.') }
   if (height > Number(lastValidBlockHeight)) throw new DefinitiveLaunchError(LAUNCH_REVIEW_EXPIRED)
-  try { await connection.sendRawTransaction(raw, { skipPreflight: false }) }
+  try { await connection.sendRawTransaction(raw, { skipPreflight: false, maxRetries: 0 }) }
   catch (error) {
     // An error answer from the RPC (failed simulation or validation) means it refused the transaction and did not
     // forward it. A transport failure (timeout, dropped connection) is unknown and stays ambiguous, and so does

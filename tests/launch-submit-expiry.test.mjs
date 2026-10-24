@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { Keypair, SendTransactionError, TransactionExpiredBlockheightExceededError } from '@solana/web3.js'
-import { createMeteoraLauncher, DefinitiveLaunchError } from '../src/meteora-launch.mjs'
+import { Connection, Keypair, SendTransactionError, TransactionExpiredBlockheightExceededError } from '@solana/web3.js'
+import { createMeteoraLauncher, DefinitiveLaunchError, sendLaunch } from '../src/meteora-launch.mjs'
 import { IncompleteLaunchError } from '../src/launch-coordinator.mjs'
 import { launchFailure } from '../src/launch-failure.mjs'
 import { LAUNCH_REVIEW_EXPIRED } from '../src/launch-expiry.mjs'
@@ -65,6 +65,23 @@ test('a sent launch is confirmed; one that failed on chain is definitive', async
   assert.deepEqual(ok.calls, { send: 1, confirm: 1 })
   const failed = launcherWith({ confirm: async () => ({ value: { err: { InstructionError: [2, 'Custom'] } } }) })
   await assert.rejects(() => failed.launcher.submit(launch), DefinitiveLaunchError)
+})
+
+test('the launch RPC request forbids validator rebroadcast even when submission fails', async () => {
+  const submitted = []
+  const connection = new Connection('http://localhost:8899', { commitment: 'confirmed', fetch: async (_url, options) => {
+    const request = JSON.parse(options.body)
+    if (request.method === 'getBlockHeight') return new Response(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: 900 }))
+    assert.equal(request.method, 'sendTransaction')
+    submitted.push(request.params)
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: request.id,
+      error: { code: -32002, message: 'Transaction simulation failed: Blockhash not found', data: { logs: [] } } }))
+  } })
+  await assert.rejects(sendLaunch(connection, launch), DefinitiveLaunchError)
+  assert.equal(submitted.length, 1)
+  assert.equal(submitted[0][0], 'AQ==')
+  assert.notEqual(submitted[0][1].skipPreflight, true)
+  assert.equal(submitted[0][1].maxRetries, 0)
 })
 
 test('launch errors are classified by name, which survives the production build renaming classes', () => {
