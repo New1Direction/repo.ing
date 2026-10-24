@@ -1,4 +1,4 @@
-import { database } from '../../../lib/server.mjs'
+import { database, ordinaryLaunchRuntime } from '../../../lib/server.mjs'
 import { publicOrigin } from '../../../lib/origin.mjs'
 import { repositoryImageSuggestions } from '../../../lib/repo-images.mjs'
 import { normalizeTokenImage, readLimitedBody } from '../../../../src/token-image.mjs'
@@ -12,7 +12,9 @@ export const runtime = 'nodejs'
 let uploads = 0
 async function repository(params) {
   const { repo } = await params
-  return repositoryImageContext(database(), repo)
+  const recovery = process.env.ORDINARY_LAUNCH_RECOVERY_ENABLED === 'true'
+  // The public reader hides unlaunched repositories. The launch role reads them here, but this path never writes.
+  return repositoryImageContext(recovery ? ordinaryLaunchRuntime().pool : database(), repo, undefined, { persist: !recovery })
 }
 
 export async function GET(_request, { params }) {

@@ -46,6 +46,14 @@ test('already resolved image context avoids another GitHub lookup', async () => 
   assert.equal(context.record, record)
 })
 
+test('read-only image suggestions resolve an unknown repository without persisting it', async () => {
+  const pool = { query: async sql => { assert.match(sql, /^select /); return { rows: [] } } }
+  const result = await repositoryImageContext(pool, id,
+    key => resolvePublicRepositoryById(key, fetchRepo()), { persist: false })
+  assert.equal(result.record.name, 'hindsight')
+  assert.equal(result.id, id)
+})
+
 test('invalid IDs cannot trigger queries or external requests', async () => {
   await assert.rejects(repositoryImageContext({ query: () => { throw Error('Unexpected query') } }, '../other'), /Invalid repository/)
 })

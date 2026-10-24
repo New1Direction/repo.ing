@@ -1,7 +1,7 @@
 import { parseRepositoryUrl, resolvePublicRepository, RepositoryResolutionError } from '../../../src/github.mjs'
 import { persistLaunchRepository } from '../../../src/repository-store.mjs'
 import { publicError } from '../../lib/public-error.mjs'
-import { database } from '../../lib/server.mjs'
+import { database, ordinaryLaunchRuntime } from '../../lib/server.mjs'
 import { activeDecision, OPT_OUT_ERROR } from '../../../src/maintainer-opt-outs.mjs'
 import { checkLaunchLineage, LineageError } from '../../../src/repo-lineage.mjs'
 import { namesHuggingFace } from '../../../src/hf-launch.mjs'
@@ -12,11 +12,15 @@ export const runtime = 'nodejs'
 export async function POST(request) {
   try {
     const { url } = await request.json()
+    const recovery = process.env.ORDINARY_LAUNCH_RECOVERY_ENABLED === 'true'
     // huggingface.co / hf.co: a model market (dormant until HF_MARKETS_ENABLED). Every other value is a GitHub repository.
-    if (namesHuggingFace(url)) return await resolveModelRequest(url, request)
+    if (namesHuggingFace(url)) {
+      if (recovery) return Response.json({ error: 'Only ordinary GitHub launches are available during recovery.' }, { status: 403 })
+      return await resolveModelRequest(url, request)
+    }
     const normalizedUrl = typeof url === 'string' && url.trim().startsWith('github.com/') ? `https://${url.trim()}` : url
     const { owner, name } = parseRepositoryUrl(normalizedUrl)
-    const pool = database()
+    const pool = recovery ? ordinaryLaunchRuntime().pool : database()
     if (!pool) return Response.json({ error: 'Database is not configured' }, { status: 503 })
     // Existing finalized markets can be opened without consuming GitHub's shared IP limit. GitHub rows only: a Hugging Face
     // model may share this owner/name.

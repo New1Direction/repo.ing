@@ -47,9 +47,9 @@ async function launchRequest(body) {
 // early access, for a GitHub repository from its launch page; choosing it replaces the pair, early access and initial buy with
 // the raise's target and deadline, and opens a raise instead of launching (app/components/launch-bundle.jsx).
 export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft, launchFee: configLaunchFee = null,
-  verificationBonus = null, quoteOptions = null, earlyAccess = null, bundle = null }) {
+  verificationBonus = null, quoteOptions = null, earlyAccess = null, bundle = null, recovery = false }) {
   const model = repo.source === 'huggingface'
-  const stockPair = model ? null : quoteOptions?.find(option => option.type === 'TOKENIZED_EQUITY' && option.eligible) ?? null
+  const stockPair = model || recovery ? null : quoteOptions?.find(option => option.type === 'TOKENIZED_EQUITY' && option.eligible) ?? null
   const [quoteAssetId, setQuoteAssetId] = useState('sol')
   // A chosen stock pair is always sent, even if the server stops offering it before the launch is prepared: the server then
   // refuses it with its code. A pair is never dropped on the way, so a stock launch can never silently become SOL.
@@ -68,7 +68,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const [pairDropped, setPairDropped] = useState(false)
   const [busy, setBusy] = useState(false)
   const working = useRef(false)
-  const [choice, setChoice] = useState(draft?.initialBuy ?? 'none')
+  const [choice, setChoice] = useState(recovery ? 'none' : draft?.initialBuy ?? 'none')
   const [customBuy, setCustomBuy] = useState('')
   const [buyQuote, setBuyQuote] = useState(null)
   const [buyError, setBuyError] = useState(null)
@@ -86,14 +86,14 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const quoteKey = `${quoteAssetId}:${choice === 'custom' ? `custom:${customBuy}` : choice}`
   // A stock-paired launch has no initial buy yet (src/meteora-launch.mjs): the buy section is replaced by a note.
   const stockChosen = quoteAssetId !== 'sol'
-  const noBuy = stockChosen || choice === 'none' || (choice === 'custom' && /^(?:0+(?:\.0*)?)?$/.test(customBuy.trim()))
+  const noBuy = recovery || stockChosen || choice === 'none' || (choice === 'custom' && /^(?:0+(?:\.0*)?)?$/.test(customBuy.trim()))
   const quote = !noBuy && buyQuote?.key === quoteKey ? buyQuote : null
   const quoteError = !noBuy && buyError?.key === quoteKey ? buyError.message : ''
   const quoting = !noBuy && !quote && !quoteError
   const isDefault = !draft && name === defaultTokenName(repo.name) && symbol === defaultTokenSymbol(repo.name)
   const needsDetails = !tokenDetailsComplete({ name, symbol, image: tokenImage || imageBusy })
   const initialBuy = choice === 'none' ? '' : choice === 'custom' ? customBuy : quote ? formatUnits(quote.initialBuyLamports) : ''
-  const bundleOffered = Boolean(bundle) && !model && !draft && trendRevision === undefined
+  const bundleOffered = !recovery && Boolean(bundle) && !model && !draft && trendRevision === undefined
   const [bundleChosen, setBundleChosen] = useState(false)
   const bundleMode = bundleOffered && bundleChosen
   // Whose fee terms the form states: the chosen stock pair's ({ symbol }, symbol null when unknown), or null for SOL. A Bundle
@@ -102,7 +102,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const [raise, setRaise] = useState(() => bundle ? { target: formatUnits(bundle.defaultTargetLamports, 9, 2), days: bundle.defaultDeadlineDays } : null)
   const opening = useOpenBundle({ repo, settings: bundle, token: { name, symbol, image: tokenImage?.image }, raise,
     ready: !imageBusy && Boolean(tokenImage) && Boolean(name) && Boolean(symbol) })
-  const earlyAccessOffered = Boolean(earlyAccess?.windows?.length) && !model && !draft && trendRevision === undefined && !stockChosen && !bundleMode
+  const earlyAccessOffered = !recovery && Boolean(earlyAccess?.windows?.length) && !model && !draft && trendRevision === undefined && !stockChosen && !bundleMode
   const earlyAccessChosen = earlyAccessOffered && earlyAccessSeconds !== null
   // The fair ramp holds the first buy to its starting limit (the server refuses more with the same words).
   const ramp = earlyAccessChosen && fairRamp ? earlyAccess.ramp : null
@@ -119,11 +119,11 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     try { if(!draft) saved=readLaunchDraft(window.sessionStorage,repo.repoId) } catch {}
     if(saved){
       const pair=restoredPair(saved,stockPair?.assetId)
-      setName(saved.name);setSymbol(saved.symbol);setChoice(saved.choice);setCustomBuy(saved.customBuy);setTokenImage(saved.tokenImage)
+      setName(saved.name);setSymbol(saved.symbol);setChoice(recovery?'none':saved.choice);setCustomBuy(recovery?'':saved.customBuy);setTokenImage(saved.tokenImage)
       setQuoteAssetId(pair.quoteAssetId);setPairDropped(pair.pairDropped);setDraftRestored(true)
     }
     setDraftReady(repo.repoId)
-  }, [repo.repoId, draft])
+  }, [repo.repoId, draft, recovery])
   useEffect(() => {
     if(draftReady!==repo.repoId)return
     try {
@@ -227,7 +227,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     if (refresh) await prepare({ preventDefault() {} })
   }
   // A stock pair is never dropped on the way (pairRequest), so a confirmed launch with one chosen is that stock pair.
-  if (launched) return <LaunchSuccess repo={repo} launched={launched} symbol={symbol} image={tokenImage?.image} quote={stockChosen ? { symbol: stockPair?.symbol ?? null } : null}/>
+  if (launched) return <LaunchSuccess repo={repo} launched={launched} symbol={symbol} image={tokenImage?.image} quote={stockChosen ? { symbol: stockPair?.symbol ?? null } : null} recovery={recovery}/>
   return <form className="launch-panel" onSubmit={bundleMode ? opening.open : prepare}>
     {draftRestored && <p className="form-fineprint" role="status">Your saved launch details have been restored. Review current costs before signing.</p>}
     {pairDropped && <p className="form-fineprint" role="status">The stock pair you chose before is not offered for this repository right now, so this launch is paired with SOL.</p>}
@@ -257,7 +257,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         {earlyAccessOffered && <LaunchEarlyAccess terms={earlyAccess} value={earlyAccessSeconds} onChange={seconds => { setEarlyAccessSeconds(seconds); setError('') }}
           fairRamp={fairRamp} starUnlocks={starUnlocks} onFairRamp={on => { setFairRamp(on); if (!on) setStarUnlocks(false); setError('') }}
           onStarUnlocks={on => { setStarUnlocks(on); setError('') }}/>}
-        {bundleMode ? <BundleRaiseFields settings={bundle} value={raise} onChange={setRaise}/> : stockChosen ? <p className="launch-buy-hint launch-pair-buy-note" role="note">Stock-paired launches start without an initial buy. You can buy right after the launch.</p> : <>
+        {recovery ? <p className="launch-buy-hint launch-pair-buy-note" role="note"><strong>No initial buy.</strong> You pay only launch account costs and the network fee. Lasting creator and fee-recipient rights go to the recovered 2-of-3 vault. Trading on newly launched markets remains paused on repo.ing until separately verified.</p> : bundleMode ? <BundleRaiseFields settings={bundle} value={raise} onChange={setRaise}/> : stockChosen ? <p className="launch-buy-hint launch-pair-buy-note" role="note">Stock-paired launches start without an initial buy. You can buy right after the launch.</p> : <>
         <label className="field-label" htmlFor="initial-buy">Initial buy <span className="muted">(optional)</span></label>
         <div className={`launch-buy-presets${ramp ? ' launch-buy-presets-ramp' : ''}`} role="group" aria-label="Initial token allocation">
           {(ramp ? [[ 'none', 'No buy' ], [ '100', '1%' ], [ '200', 'Max 2%' ]] : [[ 'none', 'No buy' ], [ '100', '1%' ], [ '200', '2%' ], [ '300', 'Max 3%' ]]).map(([value, label]) =>
@@ -280,7 +280,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
       <div className="launch-side">{bundleMode ? <BundleNotes settings={bundle}/> : <>
         {allocationEnabled && !stockChosen && (model ? <div className="inner-card discovery-launch"><h3>1% for the model&apos;s owner</h3><strong>10 million tokens reserved</strong><p>The model&apos;s verified owner on Hugging Face can claim this one-time allocation after graduation, in addition to trading fees. It comes from the fixed 1 billion supply.</p></div>
           : <div className="inner-card discovery-launch"><h3>1% for the builders</h3><strong>10 million tokens reserved</strong><p>The verified repository admin can claim this one-time allocation after graduation, in addition to trading fees. It comes from the fixed 1 billion supply.</p></div>)}
-        {discoveryEnabled && !stockChosen && <div className="inner-card discovery-launch"><h3>Discovery rewards</h3><strong>Earn 50% of repo.ing’s trading fees</strong><p>Your launch wallet earns rewards on this market’s bonding-curve trades until graduation, 30 days, or 2.5 SOL earned—whichever comes first.</p><p>Rewards come from repo.ing’s existing share. Builder fees and the total trading fee stay the same. Claim in SOL from the market page by signing a message; repo.ing sends the reward and pays the network fee.</p></div>}
+        {discoveryEnabled && !stockChosen && <div className="inner-card discovery-launch"><h3>Discovery rewards</h3><strong>Earn 50% of repo.ing’s trading fees</strong><p>Your launch wallet earns rewards on this market’s bonding-curve trades until graduation, 30 days, or 2.5 SOL earned—whichever comes first.</p><p>Rewards come from repo.ing’s existing share. Builder fees and the total trading fee stay the same. {recovery ? 'Claims remain paused until collection receipts, accounting and recipient authorization are verified. The reserved builder allocation is also gated.' : 'Claim in SOL from the market page by signing a message; repo.ing sends the reward and pays the network fee.'}</p></div>}
         {verificationBonus && !stockChosen && <div className="inner-card discovery-launch"><p style={{ margin: 0 }}><strong>Verification bonus:</strong> {verificationBonusTerms(verificationBonus)}</p></div>}
         <LaunchFeeBreakdown model={model} stock={stockTerms} launchFee={launchFee}/>
       </>}</div>

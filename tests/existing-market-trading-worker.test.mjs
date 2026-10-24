@@ -403,3 +403,40 @@ test('test-only stage needs pinned plan and operator access; sending remains sep
   f.runtime.html = true
   assert.match(await (await f.request()).text(), /six-swap test only/i)
 })
+
+test('ordinary launch admission is separately bound and never opens other financial lanes', async () => {
+  const f = await fixture()
+  f.env.EXISTING_MARKET_TRADING_STAGE = 'live'
+  const post = (path, body, headers = {}) => f.request(path, { method: 'POST', headers: {
+    origin: 'https://repo.ing', 'content-type': 'application/json', ...headers,
+  }, body: JSON.stringify(body) })
+  assert.equal((await post('/api/launch', { action: 'prepare' })).status, 403)
+  Object.assign(f.env, {
+    ORDINARY_LAUNCH_RECOVERY_ENABLED: 'true',
+    ORDINARY_LAUNCH_CONFIG: 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7',
+    ORDINARY_LAUNCH_DATABASE_URL: 'postgres://repoing_ordinary_launcher:synthetic@localhost/repoing_operational?sslmode=verify-full',
+    ORDINARY_LAUNCH_BOOTSTRAP_SECRET_KEY: '1'.repeat(88),
+    GITHUB_APP_PRIVATE_KEY_BASE64: 'synthetic', GITHUB_APP_CLIENT_ID: 'synthetic', GITHUB_APP_INSTALLATION_ID: '1',
+  })
+  for (const path of ['/launch/123', '/api/launch?repo=123', '/api/repo-images/123']) {
+    assert.equal((await f.request(path)).status, 200, path)
+  }
+  for (const action of ['prepare', 'submit', 'cancel']) assert.equal((await post('/api/launch', { action })).status, 200)
+  assert.equal((await post('/api/resolve', { url: 'https://github.com/org/repo' })).status, 200)
+  for (const path of ['/api/builders/claim', '/api/bundles', '/api/hook-lab/native-launch', '/api/replay']) {
+    assert.equal((await post(path, {})).status, 403, path)
+  }
+  assert.equal((await post('/api/launch', { action: 'prepare' }, { origin: 'https://evil.example' })).status, 403)
+  assert.equal((await post('/api/launch', { action: 'quote' })).status, 403)
+  assert.equal((await post('/api/launch', { action: 'prepare', padding: 'x'.repeat(600001) })).status, 403)
+  assert.equal((await f.request('/launch/4503599627370497')).status, 403, 'HF IDs remain closed')
+  const starts = f.runtime.starts
+  f.env.ORDINARY_LAUNCH_BOOTSTRAP_SECRET_KEY = '2'.repeat(88)
+  assert.equal((await f.request('/api/health')).status, 200)
+  assert.equal(f.runtime.starts, starts + 1, 'bootstrap change restarts sealed-session runtime')
+  assert.equal(f.runtime.env.DBC_CONFIG, inputs.proposedEnvironment.DBC_CONFIG)
+  assert.equal(f.runtime.env.ORDINARY_LAUNCH_CONFIG, f.env.ORDINARY_LAUNCH_CONFIG)
+  assert.equal(f.runtime.env.PLATFORM_CREATOR_SECRET_KEY, undefined)
+  f.env.ORDINARY_LAUNCH_DATABASE_URL = 'postgres://owner:synthetic@localhost/repoing_operational?sslmode=verify-full'
+  assert.equal((await f.request('/api/health')).status, 503)
+})

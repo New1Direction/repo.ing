@@ -13,7 +13,7 @@ import { createFeeAccrual } from '../../../src/fee-accrual.mjs'
 import { createTradeRecorder } from '../../../src/trade-evidence.mjs'
 import { resolvePublicRepository } from '../../../src/github.mjs'
 import { trendLaunchGuard } from '../../../src/trend-intake.mjs'
-import { database, chain, configAddress, creatorSigner, discoveryRewardsEnabled, builderAllocationEnabled } from '../../lib/server.mjs'
+import { database, chain, configAddress, creatorSigner, discoveryRewardsEnabled, builderAllocationEnabled, ordinaryLaunchRuntime } from '../../lib/server.mjs'
 import { checkAgentDraft } from '../../lib/agent-launch.mjs'
 import { publicOrigin } from '../../lib/origin.mjs'
 import { readLimitedBody } from '../../../src/token-image.mjs'
@@ -31,6 +31,7 @@ import { QUOTE_ERRORS, QuoteAssetError, SOL_QUOTE, resolveQuoteAsset, stockPairs
 import { composeGuards, launchPair, marketPairGuard, stockMintCheck, stockPairGuard } from '../../lib/stock-launch.mjs'
 import { refuseOverLimit } from '../../lib/request-limits.mjs'
 import { contributorSnapshotStep, earlyAccessGuard, earlyAccessRequest, earlyAccessSettings } from '../../lib/early-access-launch.mjs'
+import { isGithubRepoId } from '../../../src/market-identity.mjs'
 export const runtime = 'nodejs'
 // Launch reviews live in PostgreSQL (launch_sessions) so prepare and submit/cancel may land on different replicas.
 const launchSessions = (pool, creator) => createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
@@ -107,10 +108,18 @@ export async function POST(request) {
   try {
     const body = JSON.parse((await readLimitedBody(request, 600_000)).toString('utf8'))
     action = ['quote','cancel','prepare','submit'].includes(body.action) ? body.action : 'unknown'
+    const launch = ordinaryLaunchRuntime()
+    if (launch.recovery && (body.earlyAccessSeconds != null || body.fairRamp === true || body.starUnlocks === true || body.trendRevision != null ||
+        (body.repoId != null && !isGithubRepoId(body.repoId)) ||
+        (body.quoteAssetId != null && body.quoteAssetId !== 'sol') ||
+        (body.initialBuyLamports != null && body.initialBuyLamports !== '0') ||
+        (body.supplyBps != null && body.supplyBps !== 0))) {
+      throw Error('Recovery currently accepts only ordinary no-buy GitHub launches')
+    }
     if (body.action === 'quote') {
       if (stockPairsBuyRefusal(body)) throw new QuoteAssetError(QUOTE_ERRORS.UNSUPPORTED_QUOTE_ASSET, 'Stock-paired launches have no initial buy yet. Buy after the launch.')
       assertSolBuyQuote(body)
-      const config = configAddress()
+      const config = launch.config
       if (!config) throw new Error('Launch config is unavailable')
       const refused = refuseOverLimit(request, 'launch:quote')
       if (refused) return refused
@@ -125,7 +134,7 @@ export async function POST(request) {
         tradingFeeLamports: quote?.tradingFee.toString() ?? '0' })
     }
     if (body.action === 'cancel') {
-      const pool = database(), creator = creatorSigner()
+      const { pool, creator } = launch
       // Best effort, as before: an uncancelled review still expires (and releases its market) after two minutes.
       if (pool && creator) {
         const store = launchSessions(pool, creator)
@@ -144,13 +153,13 @@ export async function POST(request) {
     // with SOL from its launch page, while early access can launch, on its own config and lookup table.
     const earlyAccess = body.action === 'prepare' ? earlyAccessRequest(body) : null
     // The pair is decided first (docs/STOCK_QUOTES.md): SOL as before; a stock pair only when it can launch, else refused.
-    const pair = body.action === 'prepare' ? await launchPair(body, { solConfig: configAddress(), mintUsable: quote => stockMintCheck(chain())(quote) }) : null
+    const pair = body.action === 'prepare' ? await launchPair(body, { solConfig: launch.config, mintUsable: quote => stockMintCheck(chain())(quote) }) : null
     if (body.action === 'prepare' && isHfMarketId(body.repoId)) return await prepareModelLaunch(request, body)
     if (body.action === 'prepare') {
       const settings = earlyAccess ? earlyAccessSettings() : null
       if (earlyAccess && pair.quote !== SOL_QUOTE) throw new Error('Contributor early access launches are paired with SOL only.')
       if (body.agentDraft !== undefined) checkAgentDraft(body.agentDraft, body.repoId)
-      const pool = database(), config = settings?.config ?? pair.config, creator = creatorSigner()
+      const { pool, creator } = launch, config = settings?.config ?? pair.config
       if (!pool || !config || !creator) throw new Error('Local launch is not configured')
       if (!/^\d+$/.test(String(body.repoId))) throw new Error('Canonical repository ID required')
       if (!body.tokenImage) throw new Error('Choose a token image before reviewing the launch.')
@@ -167,10 +176,10 @@ export async function POST(request) {
       await sweep(store)
       const launcher = earlyAccess ? createEarlyAccessLauncher({ connection, config, creator, metadataOrigin, lookupTable: settings.lookupTable })
         : createMeteoraLauncher({ connection, config, creator, metadataOrigin, quote: pair.quote })
-      const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(),
+      const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: launch.discoveryEnabled,
         // The early access config reserves the builder allocation when it is listed like any other config (src/builder-allocation.mjs).
-        builderAllocationEnabled: earlyAccess ? allocationEnabled(config) : builderAllocationEnabled(),
-        pendingReview: market => store.pending(market.id), verificationBonusLamports: verificationBonusLamports(), quote: pair.quote, refuseTakenSymbols: true,
+        builderAllocationEnabled: earlyAccess ? allocationEnabled(config) : launch.builderAllocationEnabled,
+        pendingReview: market => store.pending(market.id), verificationBonusLamports: launch.verificationBonusLamports, quote: pair.quote, refuseTakenSymbols: true,
         earlyAccess: earlyAccess ? { windowSeconds: earlyAccess.windowSeconds, rules: earlyAccess.rules, snapshot: contributorSnapshotStep({ pool }) } : null })
       if (body.trendRevision !== undefined && (!Number.isSafeInteger(body.trendRevision) || body.trendRevision < 1)) throw Error('Invalid trend approval')
       const launchGuard = earlyAccess ? earlyAccessGuard(config, { versioned: true })
@@ -196,12 +205,16 @@ export async function POST(request) {
         rules: prepared.earlyAccess.rules, ...prepared.earlyAccess.ramp ? { ramp: prepared.earlyAccess.ramp } : {} } } : {} })
     }
     if (body.action === 'submit') {
-      const pool = database(), creator = creatorSigner()
+      const { pool, creator } = launch
       if (!pool || !creator) throw new Error('Local launch is not configured')
       const store = launchSessions(pool, creator)
       // Single use on every replica: whoever consumes the review first submits it; it is never available again.
       const session = await store.consume(body.id)
       if (!session) throw new Error('Prepared launch expired; reload before trying again')
+      if (launch.recovery && (session.config !== launch.config || session.initialBuyLamports !== '0' ||
+          !isGithubRepoId(session.githubRepoId) || session.trendRevision !== null || isVersionedLaunch(session.transaction))) {
+        throw Error('Prepared launch is outside ordinary no-buy recovery; check its status before continuing')
+      }
       const connection = chain(), config = session.config, repoId = BigInt(session.githubRepoId)
       // An early access review is a v0 transaction (docs/EARLY_ACCESS.md); every other review is the legacy launch, as before.
       const versioned = isVersionedLaunch(session.transaction)
@@ -210,7 +223,7 @@ export async function POST(request) {
       try { prepared = launcher.restore(session) }
       catch (error) { await store.release(session); throw error }
       // The ticker is checked again just before sending (refuseTakenSymbols, src/launch-symbols.mjs).
-      const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled(),
+      const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: launch.discoveryEnabled, builderAllocationEnabled: launch.builderAllocationEnabled,
         refuseTakenSymbols: true })
       // A model market is checked again after the wallet signed, before anything is sent (src/hf-launch.mjs).
       // A GitHub launch is decided again by its stamp (a stock pair as at prepare; nothing more for SOL; early access while it can

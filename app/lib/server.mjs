@@ -18,6 +18,8 @@ import { assertGithubRepoId, isMarketId } from '../../src/market-identity.mjs'
 import { isStockMarket } from '../../src/stock-market-chart.mjs'
 import { latestTradeSql } from '../../src/market-chart.mjs'
 import { withStockStats } from './stock-market-stats.mjs'
+import { RECOVERED_LAUNCH_CONFIG, assertLaunchBootstrapSigner } from '../../src/launch-custody.mjs'
+import { verificationBonusLamports } from '../../src/verification-bonus.mjs'
 
 export function database() {
   if (!process.env.DATABASE_URL) return null
@@ -64,6 +66,32 @@ export function discoveryRewardsEnabled() {
 }
 
 export function builderAllocationEnabled() { return allocationEnabled(configAddress()) }
+
+// Only the ordinary launch API uses this writer and unfunded co-signer. Trading/read routes keep their existing
+// database/config, and no vault member or partner key is made available to claims, bundles or Hooks.
+export function ordinaryLaunchRuntime() {
+  if (process.env.ORDINARY_LAUNCH_RECOVERY_ENABLED !== 'true') return {
+    recovery: false, pool: database(), config: configAddress(), creator: creatorSigner(),
+    discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled(),
+    verificationBonusLamports: verificationBonusLamports(),
+  }
+  if (process.env.ORDINARY_LAUNCH_CONFIG !== RECOVERED_LAUNCH_CONFIG) throw Error('Expected the reviewed recovered launch config')
+  let url
+  try { url = new URL(process.env.ORDINARY_LAUNCH_DATABASE_URL) } catch { /* Refuse without exposing the connection string. */ }
+  if (!url || !['postgres:', 'postgresql:'].includes(url.protocol) || url.username !== 'repoing_ordinary_launcher' ||
+      url.pathname !== '/repoing_operational' || url.searchParams.get('sslmode') !== 'verify-full') {
+    throw Error('Dedicated launch database with verified TLS is required')
+  }
+  const secret = process.env.ORDINARY_LAUNCH_BOOTSTRAP_SECRET_KEY
+  let creator
+  try { creator = Keypair.fromSecretKey(secret?.trim().startsWith('[') ? Uint8Array.from(JSON.parse(secret)) : bs58.decode(secret ?? '')) }
+  catch { throw Error('Separate launch bootstrap signer is required') }
+  assertLaunchBootstrapSigner(creator.publicKey)
+  if (!globalThis.__repoingOrdinaryLaunchPool) globalThis.__repoingOrdinaryLaunchPool = createDatabasePool({ connectionString: url.toString() })
+  // Preserve the finalized canary's economic stamps without loading a fee-claimer key or enabling any payouts.
+  return { recovery: true, pool: globalThis.__repoingOrdinaryLaunchPool, config: RECOVERED_LAUNCH_CONFIG, creator,
+    discoveryEnabled: true, builderAllocationEnabled: true, verificationBonusLamports: null }
+}
 
 // A market row's last price (list and single reads): the newest curve and DAMM trades as the chart picks them
 // (src/market-chart.mjs latestTradeSql). A DAMM trade in the same slot as the last curve trade came after it: the curve
@@ -238,10 +266,9 @@ export const marketByRepo = cache(repoId => /^\d+$/.test(String(repoId))
   ? timed('market', () => singleMarket('github_repo_id', String(repoId))) : Promise.resolve({ market: null }))
 
 // Not a market id at all: unknown, as before. A Hugging Face market id is a caller bug and throws before GitHub is asked.
-export async function repositoryById(repoId) {
+export async function repositoryById(repoId, { pool = database() } = {}) {
   if (!/^\d+$/.test(String(repoId)) || !isMarketId(repoId)) return null
   assertGithubRepoId(repoId)
-  const pool = database()
   let row = null
   if (pool) {
     try {

@@ -11,7 +11,7 @@ async function modelImageContext(pool, id) {
   return { id, record: rows[0] }
 }
 
-export async function repositoryImageContext(pool, id, resolve = resolvePublicRepositoryById) {
+export async function repositoryImageContext(pool, id, resolve = resolvePublicRepositoryById, { persist = true } = {}) {
   if (!/^[1-9]\d{0,18}$/.test(String(id))) throw Error('Invalid repository')
   if (!pool) throw Error('Image service is temporarily unavailable')
   if (isHfMarketId(id)) return modelImageContext(pool, String(id))
@@ -24,6 +24,6 @@ export async function repositoryImageContext(pool, id, resolve = resolvePublicRe
   // Verify and persist their public identity before either suggestions or upload.
   const repo = await resolve(id)
   if (repo.githubRepoId.toString() !== String(id)) throw Error('Repository identity mismatch')
-  await persistLaunchRepository(pool, repo)
+  if (persist) await persistLaunchRepository(pool, repo)
   return { id, record: { owner: repo.owner, name: repo.name, avatar_url: repo.avatarUrl } }
 }

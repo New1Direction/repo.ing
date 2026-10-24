@@ -35,7 +35,7 @@ export async function configFeeSchedule(config, options = {}) {
 
 // Launch-fee copy terms for the config new launches use; null when flat, unconfigured or unreadable.
 export async function activeLaunchFeeTerms(options = {}) {
-  const config = configAddress()
+  const config = options.config ?? configAddress()
   if (!config) return null
   try { return launchFeeTerms(await configFeeSchedule(config, options)) } catch { return null }
 }

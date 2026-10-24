@@ -17,10 +17,14 @@ const key = value => new PublicKey(value)
 const tagged = (ix, tag) => ix.programId.equals(DBC_PROGRAM_ID) && ix.data.subarray(0, 8).equals(tag)
 const requireHandoff = condition => { if (!condition) throw Error('Recovered launch custody handoff is missing or inconsistent') }
 
+export function assertLaunchBootstrapSigner(creator) {
+  if (FORBIDDEN_BOOTSTRAP.has(key(creator).toBase58())) throw Error('Recovered launch requires a separate safe bootstrap signer')
+}
+
 // SDK 1.5.13 transferPoolCreator account order, including DAMM v1 migration metadata. Unlike that SDK helper, building this
 // instruction does not first fetch the pool: it must follow creation atomically, before any lasting online creator rights exist.
 export function launchCustodyHandoff({ pool, creator }) {
-  if (FORBIDDEN_BOOTSTRAP.has(key(creator).toBase58())) throw Error('Recovered launch requires a separate safe bootstrap signer')
+  assertLaunchBootstrapSigner(creator)
   const addresses = [pool, RECOVERED_LAUNCH_CONFIG, creator, MULTISIG_VAULT, deriveDbcEventAuthority(), DBC_PROGRAM_ID,
     deriveDammV1MigrationMetadataAddress(key(pool))]
   return new TransactionInstruction({ programId: DBC_PROGRAM_ID, data: TRANSFER_CREATOR,

@@ -19,6 +19,13 @@ const legacyConfigs = ['8TXNGgx6g5TcsVCYt7wz3cAxJkynzzBZWXeQtXZaz6A3', '261xpZVA
 const recoveredReadConfig = 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7'
 const bindingNames = ['PUBLIC_DATABASE_URL', 'TRADING_DATABASE_URL', 'DBC_CONFIG', 'DBC_LEGACY_CONFIGS', 'TRADING_CUSTODY_RECOVERY_SHA256', 'TRADING_CUSTODY_RECOVERY_JSON', 'EXISTING_MARKET_TRADING_ONLY', 'EXISTING_MARKET_TRADING_STAGE']
 const testBindingNames = ['EXISTING_MARKET_TEST_PLAN', 'EXISTING_MARKET_TEST_SUBMISSION', 'EXISTING_MARKET_TEST_ACCESS_TOKEN']
+const launchBindingNames = ['ORDINARY_LAUNCH_RECOVERY_ENABLED', 'ORDINARY_LAUNCH_DATABASE_URL', 'ORDINARY_LAUNCH_CONFIG', 'ORDINARY_LAUNCH_BOOTSTRAP_SECRET_KEY',
+  'GITHUB_APP_PRIVATE_KEY_BASE64', 'GITHUB_APP_CLIENT_ID', 'GITHUB_APP_INSTALLATION_ID']
+const ordinaryLaunchEnabled = bindings => bindings.EXISTING_MARKET_TRADING_STAGE === 'live' && bindings.ORDINARY_LAUNCH_RECOVERY_ENABLED === 'true'
+const ordinaryRepoPath = path => {
+  const id = /^\/(?:launch|api\/repo-images)\/([1-9]\d{0,15})$/.exec(path)?.[1]
+  return Boolean(id && BigInt(id) <= 4503599627370495n)
+}
 
 async function sha256(value) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
@@ -26,10 +33,21 @@ async function sha256(value) {
 }
 
 function snapshotBindings(env) {
-  return Object.fromEntries([...bindingNames, ...testBindingNames].map(name => [name, env[name]]))
+  return Object.fromEntries([...bindingNames, ...testBindingNames, ...launchBindingNames].map(name => [name, env[name]]))
 }
 
 async function validateBindings(bindings) {
+  if (bindings.ORDINARY_LAUNCH_RECOVERY_ENABLED === 'true') {
+    let url
+    try { url = new URL(bindings.ORDINARY_LAUNCH_DATABASE_URL) } catch { /* Refuse without logging credentials. */ }
+    if (launchBindingNames.some(name => typeof bindings[name] !== 'string' || !bindings[name].trim()) ||
+        !ordinaryLaunchEnabled(bindings) || bindings.ORDINARY_LAUNCH_CONFIG !== recoveredReadConfig ||
+        !url || !['postgres:', 'postgresql:'].includes(url.protocol) || url.username !== 'repoing_ordinary_launcher' ||
+        url.pathname !== '/repoing_operational' || url.searchParams.get('sslmode') !== 'verify-full' ||
+        !/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(bindings.ORDINARY_LAUNCH_BOOTSTRAP_SECRET_KEY ?? '')) {
+      throw Error('Ordinary launch bindings missing or mismatched')
+    }
+  }
   if (bindings.EXISTING_MARKET_TRADING_STAGE === 'test' &&
     (bindings.EXISTING_MARKET_TEST_PLAN !== 'existing-markets-six-swaps-v1' ||
       !['false', 'true'].includes(bindings.EXISTING_MARKET_TEST_SUBMISSION) ||
@@ -59,14 +77,16 @@ async function tradeBoundary(request, bindings) {
   const balance = url.pathname === '/api/wallet/balance' || marketBalance.test(url.pathname)
   const search = url.pathname === '/api/repo-search'
   const mcp = url.pathname === '/api/mcp/readonly'
+  const imageUpload = ordinaryLaunchEnabled(bindings) && url.pathname.startsWith('/api/repo-images/') && ordinaryRepoPath(url.pathname)
+  const launch = ordinaryLaunchEnabled(bindings) && (imageUpload || ['/api/launch', '/api/resolve'].includes(url.pathname))
   if (['GET', 'HEAD'].includes(request.method) && !(active && balance)) return null
-  if (!search && !mcp && (!active || (!balance && url.pathname !== '/api/trade') || (balance && !['GET', 'HEAD'].includes(request.method)))) return deny()
+  if (!search && !mcp && !launch && (!active || (!balance && url.pathname !== '/api/trade') || (balance && !['GET', 'HEAD'].includes(request.method)))) return deny()
   if (!search && !mcp && stage === 'test' && (!/^[a-f0-9]{64}$/.test(bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN ?? '') ||
     request.headers.get('authorization') !== `Bearer ${bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN}`)) return deny()
   let body
   if (!balance) {
     if (request.method !== 'POST' || (request.headers.get('origin') !== url.origin && !(mcp && !request.headers.has('origin')))
-      || request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') return deny()
+      || (!imageUpload && request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json')) return deny()
     const reader = request.body?.getReader()
     if (!reader) return deny()
     let size = 0
@@ -76,7 +96,7 @@ async function tradeBoundary(request, bindings) {
         const { done, value } = await reader.read()
         if (done) break
         size += value.byteLength
-        if (size > (search ? 2048 : 16384)) { await reader.cancel(); return deny() }
+        if (size > (imageUpload ? 4_000_000 : launch && url.pathname === '/api/launch' ? 600_000 : search || launch ? 2048 : 16384)) { await reader.cancel(); return deny() }
         chunks.push(value)
       }
     } catch { return deny() } finally { reader.releaseLock() }
@@ -84,10 +104,15 @@ async function tradeBoundary(request, bindings) {
     let offset = 0
     for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength }
     let payload
-    try { payload = JSON.parse(new TextDecoder().decode(body)) } catch { return deny() }
+    if (!imageUpload) {
+      try { payload = JSON.parse(new TextDecoder().decode(body)) } catch { return deny() }
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return deny()
+    }
     const actions = stage === 'test' ? ['prepare', 'status', ...(bindings.EXISTING_MARKET_TEST_SUBMISSION === 'true' ? ['submit'] : [])]
       : ['depth', 'quote', 'costs', 'prepare', 'status', ...(stage === 'live' ? ['submit'] : [])]
-    if (!payload || (!search && !mcp && !actions.includes(payload.action))) return deny()
+    if (launch) {
+      if (url.pathname === '/api/launch' && !['prepare', 'submit', 'cancel'].includes(payload.action)) return deny()
+    } else if (!search && !mcp && !actions.includes(payload.action)) return deny()
   }
   const headers = new Headers()
   // cf-connecting-ip is set by Cloudflare at ingress; never trust caller-supplied
@@ -146,6 +171,8 @@ export class PublicSite extends Container {
         EXISTING_MARKET_TEST_PLAN: bindings.EXISTING_MARKET_TRADING_STAGE === 'test' ? bindings.EXISTING_MARKET_TEST_PLAN : '',
         EXISTING_MARKET_TEST_SUBMISSION: bindings.EXISTING_MARKET_TRADING_STAGE === 'test' ? bindings.EXISTING_MARKET_TEST_SUBMISSION : 'false',
         EXISTING_MARKET_TEST_ACCESS_TOKEN: bindings.EXISTING_MARKET_TRADING_STAGE === 'test' ? bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN : '',
+        ORDINARY_LAUNCH_RECOVERY_ENABLED: ordinaryLaunchEnabled(bindings) ? 'true' : 'false',
+        ...ordinaryLaunchEnabled(bindings) ? Object.fromEntries(launchBindingNames.slice(1).map(name => [name, bindings[name]])) : {},
         SOLANA_RPC_URL: 'https://api.mainnet-beta.solana.com',
         HOOK_PRODUCTION_BOOTSTRAP: 'false',
         HOOK_NATIVE_LAUNCH_ENABLED: 'false',
@@ -189,6 +216,7 @@ export default {
     let upstream = boundary
     if (boundary === null) {
       const allowed = pages.has(url.pathname) || tokenPage.test(url.pathname)
+        || (ordinaryLaunchEnabled(bindings) && (ordinaryRepoPath(url.pathname) || url.pathname === '/api/launch'))
         || publicMarketApi.test(url.pathname) || tokenImage.test(url.pathname) || tokenMetadata.test(url.pathname)
         || /^\/m\/[1-9]\d{0,15}$/.test(url.pathname)
         || /^\/api\/repo-logo\/\d+$/.test(url.pathname)
