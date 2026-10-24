@@ -25,7 +25,9 @@ import { verificationBonusLamports } from '../../src/verification-bonus.mjs'
 
 export function database() {
   if (!process.env.DATABASE_URL) return null
-  if (!globalThis.__gitfunPool) globalThis.__gitfunPool = createDatabasePool({ connectionString: process.env.DATABASE_URL })
+  // Reuse healthy TLS sessions between page visits instead of reopening them after pg's 10 s default.
+  // This retains connections, not query results; financial and freshness checks still execute unchanged.
+  if (!globalThis.__gitfunPool) globalThis.__gitfunPool = createDatabasePool({ connectionString: process.env.DATABASE_URL, idleTimeoutMillis: 60_000 })
   return globalThis.__gitfunPool
 }
 
@@ -315,7 +317,7 @@ export async function feeStatus(repoId) {
       if (createHash('sha256').update(bytes).digest('hex') !== process.env.ACCOUNTING_CUSTODY_SHA256) return unavailable
       custodyRecovery = JSON.parse(bytes)
       globalThis.__repoingLedgerPool ??= createDatabasePool({ connectionString: url.href,
-        options: '-c default_transaction_read_only=on', max: 4, statement_timeout: 15000 })
+        options: '-c default_transaction_read_only=on', max: 4, statement_timeout: 15000, idleTimeoutMillis: 60_000 })
       pool = globalThis.__repoingLedgerPool
     } else pool = database()
     const config = configAddress()
