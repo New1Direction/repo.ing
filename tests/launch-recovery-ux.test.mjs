@@ -51,6 +51,20 @@ test('ordinary recovery uses a separate bootstrap/config/database and refuses br
   assert.equal(runtime.discoveryEnabled,true);assert.equal(runtime.builderAllocationEnabled,true)
   assert.equal(runtime.verificationBonusLamports,null)
   assert.equal(server.configAddress(),'historical-trading-config');assert.equal(server.creatorSigner(),null)
+  globalThis.__repoingOrdinaryLaunchPool={query:async sql=>{
+   assert.match(sql,/^select /)
+   return {rows:[{status:'submitted',mint:'hidden',indexed_at:null,launch_finality:'unknown'}]}
+  }}
+  const publicPool=globalThis.__gitfunPool,publicUrl=process.env.DATABASE_URL
+  process.env.DATABASE_URL='postgres://synthetic'
+  globalThis.__gitfunPool={query:async()=>({rows:[]})}
+  try{
+   const status=await GET(new Request('https://repo.ing/api/launch?repo=123'))
+   assert.deepEqual(await status.json(),{state:'pending',mint:null},'an uncertain launch must not look retryable through the finalized-only reader')
+  }finally{
+   globalThis.__repoingOrdinaryLaunchPool=runtime.pool;globalThis.__gitfunPool=publicPool
+   if(publicUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=publicUrl
+  }
   for(const variant of [{initialBuyLamports:'1'},{quoteAssetId:'stock'},{earlyAccessSeconds:900},{fairRamp:true},{starUnlocks:true},{repoId:'-123'},{repoId:'4503599627370497'},{trendRevision:1}]){
    const response=await POST(new Request('https://repo.ing/api/launch',{method:'POST',body:JSON.stringify({action:'prepare',...variant})}))
    assert.equal(response.status,400)

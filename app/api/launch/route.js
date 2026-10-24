@@ -97,7 +97,9 @@ export async function GET(request) {
   const repoId=new URL(request.url).searchParams.get('repo')
   if(!/^[1-9]\d{0,18}$/.test(repoId??''))return Response.json({error:'Invalid repository'},{status:400})
   try{
-    const row=(await database().query('select status,mint,indexed_at,launch_finality from markets where github_repo_id=$1',[repoId])).rows[0]
+    // The public projection hides unfinalized rows: reading it would incorrectly turn an uncertain send into "retry".
+    const pool=process.env.ORDINARY_LAUNCH_RECOVERY_ENABLED==='true'?ordinaryLaunchRuntime().pool:database()
+    const row=(await pool.query('select status,mint,indexed_at,launch_finality from markets where github_repo_id=$1',[repoId])).rows[0]
     const live=row?.status==='confirmed'&&row.indexed_at&&row.launch_finality==='finalized'
     return Response.json({state:live?'live':!row||row.status==='failed'?'retry':'pending',mint:live?row.mint:null},{headers:{'Cache-Control':'no-store'}})
   }catch{return Response.json({error:'Launch status unavailable. Please check again shortly.'},{status:503})}
