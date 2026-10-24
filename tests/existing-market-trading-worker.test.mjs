@@ -110,6 +110,28 @@ test('health is a public read, never a mutation route', async () => {
   for (const method of ['POST', 'PUT', 'DELETE', 'OPTIONS']) assert.equal((await f.request('/api/health', { method })).status, 403)
 })
 
+test('finalized launch metadata is readable without opening launch execution or forwarding credentials', async () => {
+  const f = await fixture()
+  f.env.EXISTING_MARKET_TRADING_STAGE = 'live'
+  f.env.DBC_LEGACY_CONFIGS += ',Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7'
+  for (const path of ['/m/1278009399', `/api/token-metadata/${mint}`]) {
+    for (const method of ['GET', 'HEAD']) {
+      assert.equal((await f.request(path, { method, headers: { cookie: 'private', authorization: 'Bearer private' } })).status, 200)
+      const request = f.runtime.calls.at(-1).request
+      assert.equal(request.headers.has('cookie'), false)
+      assert.equal(request.headers.has('authorization'), false)
+    }
+    for (const method of ['POST', 'PUT', 'DELETE', 'OPTIONS']) assert.equal((await f.request(path, { method })).status, 403)
+  }
+  for (const path of ['/m/0123', '/m/123/', '/m/not-an-id', '/api/token-metadata/nope', '/api/launch']) {
+    assert.equal((await f.request(path)).status, 403)
+  }
+  assert.equal((await f.request('/api/launch', { method: 'POST' })).status, 403)
+  assert.equal((await f.trade('quote')).status, 200)
+  f.env.DBC_LEGACY_CONFIGS += `,${mint}`
+  assert.equal((await f.request('/m/1278009399')).status, 503)
+})
+
 test('both MCP paths reach only the read-only handler with bounded bodies and no credentials', async () => {
   const f = await fixture()
   for (const path of ['/api/mcp', '/api/mcp/readonly']) {

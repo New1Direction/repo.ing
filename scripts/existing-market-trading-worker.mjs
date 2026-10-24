@@ -9,11 +9,14 @@ const mint = '[1-9A-HJ-NP-Za-km-z]{32,44}'
 const tokenPage = new RegExp(`^/token/${mint}$`)
 const publicMarketApi = new RegExp(`^/api/market/${mint}/(trades|metrics|curve|traders|activity|pulse)$`)
 const tokenImage = new RegExp(`^/api/token-image/${mint}$`)
+const tokenMetadata = new RegExp(`^/api/token-metadata/${mint}$`)
 const marketBalance = new RegExp(`^/api/market/${mint}/balance$`)
 const custodyDigest = '2c31354ba8009acb0da1319b068f479216b0615120328510cba50665f0ecd888'
 // Public config identities from the reviewed inputs.json; never caller-selected.
 const primaryConfig = '2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M'
 const legacyConfigs = ['8TXNGgx6g5TcsVCYt7wz3cAxJkynzzBZWXeQtXZaz6A3', '261xpZVAz5k3ZfwfxXdgkgLowiH6NUzFEHtihhD4YMq1', 'D7oz8xQ4seaNaEgiDS4fu3YJfmUvR5iPuznxuqKV4u1c']
+// Optional read support for the finalized custody-safe config; the trading manifest stays unchanged.
+const recoveredReadConfig = 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7'
 const bindingNames = ['PUBLIC_DATABASE_URL', 'TRADING_DATABASE_URL', 'DBC_CONFIG', 'DBC_LEGACY_CONFIGS', 'TRADING_CUSTODY_RECOVERY_SHA256', 'TRADING_CUSTODY_RECOVERY_JSON', 'EXISTING_MARKET_TRADING_ONLY', 'EXISTING_MARKET_TRADING_STAGE']
 const testBindingNames = ['EXISTING_MARKET_TEST_PLAN', 'EXISTING_MARKET_TEST_SUBMISSION', 'EXISTING_MARKET_TEST_ACCESS_TOKEN']
 
@@ -36,7 +39,8 @@ async function validateBindings(bindings) {
     || bindings.EXISTING_MARKET_TRADING_ONLY !== 'true'
     || !['review', 'test', 'live'].includes(bindings.EXISTING_MARKET_TRADING_STAGE)
     || bindings.DBC_CONFIG !== primaryConfig
-    || bindings.DBC_LEGACY_CONFIGS.split(',').sort().join(',') !== [...legacyConfigs].sort().join(',')
+    || ![legacyConfigs, [...legacyConfigs, recoveredReadConfig]].some(configs =>
+      bindings.DBC_LEGACY_CONFIGS.split(',').sort().join(',') === [...configs].sort().join(','))
     || bindings.TRADING_CUSTODY_RECOVERY_SHA256 !== custodyDigest
     || await sha256(bindings.TRADING_CUSTODY_RECOVERY_JSON) !== custodyDigest) {
     throw Error('Review bindings missing or mismatched')
@@ -185,7 +189,8 @@ export default {
     let upstream = boundary
     if (boundary === null) {
       const allowed = pages.has(url.pathname) || tokenPage.test(url.pathname)
-        || publicMarketApi.test(url.pathname) || tokenImage.test(url.pathname)
+        || publicMarketApi.test(url.pathname) || tokenImage.test(url.pathname) || tokenMetadata.test(url.pathname)
+        || /^\/m\/[1-9]\d{0,15}$/.test(url.pathname)
         || /^\/api\/repo-logo\/\d+$/.test(url.pathname)
         || ['/api/health', '/api/mcp/readonly', '/api/growth', '/api/repo-search', '/api/wallet/overview'].includes(url.pathname)
         || ['/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png'].includes(url.pathname)

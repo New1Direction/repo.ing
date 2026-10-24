@@ -80,6 +80,13 @@ test('trading-only router admits only the reviewed market identity and exact con
     assert.equal((await load(binding.repoId)).mint, binding.mint)
     await assert.rejects(load('9999999'), /reviewed existing-market allowlist/)
     assert.equal(reads, 1, 'unknown repository is refused before database or chain reads')
+    process.env.DBC_LEGACY_CONFIGS = 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7'
+    const withRecoveredReads = tradingMarketLoader(pool, binding.config, manifest)
+    assert.equal((await withRecoveredReads(binding.repoId)).mint, binding.mint)
+    await assert.rejects(withRecoveredReads('1278009399'), /reviewed existing-market allowlist/)
+    assert.equal(reads, 2, 'read-only config support does not admit newly launched markets to trading')
+    assert.throws(() => tradingMarketLoader(pool, process.env.DBC_LEGACY_CONFIGS, manifest), /reviewed config allowlist/)
+    process.env.DBC_LEGACY_CONFIGS = ''
     for (const patch of [null, { mint: binding.owner }, { pool: binding.owner }, { creatorWallet: binding.owner },
       { status: 'pending' }, { launchFinality: 'confirmed' }, { indexedAt: null }, { quoteMint: binding.owner },
       { transferHookProgram: binding.owner }, { bundleId: '1' }]) {

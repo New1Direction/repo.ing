@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm'
 import { createCustodyRecovery } from '../../src/custody-recovery.mjs'
 import { createDatabasePool } from '../../src/database-pool.mjs'
 import { approvedConfigs, createMarketConfigResolver } from '../../src/market-config.mjs'
+import { RECOVERED_LAUNCH_CONFIG } from '../../src/launch-custody.mjs'
 import { markets } from '../../src/db/schema.mjs'
 import { database } from './server.mjs'
 
@@ -43,8 +44,9 @@ export function tradingMarketLoader(pool, config, manifest) {
   if (process.env.EXISTING_MARKET_TRADING_ONLY !== 'true') return undefined
   const rows = manifest.poolCreators
   const expected = [...new Set(rows.map(row => row.config))].sort()
-  const configured = approvedConfigs(config).map(key => key.toBase58()).sort()
-  if (!rows.length || JSON.stringify(expected) !== JSON.stringify(configured)) throw Error('Trading reviewed config allowlist changed')
+  // Public pages may resolve the safe new config, but that does not add a trading identity.
+  const configured = approvedConfigs(config).map(key => key.toBase58()).filter(key => key !== RECOVERED_LAUNCH_CONFIG).sort()
+  if (!rows.length || !expected.includes(String(config)) || JSON.stringify(expected) !== JSON.stringify(configured)) throw Error('Trading reviewed config allowlist changed')
   const allowed = new Map(rows.map(row => [row.repoId, Object.freeze({ ...row })]))
   if (allowed.size !== rows.length) throw Error('Trading reviewed existing-market allowlist is ambiguous')
   const resolveConfig = createMarketConfigResolver(config, expected, null)
