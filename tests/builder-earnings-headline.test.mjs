@@ -36,3 +36,23 @@ test('nothing claimable shows a muted note', () => {
   assert.equal(builderEarningsHeadline({ ...market, beneficiaryWallet: 'W' }, match(0n), 150).action.label, 'Paid to the verified maintainer')
   assert.equal(builderEarningsHeadline({ ...market, claimed: '0', earned: '0' }, match(null), 150).action.label, 'Builders earn from every trade')
 })
+
+test('recovered accrual is not a payable claim, and uses the reconciled ledger rather than cached market totals', () => {
+  const fees = { ...match(1493333627n), recordedEarned: 1800000001n, recordedClaimed: 100000001n,
+    platformCollected: 206666373n, custodyCollected: 700000000n, custodyHeld: 600000000n, payoutsEnabled: false }
+  const view = builderEarningsHeadline({ ...market, earned: '0', claimed: '0', beneficiaryWallet: 'W' }, fees, null)
+  assert.equal(view.value, '1.8 SOL')
+  assert.equal(view.action.kind, 'note')
+  assert.match(view.action.label, /Claims paused/)
+  assert.deepEqual(view.balances, { accrued: 1800000001n, paid: 100000001n, collected: 906666374n,
+    custodyHeld: 600000000n, remaining: 1493333627n, claimable: null })
+})
+
+test('collected includes legacy direct payouts, without counting custody payouts twice', () => {
+  const fees = { ...match(600n), recordedEarned: 1000n, recordedClaimed: 300n, platformCollected: 100n,
+    custodyCollected: 0n, custodyHeld: 0n, payoutsEnabled: false }
+  assert.equal(builderEarningsHeadline(market, fees, null).balances.collected, 400n)
+  const held = { ...fees, platformCollected: 0n, custodyCollected: 200n, custodyHeld: 100n, onchainCreatorFee: 700n }
+  assert.equal(builderEarningsHeadline(market, held, null).balances.collected, 400n,
+    '200 direct payouts + 200 collected into custody; the 100 custody payout is already part of paid')
+})

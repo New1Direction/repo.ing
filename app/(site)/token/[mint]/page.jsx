@@ -249,21 +249,25 @@ async function EarningsHeadline({ market }) {
 
 async function RepositoryEarnings({ market, declined = false }) {
   const [fees, usdPerSol] = await earningsEvidence(market.repoId)
-  const claimable = fees.status === 'MATCH' ? fees.onchainCreatorFee : null
-  const verifiedEarned=fees.status==='MATCH'?market.earned:null
+  const balances = builderEarningsHeadline(market, fees, usdPerSol)?.balances
+  const claimable = balances?.claimable ?? null
+  const verifiedEarned = balances?.accrued ?? null
   const usdEstimate = verifiedEarned===null?null:formatUsdEstimate(verifiedEarned, usdPerSol)
   const earningsNote = fees.status === 'PENDING_REVIEW' ? 'A previous claim needs settlement review before another payout can be sent.' :
-    claimable === null ? 'Current creator-fee state is unavailable or needs review.' :
+    !balances ? 'Accrued fees are unverified while accounting catches up. This does not mean zero fees were earned.' :
+      fees.payoutsEnabled === false ? 'Claims are paused. Accrued fees are not payouts; collection receipts and administrator/wallet authorization must be verified before payment.' :
       !market.beneficiaryWallet ? 'A GitHub admin can verify and set a payout wallet to claim available fees.' :
         'USD value is estimated at the current SOL price. Creator fees settle in SOL.'
-  return (<div className="inner-card earnings-card"><h3>Total repository earnings <Info size={17}/></h3>
+  return (<div className="inner-card earnings-card"><h3>Accrued repository fees <Info size={17}/></h3>
           <strong className="earnings-amount">{verifiedEarned===null?'Checking…':usdEstimate ? `≈ ${usdEstimate}` : `${formatSolDisplay(verifiedEarned)} SOL`}</strong>
-          {usdEstimate && <span className="earnings-sol" title={`${market.earned} lamports earned in total`}>≈ {formatSolRounded(market.earned)} SOL earned</span>}
-          <div className="earnings-breakdown"><span>Already paid<strong>{verifiedEarned===null?'—':`${formatSolDisplay(market.claimed)} SOL`}</strong></span><span>Available to claim<strong>{claimable === null ? '—' : `${formatSolDisplay(claimable)} SOL`}</strong></span></div>
-          {BigInt(market.platformCollected ?? '0') > 0n && <p>Platform collections: <strong>{formatSolDisplay(market.platformCollected)} SOL</strong> withdrawn from builder fees, not paid to the owner. <Link href="/how-it-works#builder-collections">Collection policy</Link></p>}
+          {usdEstimate && <span className="earnings-sol" title={`${verifiedEarned} lamports accrued in total`}>≈ {formatSolRounded(verifiedEarned)} SOL accrued</span>}
+          <div className="earnings-breakdown"><span>Collected from pools<strong>{balances ? `${formatSolDisplay(balances.collected)} SOL` : '—'}</strong></span><span>Paid to beneficiary<strong>{balances ? `${formatSolDisplay(balances.paid)} SOL` : '—'}</strong></span></div>
+          <div className="earnings-breakdown"><span>Remaining entitlement<strong>{balances ? `${formatSolDisplay(balances.remaining)} SOL` : '—'}</strong></span><span>Claimable now<strong>{claimable === null ? fees.payoutsEnabled === false ? 'Paused' : 'Unverified' : `${formatSolDisplay(claimable)} SOL`}</strong></span></div>
+          {balances && <p>Collections are not beneficiary payments. {formatSolDisplay(balances.custodyHeld)} SOL of collected fees remains held in custody. <Link href="/how-it-works#builder-collections">Collection policy</Link></p>}
           <div className="earnings-status"><Badge tone={market.beneficiaryWallet ? 'verified' : 'muted'}>{market.beneficiaryWallet ? 'Payout wallet set' : 'Payout wallet needed'}</Badge>{signedPayoutWallet(market) && <XHandle wallet={signedPayoutWallet(market)} trust avatar className="maintainer-x"/>}</div>
-          <p>{earningsNote}</p><Link className="button white earnings-claim" href={`/claim/${market.repoId}?src=token`}>{!market.beneficiaryWallet && claimable !== null && BigInt(claimable) > 0n ? `Maintainer? Claim ${formatSolDisplay(claimable)} SOL` : 'Claim builder fees'}<ArrowUpRight size={16}/></Link>
-          {!market.beneficiaryWallet && !declined && <InviteOwner repoId={market.repoId} fullName={market.fullName} available={claimable?.toString() ?? null}/> }
+          {fees.lastVerifiedAt && <p>Last verified {fees.lastVerifiedAt}. Checking current accruals.</p>}
+          <p>{earningsNote}</p>{fees.payoutsEnabled !== false && <Link className="button white earnings-claim" href={`/claim/${market.repoId}?src=token`}>{!market.beneficiaryWallet ? 'Verify payout wallet' : 'Claim builder fees'}<ArrowUpRight size={16}/></Link>}
+          {fees.payoutsEnabled !== false && !market.beneficiaryWallet && !declined && <InviteOwner repoId={market.repoId} fullName={market.fullName} available={claimable?.toString() ?? null}/> }
         </div>)
 }
 

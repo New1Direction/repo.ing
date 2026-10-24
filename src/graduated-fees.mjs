@@ -76,7 +76,7 @@ async function proofQuery(db, text, params) {
 // only by a path that also handles its graduated phase (earlyAccessGraduated; docs/EARLY_ACCESS.md, step 7); every other path is
 // refused by name. Without earlyAccess such a market is refused by name.
 export function createGraduatedFees({ connection, config, db = null, loadTransaction = loadFinalizedTransaction, earlyAccess = null,
-  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, earlyAccessGraduated = false, custodyRecovery = null }) {
+  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, earlyAccessGraduated = false, custodyRecovery = null, persistProof = true }) {
   const custody = createCustodyRecovery(custodyRecovery)
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const amm = new CpAmm(connection)
@@ -175,7 +175,7 @@ export function createGraduatedFees({ connection, config, db = null, loadTransac
     const partnerAvailable = BigInt(partnerFees.feeTokenB.toString()), partnerClaimed = BigInt(partnerState.metrics.totalClaimedBFee.toString())
     if (available < 0n || claimed < 0n || partnerAvailable < 0n || partnerClaimed < 0n) throw Error('Negative graduated fee state')
     // Persist only a proof that was just proven from finalized history and passed every current check.
-    if (!proof.stored && db && !proofTableMissing) proven.set(cacheKey, proof = await storeProof(market, configKey, target, proof))
+    if (persistProof && !proof.stored && db && !proofTableMissing) proven.set(cacheKey, proof = await storeProof(market, configKey, target, proof))
     const evidence = { migration: proof.signature, accounts: snapshot.value.slice(0, 3).map((info, i) => ({
       address: accounts[i].toBase58(), owner: info.owner.toBase58(), data: info.data.toString('base64') })) }
     const partnerEvidence = { migration: proof.signature, accounts: [target, proof.partner.position, proof.partner.nftAccount]

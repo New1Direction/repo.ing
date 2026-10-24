@@ -440,3 +440,35 @@ test('ordinary launch admission is separately bound and never opens other financ
   f.env.ORDINARY_LAUNCH_DATABASE_URL = 'postgres://owner:synthetic@localhost/repoing_operational?sslmode=verify-full'
   assert.equal((await f.request('/api/health')).status, 503)
 })
+
+test('accounting recovery binds only the isolated ledger reader and never admits payout routes or a fee writer', async () => {
+  const f = await fixture()
+  Object.assign(f.env, { EXISTING_MARKET_TRADING_STAGE: 'live', ACCOUNTING_RECOVERY_ENABLED: 'true',
+    ACCOUNTING_DATABASE_URL: 'postgres://repoing_ledger_reader:synthetic@localhost/repoing_operational?sslmode=verify-full',
+    ACCOUNTING_CUSTODY_SHA256: inputs.custody.sha256,
+    RECOVERY_FEE_DATABASE_URL: 'never-forward-this-writer' })
+  assert.equal((await f.request(`/token/${mint}`)).status, 200)
+  assert.equal(f.runtime.env.ACCOUNTING_RECOVERY_ENABLED, 'true')
+  assert.equal(f.runtime.env.ACCOUNTING_DATABASE_URL, f.env.ACCOUNTING_DATABASE_URL)
+  assert.equal(f.runtime.env.ACCOUNTING_CUSTODY_SHA256, inputs.custody.sha256)
+  assert.equal(f.runtime.env.RECOVERY_FEE_DATABASE_URL, undefined)
+  for (const path of ['/api/claim', '/api/builders/claim', '/api/replay', '/api/bundles', '/api/hook-lab/native-launch']) {
+    assert.equal((await f.request(path, { method: 'POST' })).status, 403)
+  }
+  const starts = f.runtime.starts
+  f.env.ACCOUNTING_DATABASE_URL = f.env.ACCOUNTING_DATABASE_URL.replace('synthetic', 'replacement-fixture')
+  assert.equal((await f.request('/api/health')).status, 200)
+  assert.equal(f.runtime.starts, starts + 1)
+  const valid = f.env.ACCOUNTING_DATABASE_URL
+  for (const invalid of [valid.replace('repoing_ledger_reader', 'repoing_owner'), valid + '&options=unsafe',
+    valid + '&sslmode=require', valid.replace('verify-full', 'require')]) {
+    f.env.ACCOUNTING_DATABASE_URL = invalid
+    assert.equal((await f.request('/api/health')).status, 503)
+  }
+  f.env.ACCOUNTING_DATABASE_URL = valid
+  f.env.ACCOUNTING_CUSTODY_SHA256 = '0'.repeat(64)
+  assert.equal((await f.request('/api/health')).status, 503)
+  f.env.ACCOUNTING_RECOVERY_ENABLED = 'false'
+  assert.equal((await f.request('/api/health')).status, 200)
+  assert.equal(f.runtime.env.ACCOUNTING_DATABASE_URL, undefined)
+})

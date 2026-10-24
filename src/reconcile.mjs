@@ -124,10 +124,10 @@ export function createReconcileEpisodes({ now = Date.now, holdMs = RECONCILE_HOL
 // are reconciled on its curve like any other's (docs/EARLY_ACCESS.md, step 6a). Without it (every other caller, the fee status the
 // token page and the claim preview read included) such a market is refused by name.
 // earlyAccessGraduated: the caller also handles a graduated early access market (the graduation monitor; step 7).
-export function createReconciler({ pool, connection, config, earlyAccess = null, earlyAccessGraduated = false, custodyRecovery = null }) {
+export function createReconciler({ pool, connection, config, earlyAccess = null, earlyAccessGraduated = false, custodyRecovery = null, persistProof = true }) {
   const custody = createCustodyRecovery(custodyRecovery)
   const resolveConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
-  const graduatedFees = createGraduatedFees({ connection, config, db: pool, earlyAccess, earlyAccessGraduated, custodyRecovery })
+  const graduatedFees = createGraduatedFees({ connection, config, db: pool, earlyAccess, earlyAccessGraduated, custodyRecovery, persistProof })
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
 
   const reconcile = async githubRepoId => {
@@ -207,6 +207,7 @@ export function createReconciler({ pool, connection, config, earlyAccess = null,
         // An early access market also says how much of the fee is its DAMM v2 position's: its payouts claim one part at a time
         // (earlyAccessClaimAmounts, nextClaimAmount in src/claim-amounts.mjs).
         return { ...base, onchainCreatorFee, platform, difference, graduated: Boolean(graduated),
+          ...custodyFunds ? { custodyCollected: custodyFunds.creator.collected, custodyHeld: custodyFunds.creator.held } : {},
           ...isEarlyAccessMarket(market) ? { earlyAccess: true, graduatedCreatorFee: graduated?.available ?? 0n } : {},
           status: difference === 0n ? 'MATCH' : 'MISMATCH' }
       } finally { await client.query('select pg_advisory_unlock($1::bigint)', [repoId.toString()]) }

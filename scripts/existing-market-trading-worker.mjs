@@ -21,6 +21,7 @@ const bindingNames = ['PUBLIC_DATABASE_URL', 'TRADING_DATABASE_URL', 'DBC_CONFIG
 const testBindingNames = ['EXISTING_MARKET_TEST_PLAN', 'EXISTING_MARKET_TEST_SUBMISSION', 'EXISTING_MARKET_TEST_ACCESS_TOKEN']
 const launchBindingNames = ['ORDINARY_LAUNCH_RECOVERY_ENABLED', 'ORDINARY_LAUNCH_DATABASE_URL', 'ORDINARY_LAUNCH_CONFIG', 'ORDINARY_LAUNCH_BOOTSTRAP_SECRET_KEY',
   'GITHUB_APP_PRIVATE_KEY_BASE64', 'GITHUB_APP_CLIENT_ID', 'GITHUB_APP_INSTALLATION_ID']
+const accountingBindingNames = ['ACCOUNTING_RECOVERY_ENABLED', 'ACCOUNTING_DATABASE_URL', 'ACCOUNTING_CUSTODY_SHA256']
 const ordinaryLaunchEnabled = bindings => bindings.EXISTING_MARKET_TRADING_STAGE === 'live' && bindings.ORDINARY_LAUNCH_RECOVERY_ENABLED === 'true'
 const ordinaryRepoPath = path => {
   const id = /^\/(?:launch|api\/repo-images)\/([1-9]\d{0,15})$/.exec(path)?.[1]
@@ -33,10 +34,19 @@ async function sha256(value) {
 }
 
 function snapshotBindings(env) {
-  return Object.fromEntries([...bindingNames, ...testBindingNames, ...launchBindingNames].map(name => [name, env[name]]))
+  return Object.fromEntries([...bindingNames, ...testBindingNames, ...launchBindingNames, ...accountingBindingNames].map(name => [name, env[name]]))
 }
 
 async function validateBindings(bindings) {
+  if (bindings.ACCOUNTING_RECOVERY_ENABLED === 'true') {
+    let url
+    try { url = new URL(bindings.ACCOUNTING_DATABASE_URL) } catch { /* Never log credentials. */ }
+    if (!url || !['postgres:', 'postgresql:'].includes(url.protocol) || url.username !== 'repoing_ledger_reader' ||
+        url.pathname !== '/repoing_operational' || url.searchParams.get('sslmode') !== 'verify-full' ||
+        url.searchParams.size !== 1 || bindings.ACCOUNTING_CUSTODY_SHA256 !== custodyDigest) {
+      throw Error('Accounting reader bindings missing or mismatched')
+    }
+  }
   if (bindings.ORDINARY_LAUNCH_RECOVERY_ENABLED === 'true') {
     let url
     try { url = new URL(bindings.ORDINARY_LAUNCH_DATABASE_URL) } catch { /* Refuse without logging credentials. */ }
@@ -173,6 +183,8 @@ export class PublicSite extends Container {
         EXISTING_MARKET_TEST_ACCESS_TOKEN: bindings.EXISTING_MARKET_TRADING_STAGE === 'test' ? bindings.EXISTING_MARKET_TEST_ACCESS_TOKEN : '',
         ORDINARY_LAUNCH_RECOVERY_ENABLED: ordinaryLaunchEnabled(bindings) ? 'true' : 'false',
         ...ordinaryLaunchEnabled(bindings) ? Object.fromEntries(launchBindingNames.slice(1).map(name => [name, bindings[name]])) : {},
+        ACCOUNTING_RECOVERY_ENABLED: bindings.ACCOUNTING_RECOVERY_ENABLED === 'true' ? 'true' : 'false',
+        ...bindings.ACCOUNTING_RECOVERY_ENABLED === 'true' ? Object.fromEntries(accountingBindingNames.slice(1).map(name => [name, bindings[name]])) : {},
         SOLANA_RPC_URL: 'https://api.mainnet-beta.solana.com',
         HOOK_PRODUCTION_BOOTSTRAP: 'false',
         HOOK_NATIVE_LAUNCH_ENABLED: 'false',

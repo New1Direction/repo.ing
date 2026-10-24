@@ -1,6 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { displayFeeStatus } from '../app/lib/server.mjs'
+import { displayFeeStatus, feeStatus } from '../app/lib/server.mjs'
+
+test('accounting recovery never falls back to the general database or enables payouts when its dedicated reader is missing', async t => {
+  const previous = process.env.ACCOUNTING_RECOVERY_ENABLED
+  process.env.ACCOUNTING_RECOVERY_ENABLED = 'true'
+  t.after(() => { if (previous === undefined) delete process.env.ACCOUNTING_RECOVERY_ENABLED; else process.env.ACCOUNTING_RECOVERY_ENABLED = previous })
+  const result = await feeStatus('1278009399')
+  assert.equal(result.status, 'UNAVAILABLE')
+  assert.equal(result.payoutsEnabled, false)
+})
 
 test('token page fee status is shared per repository for 30 s, 10 s while unavailable, and failures are not kept', async () => {
   let clock = 0, reads = 0, answer = { status: 'UNAVAILABLE', onchainCreatorFee: null }

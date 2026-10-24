@@ -10,15 +10,18 @@ import { loadFinalizedTransaction } from './finalized-transaction.mjs'
 import { canonicalDbcSwapEvents, UnparseableTradeError } from './trade-evidence.mjs'
 import { tradingEarlyAccessConfig } from './early-access.mjs'
 import { createCustodyRecovery } from './custody-recovery.mjs'
+import { agreedFinalizedTransaction, agreeGraduation } from './graduation-state.mjs'
 
 const KIND = 'dbc_creator_quote'
 
 // earlyAccess: EARLY_ACCESS_DBC_CONFIG, so a contributor early access market's curve trades (swap2 with the transfer hook, parsed
 // like any DBC swap) accrue as well; unset, those markets are refused as before.
-export function createFeeAccrual({ pool: databasePool, connection, config, earlyAccess = tradingEarlyAccessConfig(), custodyRecovery = null }) {
+export function createFeeAccrual({ pool: databasePool, connection, verification = null, config, earlyAccess = tradingEarlyAccessConfig(), custodyRecovery = null }) {
+  if (verification && new URL(connection.rpcEndpoint).hostname === new URL(verification.rpcEndpoint).hostname) throw Error('INDEPENDENT_RPC_REQUIRED')
   const custody = createCustodyRecovery(custodyRecovery)
   const resolveConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
+  const verifier = verification && new DynamicBondingCurveClient(verification, 'finalized')
   const db = drizzle(databasePool)
   const earnedIn = async (executor, repoId) => {
     const [row] = await executor.select({ amount: sql`coalesce(sum(${feeEvents.amountBaseUnits}), 0)::text` })
@@ -39,7 +42,8 @@ export function createFeeAccrual({ pool: databasePool, connection, config, early
   }
   const evidenceFrom = async (signature, market, creatorPercentage, allowNonSwap) => {
     const configKey = resolveConfig(market)
-    const transaction = await loadFinalizedTransaction(connection, signature)
+    const transaction = verification ? await agreedFinalizedTransaction(connection, verification, signature)
+      : await loadFinalizedTransaction(connection, signature)
     if (!transaction || !transaction.meta || transaction.meta.err) throw new Error(`Trade ${signature} has no successful finalized transaction evidence`)
     const { events: swaps, sawCanonicalSwap, sawCanonicalFeeEvent } =
       canonicalDbcSwapEvents(transaction, market, configKey, dbc)
@@ -74,6 +78,11 @@ export function createFeeAccrual({ pool: databasePool, connection, config, early
         const configKey = resolveConfig(market)
         const state = await dbc.state.getPool(market.pool)
         const fixed = await readPoolConfig(dbc, configKey)
+        if (verifier) {
+          const [otherState, otherFixed] = await Promise.all([verifier.state.getPool(market.pool), readPoolConfig(verifier, configKey)])
+          agreeGraduation(state, otherState)
+          agreeGraduation(fixed, otherFixed)
+        }
         if (!state || !fixed || state.poolState.creator.toBase58() !== custody.creator(market, configKey) ||
             !state.poolState.config.equals(configKey) || !state.poolState.baseMint.equals(new PublicKey(market.mint)) ||
             !fixed.quoteMint.equals(NATIVE_MINT) || fixed.collectFeeMode !== CollectFeeMode.QuoteToken ||
@@ -84,7 +93,7 @@ export function createFeeAccrual({ pool: databasePool, connection, config, early
         const evidence = await Promise.all([...new Set(signatures)].map(signature =>
           evidenceFrom(signature, market, fixed.creatorTradingFeePercentage, allowNonSwap)))
         const candidates = evidence.flatMap(item => item.events)
-        return lockedDb.transaction(async tx => {
+        return await lockedDb.transaction(async tx => {
           let earned = await earnedIn(tx, repoId)
           const additions = []
           for (const event of candidates) {

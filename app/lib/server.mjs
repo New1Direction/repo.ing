@@ -1,4 +1,6 @@
 import { cache } from 'react'
+import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { allocationEnabled } from '../../src/builder-allocation.mjs'
 import { createDatabasePool } from '../../src/database-pool.mjs'
 import { Connection, Keypair } from '@solana/web3.js'
@@ -300,11 +302,28 @@ export async function repositoryById(repoId, { pool = database() } = {}) {
 // builder claims them like any other (docs/EARLY_ACCESS.md, steps 6c and 7c). Without it the reconciler refuses it, which reads as
 // UNAVAILABLE.
 export async function feeStatus(repoId) {
-  const pool = database()
-  const config = configAddress()
-  if (!pool || !config) return { status: 'UNAVAILABLE', onchainCreatorFee: null }
-  try { return await createReconciler({ pool, connection: chain(), config, earlyAccess: tradingEarlyAccessConfig(), earlyAccessGraduated: true }).reconcile(repoId) }
-  catch { return { status: 'UNAVAILABLE', onchainCreatorFee: null } }
+  const recovery = process.env.ACCOUNTING_RECOVERY_ENABLED === 'true'
+  const unavailable = { status: 'UNAVAILABLE', onchainCreatorFee: null, ...recovery ? { payoutsEnabled: false } : {} }
+  try {
+    let pool, custodyRecovery = null
+    if (recovery) {
+      const url = new URL(process.env.ACCOUNTING_DATABASE_URL)
+      if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.username !== 'repoing_ledger_reader' ||
+          url.pathname !== '/repoing_operational' || url.searchParams.get('sslmode') !== 'verify-full' ||
+          url.searchParams.size !== 1) return unavailable
+      const bytes = readFileSync('config/existing-market-custody.json')
+      if (createHash('sha256').update(bytes).digest('hex') !== process.env.ACCOUNTING_CUSTODY_SHA256) return unavailable
+      custodyRecovery = JSON.parse(bytes)
+      globalThis.__repoingLedgerPool ??= createDatabasePool({ connectionString: url.href,
+        options: '-c default_transaction_read_only=on', max: 4, statement_timeout: 15000 })
+      pool = globalThis.__repoingLedgerPool
+    } else pool = database()
+    const config = configAddress()
+    if (!pool || !config) return unavailable
+    const result = await createReconciler({ pool, connection: chain(), config, custodyRecovery, persistProof: !recovery,
+      earlyAccess: tradingEarlyAccessConfig(), earlyAccessGraduated: true }).reconcile(repoId)
+    return { ...result, ...recovery ? { payoutsEnabled: false } : {} }
+  } catch { return unavailable }
 }
 
 // Token pages display fee status on every view; one chain reconciliation per repository per 30 s (10 s while it is not
