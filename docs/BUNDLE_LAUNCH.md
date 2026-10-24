@@ -1,5 +1,7 @@
 # Bundle launches
 
+**Recovery status (2026-10-24): public group launches remain disabled.** The October 9 setup and owner decisions below are historical, not current execution instructions. Do not reuse exposed creator/partner/operator keys or repeat completed custody changes. `STATUS.md` records the recovered platform and release gates. The config-review command below now uses recovered custody and cannot execute; platform, signer, lookup-table and funding acceptance remain separate.
+
 **Shown to people as "Group launch"** (since 2026-10-10). On Solana, "bundled" means insiders bought supply inside the
 launch transaction, a red flag for traders. The code, the program, the API (`/api/bundles`) and the database keep the Bundle
 name. The raise page is `/group/<id>`; `/bundle/<id>` redirects there permanently.
@@ -195,19 +197,18 @@ buffer account holds 1.762826 SOL; the deploy instruction moves it back to the p
 upgrade authority is the only key init_platform accepts and it can change the program: keep it offline; a multisig or freezing
 upgrades is a decision for after the audit. A later, larger build needs `solana program extend` first.
 
-**2. Create the bundle config** (the program must be deployed; the script checks it):
+**2. Review a safe replacement bundle config** (the program must be deployed; the script checks it):
 
 ```sh
-node scripts/create-bundle-config.mjs     # first run writes secrets/bundle-config-keypair.json (the config's address, mode 0600)
-APPROVED_BUNDLE_CONFIG=<config> APPROVED_BUNDLE_CONFIG_INSTRUCTION_SHA256=<instructionSha256> \
-  APPROVED_BUNDLE_CONFIG_DEBIT_LAMPORTS=<totalDebitLamports> node scripts/create-bundle-config.mjs --execute
+SOLANA_RPC_URL=<https-mainnet-rpc> node scripts/create-bundle-config.mjs --config <fresh-custody-backed-public-address>
 ```
 
-Check in the dry run: `feeClaimer` is the router `A4HN8dLeZt46HhnYssYvHvQXxVrGQDZep6VyMPAfzTuQ`; `differsFromReferenceOnlyIn`
-is `["feeClaimer"]` (the reference is the live SOL launch-fee config `8TXNGgx6…`, so the curve, launch fee, split, leftover
-and migration are today's); `leftoverReceiver` is the creator signer FeZX…; `payer` is the partner wallet H7TK… (signed from the
-Keychain, as the other config scripts); `dammConfig` is `Hv8Lmzmnju6m7kcokVKvwqz7QPmdX9XfKjJsXz8RXcjp` (FixedBps100);
-`totalDebitLamports` about 5,984,080 (0.005974 SOL rent, two signatures). A check that fails stops the script with its reason.
+This command neither creates/reads private keys nor signs/sends. `--execute` is refused even with the historical approval variables set.
+Check that `feeClaimer` is router `A4HN8dLeZt46HhnYssYvHvQXxVrGQDZep6VyMPAfzTuQ`, `leftoverReceiver` is recovered vault
+`3dHCTpgdx15yXyVGh7DK1woQ1XisQpmFCxncURrq63Gs`, and `payer` is recovered payer `3eCFwDiKetHe9pg1zNEkTohUECu2vtsZDRMZ3jeR4g5o`.
+`differsFromReferenceOnlyIn` must be `["feeClaimer"]`, against finalized safe ordinary config `Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7`
+whose exact account bytes are pinned. The simulation reports current rent/fees; it is not funding approval, program-governance acceptance,
+or permission to execute the historical platform setup below. A separately reviewed, one-send custody path is required for creation.
 
 **3. Init the platform** (signed by the upgrade authority from step 1). With the owner's choices: the admin is the creator signer, the
 launch signer and the operator are the keys in the main checkout's git-ignored `secrets/bundle-launch-signer-keypair.json` and

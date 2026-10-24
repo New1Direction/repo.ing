@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
 import { ComputeBudgetProgram, Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction } from '@solana/web3.js'
 import { NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { DAMM_V2_MIGRATION_FEE_ADDRESS, DynamicBondingCurveClient, deriveDbcPoolAuthority } from '@meteora-ag/dynamic-bonding-curve-sdk'
@@ -24,6 +25,13 @@ const liveBytes = Buffer.from(live.data, 'base64')
 const withBytes = (bytes, offset, value) => { const copy = Buffer.from(bytes); Buffer.from(value).copy(copy, offset); return copy }
 // The bundle config as it will be: the live config with the router as its fee claimer and nothing else changed.
 const bundleBytes = withBytes(liveBytes, PROGRAM_CONFIG_OFFSETS.feeClaimer, routerAddress().toBuffer())
+
+test('the recovery bundle-config CLI refuses execution before RPC or key access', () => {
+  const result = spawnSync(process.execPath, [new URL('../scripts/create-bundle-config.mjs', import.meta.url).pathname, '--execute'],
+    { env: {}, encoding: 'utf8', timeout: 10000 })
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /Review-only: execution requires a separately approved safe signing plan/)
+})
 
 test('the bundle config is the standard launch-fee curve, created with the router as fee claimer', async () => {
   assert.deepEqual(buildBundleCurve(), buildLaunchCurve('launch-fee'))
