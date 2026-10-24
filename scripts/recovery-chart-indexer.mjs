@@ -81,44 +81,65 @@ export async function runRecoveryCharts(env = process.env) {
   const db = new pg.Client({ connectionString: url.toString(), application_name: 'repoing-chart-recovery',
     statement_timeout: 15000, query_timeout: 20000, connectionTimeoutMillis: 15000 })
   const connection = new Connection(env.SOLANA_RPC_URL, 'finalized'), verification = new Connection(env.SOLANA_VERIFICATION_RPC_URL, 'finalized')
-  if (new URL(connection.rpcEndpoint).hostname === new URL(verification.rpcEndpoint).hostname) throw Error('INDEPENDENT_RPC_REQUIRED')
-  let locked = false
+  // Graduated markets need historical migration receipts that pruned RPCs cannot serve.
+  const archiveVerification = env.SOLANA_ARCHIVE_VERIFICATION_RPC_URL
+    ? new Connection(env.SOLANA_ARCHIVE_VERIFICATION_RPC_URL, 'finalized') : verification
+  const providers = [...new Set([connection, verification, archiveVerification])]
+  if ([verification, archiveVerification].some(c => new URL(connection.rpcEndpoint).hostname === new URL(c.rpcEndpoint).hostname)) throw Error('INDEPENDENT_RPC_REQUIRED')
+  let locked = false, readers
   try {
     await db.connect()
     if ((await db.query('select current_user as role')).rows[0].role !== 'repoing_chart_recovery') throw Error('CHART_ROLE_REQUIRED')
-    if (agreeGraduation(...await Promise.all([connection, verification].map(c => c.getGenesisHash()))) !== '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d') throw Error('NETWORK_MISMATCH')
+    if ((await Promise.all(providers.map(c => c.getGenesisHash()))).some(hash => hash !== '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d')) throw Error('NETWORK_MISMATCH')
     locked = (await db.query("select pg_try_advisory_lock(hashtext('recovery-charts')) as locked")).rows[0].locked
     if (!locked) return { busy: true }
     const { rows: markets } = await db.query(`select github_repo_id::text as "repoId",mint,pool,bundle_id as "bundleId",creator_wallet as "creatorWallet",
       early_access_end as "earlyAccessEnd",transfer_hook_program as "transferHookProgram"
       from public.markets where status='confirmed' and indexed_at is not null and launch_finality='finalized' and quote_asset_id is null`)
     const { rows: graduates } = await db.query('select * from public.graduation_events')
-    const results = []
-    for (const market of markets) {
-      const result = { repoId: market.repoId }
+    // A slow serial RPC pass can exceed the observation freshness window. Each
+    // reader owns its DB session so chart transactions never interleave; the
+    // separate coordinator connection retains the process-wide advisory lock.
+    readers = new pg.Pool({ connectionString: url.toString(), application_name: 'repoing-chart-reader', max: 4,
+      statement_timeout: 15000, query_timeout: 20000, connectionTimeoutMillis: 15000 })
+    const results = [], pending = [...markets]
+    const work = async () => {
+      const db = await readers.connect()
       try {
-        const graduation = graduates.find(g => String(g.github_repo_id) === market.repoId)
-        const migration = chartMigration(market, graduation)
-        Object.assign(result, await indexRecoveryMarket({ db, connection, verification, market, migration, config: env.DBC_CONFIG, legacyConfigs: env.DBC_LEGACY_CONFIGS }))
-        const state = await readGraduationState({ db, connection, verification, market, config: env.DBC_CONFIG, custodyRecovery })
-        if (state.migration) {
-          const { rows: [volume] } = await db.query(`select coalesce(sum(quote_amount),0)::text as lamports
-            from public.damm_trade_events where github_repo_id=$1 and pool=$2 and slot >= $3
-              and traded_at >= now()-interval '24 hours'`, [market.repoId,migration.pool,migration.slot])
-          state.dammVolume24hLamports = volume.lamports
+        while (pending.length) {
+          const market = pending.shift()
+          const result = { repoId: market.repoId }
+          try {
+            const graduation = graduates.find(g => String(g.github_repo_id) === market.repoId)
+            const migration = chartMigration(market, graduation)
+            const verifier = migration ? archiveVerification : verification
+            Object.assign(result, await indexRecoveryMarket({ db, connection, verification: verifier, market, migration, config: env.DBC_CONFIG, legacyConfigs: env.DBC_LEGACY_CONFIGS }))
+            const state = await readGraduationState({ db, connection, verification: verifier, market, config: env.DBC_CONFIG, custodyRecovery })
+            if (state.migration) {
+              const { rows: [volume] } = await db.query(`select coalesce(sum(quote_amount),0)::text as lamports
+                from public.damm_trade_events where github_repo_id=$1 and pool=$2 and slot >= $3
+                  and traded_at >= now()-interval '24 hours'`, [market.repoId,migration.pool,migration.slot])
+              state.dammVolume24hLamports = volume.lamports
+            }
+            // Use the same freshness and immutable migration checks the public endpoint enforces.
+            publicGraduation({ status: 'VERIFIED', observation: JSON.stringify(state), migration_evidence_hash: graduation?.evidence_hash })
+            const { accountEvidence, positionEvidence, platform, partnerWallet, ...display } = state
+            await db.query(`insert into recovery_charts.observations(github_repo_id,checked_at,observation) values($1,$2,$3)
+              on conflict(github_repo_id) do update set checked_at=excluded.checked_at,observation=excluded.observation`, [market.repoId,state.checkedAt,JSON.stringify(display)])
+            result.progress = state.phase
+          } catch (e) { result.error = /^[A-Z_]+$/.test(e.message) ? e.message : 'CHART_READ_UNAVAILABLE' }
+          results.push(result)
+          await new Promise(r => setTimeout(r, 500))
         }
-        // Use the same freshness and immutable migration checks the public endpoint enforces.
-        publicGraduation({ status: 'VERIFIED', observation: JSON.stringify(state), migration_evidence_hash: graduation?.evidence_hash })
-        const { accountEvidence, positionEvidence, platform, partnerWallet, ...display } = state
-        await db.query(`insert into recovery_charts.observations(github_repo_id,checked_at,observation) values($1,$2,$3)
-          on conflict(github_repo_id) do update set checked_at=excluded.checked_at,observation=excluded.observation`, [market.repoId,state.checkedAt,JSON.stringify(display)])
-        result.progress = state.phase
-      } catch (e) { result.error = /^[A-Z_]+$/.test(e.message) ? e.message : 'CHART_READ_UNAVAILABLE' }
-      results.push(result)
-      await new Promise(r => setTimeout(r, 500))
+      } finally { db.release() }
     }
+    await Promise.allSettled(Array.from({ length: Math.min(4, markets.length) }, work)).then(outcomes => {
+      const failed = outcomes.find(outcome => outcome.status === 'rejected')
+      if (failed) throw failed.reason
+    })
     return { at: new Date().toISOString(), results }
   } finally {
+    await readers?.end()
     if (locked) await db.query("select pg_advisory_unlock(hashtext('recovery-charts'))").catch(() => {})
     await db.end()
   }
