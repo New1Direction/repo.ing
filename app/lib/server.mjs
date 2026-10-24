@@ -322,8 +322,18 @@ export async function feeStatus(repoId) {
     } else pool = database()
     const config = configAddress()
     if (!pool || !config) return unavailable
-    const result = await createReconciler({ pool, connection: chain(), config, custodyRecovery, persistProof: !recovery,
-      earlyAccess: tradingEarlyAccessConfig(), earlyAccessGraduated: true }).reconcile(repoId)
+    const earlyAccess = tradingEarlyAccessConfig()
+    // Reuse immutable SDK/IDL construction, never ledger or chain results. Every call still reconciles under
+    // its repository lock; changed provider, config, pool or verified custody binding builds a new runtime.
+    const key = JSON.stringify([process.env.SOLANA_RPC_URL, config, process.env.DBC_LEGACY_CONFIGS,
+      process.env.BUNDLE_DBC_CONFIG, earlyAccess?.toBase58(), recovery, custodyRecovery])
+    let runtime = globalThis.__repoingFeeReconciler
+    if (!runtime || runtime.pool !== pool || runtime.key !== key) {
+      runtime = { key, pool, reconciler: createReconciler({ pool, connection: chain(), config, custodyRecovery,
+        persistProof: !recovery, earlyAccess, earlyAccessGraduated: true }) }
+      globalThis.__repoingFeeReconciler = runtime
+    }
+    const result = await runtime.reconciler.reconcile(repoId)
     return { ...result, ...recovery ? { payoutsEnabled: false } : {} }
   } catch { return unavailable }
 }
