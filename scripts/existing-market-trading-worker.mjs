@@ -34,10 +34,17 @@ async function sha256(value) {
 }
 
 function snapshotBindings(env) {
-  return Object.fromEntries([...bindingNames, ...testBindingNames, ...launchBindingNames, ...accountingBindingNames].map(name => [name, env[name]]))
+  return Object.fromEntries([...bindingNames, ...testBindingNames, ...launchBindingNames, ...accountingBindingNames, 'SOLANA_RPC_URL'].map(name => [name, env[name]]))
 }
 
 async function validateBindings(bindings) {
+  if (bindings.SOLANA_RPC_URL !== undefined) {
+    let url
+    try { url = new URL(bindings.SOLANA_RPC_URL) } catch { /* Never log provider credentials. */ }
+    if (!url || url.protocol !== 'https:' || url.hostname !== 'mainnet.helius-rpc.com' || url.port ||
+        url.pathname !== '/' || url.username || url.password || url.hash ||
+        url.searchParams.size !== 1 || !url.searchParams.get('api-key')) throw Error('Mainnet RPC binding mismatched')
+  }
   if (bindings.ACCOUNTING_RECOVERY_ENABLED === 'true') {
     let url
     try { url = new URL(bindings.ACCOUNTING_DATABASE_URL) } catch { /* Never log credentials. */ }
@@ -142,6 +149,7 @@ export class PublicSite extends Container {
   defaultPort = 3000
   sleepAfter = '2m'
   enableInternet = true
+  pendingDispatches = new Set()
 
   // Do not let accidental raw binding fetches bypass environment validation.
   async fetch() {
@@ -154,13 +162,15 @@ export class PublicSite extends Container {
   async fetchWithReviewBindings(request, suppliedBindings) {
     const bindings = snapshotBindings(suppliedBindings)
     const appOrigin = 'https://repo.ing'
-    // Keep dispatch inside the same concurrency gate as refresh: releasing it
-    // first permits a second RPC to replace envVars before this fetch starts.
-    return this.ctx.blockConcurrencyWhile(async () => {
+    // Start dispatch under the binding gate, but do not serialize unrelated
+    // requests behind its network response. A changed binding drains those
+    // dispatches before destroying their process or replacing its environment.
+    const { dispatched } = await this.ctx.blockConcurrencyWhile(async () => {
       await validateBindings(bindings)
       const fingerprint = await sha256(JSON.stringify({ ...bindings, APP_ORIGIN: appOrigin }))
       if (await this.ctx.storage.get('review-bindings-sha256') !== fingerprint
         || await this.ctx.storage.get('database-binding-sha256') !== undefined) {
+        await Promise.allSettled([...this.pendingDispatches])
         // Unknown state (including the old database-only key) forces restart.
         // A process retains startup env across Worker/image updates.
         await this.destroy()
@@ -185,7 +195,7 @@ export class PublicSite extends Container {
         ...ordinaryLaunchEnabled(bindings) ? Object.fromEntries(launchBindingNames.slice(1).map(name => [name, bindings[name]])) : {},
         ACCOUNTING_RECOVERY_ENABLED: bindings.ACCOUNTING_RECOVERY_ENABLED === 'true' ? 'true' : 'false',
         ...bindings.ACCOUNTING_RECOVERY_ENABLED === 'true' ? Object.fromEntries(accountingBindingNames.slice(1).map(name => [name, bindings[name]])) : {},
-        SOLANA_RPC_URL: 'https://api.mainnet-beta.solana.com',
+        SOLANA_RPC_URL: bindings.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com',
         HOOK_PRODUCTION_BOOTSTRAP: 'false',
         HOOK_NATIVE_LAUNCH_ENABLED: 'false',
         HOOK_NATIVE_LAUNCHES_ENABLED: 'false',
@@ -195,11 +205,16 @@ export class PublicSite extends Container {
         HOOK_WALLET_IDENTITY_ENABLED: 'false',
         HOOK_SELECTED_HOOKS_ENABLED: 'false',
       }
-      const upstream = await super.fetch(request)
-      const response = new Response(upstream.body, upstream)
-      response.headers.set('X-Repoing-Runtime-Policy', 'discovery-origin-v1')
-      return response
+      const dispatched = super.fetch(request)
+      this.pendingDispatches.add(dispatched)
+      const settled = () => this.pendingDispatches.delete(dispatched)
+      dispatched.then(settled, settled)
+      return { dispatched }
     })
+    const upstream = await dispatched
+    const response = new Response(upstream.body, upstream)
+    response.headers.set('X-Repoing-Runtime-Policy', 'discovery-origin-v1')
+    return response
   }
 }
 
@@ -262,6 +277,16 @@ export default {
     const safe = new Response(response.body, response)
     safe.headers.delete('set-cookie')
     for (const [key, value] of Object.entries(headers)) safe.headers.set(key, value)
+    // Only build assets and explicit public illustrations are cacheable. Pages,
+    // APIs (including token images), errors and financial responses stay no-store.
+    if (request.method === 'GET' && safe.status === 200) {
+      if (/^\/_next\/static\/[a-zA-Z0-9_./-]+\.(js|css|woff2?)$/.test(url.pathname)) {
+        safe.headers.set('Cache-Control', 'public, max-age=31536000, immutable')
+      } else if (['/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png', '/video/repoing-flywheel-poster.jpg'].includes(url.pathname)
+        || /^\/(art|badges|launch-icons|hook-icons|credits)\/[a-z0-9-]+\.(webp|png)$/.test(url.pathname)) {
+        safe.headers.set('Cache-Control', 'public, max-age=300')
+      }
+    }
     // Live recovery notices belong to the React root and survive hydration.
     if (bindings.EXISTING_MARKET_TRADING_STAGE !== 'live' && safe.headers.get('Content-Type')?.includes('text/html')) {
       return new HTMLRewriter().on('body', {

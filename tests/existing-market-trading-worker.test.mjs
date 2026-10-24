@@ -40,7 +40,7 @@ async function fixture(bundledManifest = manifest) {
       runtime.env = null
     }
     async fetch(request) {
-      if (runtime.hold) await runtime.hold
+      if (runtime.hold && (!runtime.holdPath || new URL(request.url).pathname === runtime.holdPath)) await runtime.hold
       if (!runtime.env) { runtime.env = { ...this.envVars }; runtime.starts++ }
       runtime.calls.push({ request, env: { ...runtime.env }, body: request.body ? await request.text() : null })
       return runtime.html
@@ -349,6 +349,47 @@ test('restart/storage failure and an old DO implementation return retryable unav
   f.env.PUBLIC_SITE.getByName = () => ({ fetchWithDatabase() { throw Error('obsolete method') } })
   assert.equal((await f.request()).status, 503)
   assert.equal(f.runtime.calls.length, 0)
+})
+
+test('a slow page does not block health with unchanged bindings', async () => {
+  const f = await fixture()
+  await f.request()
+  let release
+  f.runtime.holdPath = '/stats'
+  f.runtime.hold = new Promise(resolve => { release = resolve })
+  const page = f.request('/stats')
+  await new Promise(resolve => setTimeout(resolve, 20))
+  try {
+    const health = await Promise.race([f.request('/api/health'), new Promise(resolve => setTimeout(() => resolve(null), 200))])
+    assert.equal(health?.status, 200, 'health must finish before the slow page is released')
+  } finally { release(); await page }
+})
+
+test('the restored RPC is restricted to the rotated mainnet provider and included in runtime identity', async () => {
+  const f = await fixture()
+  await f.request()
+  const starts = f.runtime.starts
+  f.env.SOLANA_RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=fixture-only'
+  assert.equal((await (await f.request()).json()).SOLANA_RPC_URL, f.env.SOLANA_RPC_URL)
+  assert.equal(f.runtime.starts, starts + 1)
+  for (const url of ['https://devnet.helius-rpc.com/?api-key=fixture-only', 'http://mainnet.helius-rpc.com/?api-key=x', 'https://mainnet.helius-rpc.com/?api-key=x&api-key=y']) {
+    f.env.SOLANA_RPC_URL = url
+    assert.equal((await f.request()).status, 503)
+  }
+})
+
+test('only successful public static assets can be browser-cached; dynamic and financial responses stay private', async () => {
+  const f = await fixture()
+  for (const path of ['/_next/static/chunks/contenthash.js', '/brand-cat.webp', '/video/repoing-flywheel-poster.jpg']) {
+    assert.match((await f.request(path)).headers.get('cache-control'), /public, max-age=/)
+  }
+  for (const path of ['/', '/api/health', `/api/market/${mint}/curve`, '/api/launch', '/_next/static/../api/claim']) {
+    assert.equal((await f.request(path)).headers.get('cache-control'), 'no-store')
+  }
+  assert.equal((await f.trade()).headers.get('cache-control'), 'no-store')
+  f.runtime.failDestroy = true
+  f.env.TRADING_DATABASE_URL = 'changed'
+  assert.equal((await f.request('/_next/static/chunks/contenthash.js')).headers.get('cache-control'), 'no-store')
 })
 
 test('binding refresh cannot race dispatch into the previous or next process environment', async () => {
