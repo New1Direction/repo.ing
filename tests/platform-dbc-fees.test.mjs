@@ -152,6 +152,28 @@ test('DBC treasury collection preserves discovery and builder fees, refunds rent
     assert.deepEqual(await createPlatformFeeRecovery({ pool, connection }).runOnce(), [])
     assert.equal((await service.status(enrolled.githubRepoId)).available, '0')
   })
+  await t.test('a pool whose creator moved to custody collects only under its exact custody binding', async () => {
+    const custodied = await launch(996003, false), vault = Keypair.generate()
+    const move = await dbc.creator.transferPoolCreator({ pool: new PublicKey(custodied.pool), creator: creator.publicKey, newCreator: vault.publicKey })
+    move.feePayer = launcher.publicKey
+    await send(move, [launcher, creator])
+    const binding = { repoId: String(custodied.githubRepoId), curve: custodied.pool, config: new PublicKey(config).toBase58(),
+      mint: custodied.mint, previousOwner: creator.publicKey.toBase58(), owner: vault.publicKey.toBase58() }
+    const bound = (poolCreators, overrides = {}) => createDbcPlatformFees({ pool, connection: new Connection(process.env.SOLANA_RPC_URL, 'finalized'),
+      config, partner, verification: connection, env: { ...env, ...overrides }, custodyRecovery: { version: 1, poolCreators, positions: [] } })
+    await assert.rejects(service.status(custodied.githubRepoId), /mismatch/, 'without the binding the moved creator is refused')
+    await assert.rejects(bound([{ ...binding, owner: launcher.publicKey.toBase58() }]).status(custodied.githubRepoId), /mismatch/)
+    await assert.rejects(bound([{ ...binding, previousOwner: launcher.publicKey.toBase58() }]).status(custodied.githubRepoId), /custody binding/)
+    for (const receiver of [vault, creator]) {
+      await assert.rejects(bound([binding], { PLATFORM_FEE_TREASURY_WALLET: receiver.publicKey.toBase58() }).status(custodied.githubRepoId), /builder payout/)
+    }
+    const collector = bound([binding]), state = await collector.status(custodied.githubRepoId)
+    assert.equal(state.discoveryReserved, '0'); assert.equal(state.available, state.gross)
+    const before = await connection.getBalance(treasury.publicKey, 'finalized')
+    assert.equal((await collector.claim({ review: review(state) })).reconciliation, 'MATCH')
+    assert.equal(BigInt(await connection.getBalance(treasury.publicKey, 'finalized') - before), BigInt(state.available))
+    assert.equal((await collector.status(custodied.githubRepoId)).available, '0')
+  })
   await t.test('same revenue ledger allocates once, phase totals agree and wrong spending custody blocks', async () => {
     const revenue = createPlatformRevenue({ pool, partnerWallet: treasury.publicKey })
     const policy = await revenue.createPolicy({ buybackPermille: 600, liquidityPermille: 200, createdBy: 'local-test' })

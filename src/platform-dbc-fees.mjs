@@ -13,6 +13,7 @@ import { decodeEarlyAccessConfig } from './early-access-config.mjs'
 import { assertHookClaimInstructions, hookClaimInstructions } from './dbc-hook-claims.mjs'
 import { associatedAccountLength } from './trade-costs.mjs'
 import { discoveryEarned } from './discovery-rewards.mjs'
+import { createCustodyRecovery } from './custody-recovery.mjs'
 
 const PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const MAINNET = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
@@ -40,8 +41,11 @@ export function dbcPlatformEntitlement({ gross, eligible, discoveryPaid, platfor
 // earlyAccess (EARLY_ACCESS_DBC_CONFIG), passed by the paths that collect from them: a contributor early access market's partner
 // fees are collected from its Token-2022 hook pool with claim_trading_fee2 (src/dbc-hook-claims.mjs, docs/EARLY_ACCESS.md step 6f).
 // Without it such a market is refused, as before.
+// custodyRecovery (config/existing-market-custody.json): a pool whose creator was moved to custody is accepted only under its
+// exact binding, the same rule chart and trading reads use. Unbound pools must still match the recorded creator.
 export function createDbcPlatformFees({ pool, connection, config, partner, verification = null, env = process.env, earlyAccess = null,
-  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID }) {
+  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, custodyRecovery = null }) {
+  const custody = createCustodyRecovery(custodyRecovery)
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const resolve = createMarketConfigResolver(config, undefined, undefined, { earlyAccess, hookProgram })
   const rootCoder = dbc.state.getProgram().coder, coder = rootCoder.accounts
@@ -80,11 +84,12 @@ export function createDbcPlatformFees({ pool, connection, config, partner, verif
       s = coder.decode('virtualPool', reads[0].value[0].data).poolState
       fixed = coder.decode('poolConfig', reads[0].value[1].data)
     }
-    if (!s.config.equals(configKey) || s.baseMint.toBase58() !== m.mint || s.creator.toBase58() !== m.creatorWallet ||
+    const creator = custody.creator(m, configKey)
+    if (!s.config.equals(configKey) || s.baseMint.toBase58() !== m.mint || s.creator.toBase58() !== creator ||
       !deriveDbcPoolAddress(NATIVE_MINT, s.baseMint, configKey).equals(poolKey) || !fixed.feeClaimer.equals(partner.publicKey) ||
       !fixed.quoteMint.equals(NATIVE_MINT) || fixed.collectFeeMode !== 0 || fixed.tokenType !== (hook ? 1 : 0) ||
       !s.partnerBaseFee.isZero()) throw Error('Canonical partner config or SOL fee mode mismatch')
-    if (receiver.toBase58() === m.creatorWallet) throw Error('Treasury must not be the builder payout signer')
+    if ([m.creatorWallet, creator].includes(receiver.toBase58())) throw Error('Treasury must not be the builder payout signer')
     const { rows: [totals] } = await db.query(`select
       coalesce((select sum(partner_amount) from discovery_fee_events where github_repo_id=$1),0)::text as gross,
       coalesce((select sum(partner_amount) from discovery_fee_events where github_repo_id=$1 and discovery_eligible),0)::text as eligible,
