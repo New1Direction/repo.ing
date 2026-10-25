@@ -465,13 +465,13 @@ test('ordinary launch admission is separately bound and never opens other financ
   for (const path of ['/launch/123', '/api/launch?repo=123', '/api/repo-images/123']) {
     assert.equal((await f.request(path)).status, 200, path)
   }
-  for (const action of ['prepare', 'submit', 'cancel']) assert.equal((await post('/api/launch', { action })).status, 200)
+  for (const action of ['quote', 'prepare', 'submit', 'cancel']) assert.equal((await post('/api/launch', { action })).status, 200)
   assert.equal((await post('/api/resolve', { url: 'https://github.com/org/repo' })).status, 200)
   for (const path of ['/api/builders/claim', '/api/bundles', '/api/hook-lab/native-launch', '/api/replay']) {
     assert.equal((await post(path, {})).status, 403, path)
   }
   assert.equal((await post('/api/launch', { action: 'prepare' }, { origin: 'https://evil.example' })).status, 403)
-  assert.equal((await post('/api/launch', { action: 'quote' })).status, 403)
+  assert.equal((await post('/api/launch', { action: 'claim' })).status, 403)
   assert.equal((await post('/api/launch', { action: 'prepare', padding: 'x'.repeat(600001) })).status, 403)
   assert.equal((await f.request('/launch/4503599627370497')).status, 403, 'HF IDs remain closed')
   const starts = f.runtime.starts

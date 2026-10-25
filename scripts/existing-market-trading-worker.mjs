@@ -134,7 +134,8 @@ async function tradeBoundary(request, bindings) {
     const actions = stage === 'test' ? ['prepare', 'status', ...(bindings.EXISTING_MARKET_TEST_SUBMISSION === 'true' ? ['submit'] : [])]
       : ['depth', 'quote', 'costs', 'prepare', 'status', ...(stage === 'live' ? ['submit'] : [])]
     if (launch) {
-      if (url.pathname === '/api/launch' && !['prepare', 'submit', 'cancel'].includes(payload.action)) return deny()
+      // quote is read-only: the first-buy preview, itself gated by the new-market buy switch in the app.
+      if (url.pathname === '/api/launch' && !['quote', 'prepare', 'submit', 'cancel'].includes(payload.action)) return deny()
     } else if (!search && !mcp && !actions.includes(payload.action)) return deny()
   }
   const headers = new Headers()
