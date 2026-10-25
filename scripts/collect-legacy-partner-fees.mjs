@@ -45,7 +45,9 @@ function partnerSigner() {
   throw Error('PLATFORM_PARTNER_SECRET_KEY is not the H7TK partner key')
 }
 
-const env = { ...process.env, PLATFORM_FEE_TREASURY_WALLET: treasury, DBC_LEGACY_CONFIGS: configs.slice(1).join(','),
+// The market config resolver reads the approved legacy list from process.env, not from the env passed to the collector.
+process.env.DBC_LEGACY_CONFIGS = configs.slice(1).join(',')
+const env = { ...process.env, PLATFORM_FEE_TREASURY_WALLET: treasury,
   PLATFORM_DBC_COLLECTION_ENABLED: mode === 'claim' ? 'true' : 'false' }
 const pool = new pg.Pool({ connectionString: process.env.COLLECTOR_DATABASE_URL, max: 2 })
 const service = createDbcPlatformFees({ pool, connection: new Connection(process.env.SOLANA_RPC_URL, 'finalized'),
