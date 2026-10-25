@@ -98,3 +98,49 @@ test('paced chart transport cannot send transactions or fall back after a denied
   await assert.rejects(providers.connection.getGenesisHash(), /CHART_RPC_DENIED/)
   assert.equal(requests, 0)
 })
+
+test('writer diagnostics retain SQLSTATE and cleanup evidence without error text or identity leakage', async () => {
+  assert.equal(typeof charts.createChartDiagnostics, 'function')
+  const diagnostics = charts.createChartDiagnostics(), worker = diagnostics.scope(2)
+  worker.market(7); worker.market(11)
+  const error = Object.assign(Error('SECRET_SENTINEL'), { code: '23514', constraint: 'private_constraint',
+    table: 'private_table', detail: 'SECRET_SENTINEL', hint: 'SECRET_SENTINEL', schema: 'SECRET_SENTINEL' })
+  const db = { async query(sql) { if (sql === 'rollback') return { rowCount: null }; throw error } }
+  await assert.rejects(worker.query(db, 'insert into public.trade_events values ($1)', ['SECRET_SENTINEL']), e => e === error)
+  await worker.query(db, 'rollback')
+  diagnostics.lockRelease('SUCCEEDED')
+  const [report] = diagnostics.reports()
+  assert.equal(report.phase, 'TRADE_INSERT'); assert.equal(report.operation, 'INSERT')
+  assert.equal(report.sqlstate, '23514'); assert.equal(report.rollback, 'SUCCEEDED'); assert.equal(report.lockRelease, 'SUCCEEDED')
+  assert.deepEqual([report.worker, report.marketFirst, report.marketLast, report.marketIndex], [2, 7, 11, 11])
+  assert.equal(report.constraintHash, createHash('sha256').update('private_constraint').digest('hex'))
+  assert.equal(report.tableHash, createHash('sha256').update('private_table').digest('hex'))
+  assert.equal(report.indexHash, null, 'pg exposes constraint identity, not a separate index field')
+  assert.equal(/SECRET_SENTINEL|private_constraint|private_table/.test(JSON.stringify(report)), false)
+  assert.equal(charts.validateChartDiagnostic(report), true)
+  for (const patch of [{ message: 'SECRET_SENTINEL' }, { phase: 'UNKNOWN' }, { sqlstate: 'ABCDE' },
+    { operation: 'SECRET_SENTINEL' }, { worker: 4 }, { elapsedMs: Infinity }, { marketIndex: -2 },
+    { constraintHash: 'SECRET_SENTINEL' }, { rollback: 'UNKNOWN_STATUS' }]) {
+    assert.equal(charts.validateChartDiagnostic({ ...report, ...patch }), false)
+  }
+})
+
+test('diagnostics preserve the primary error when rollback fails, bound output and never invoke error getters', async () => {
+  assert.equal(typeof charts.createChartDiagnostics, 'function')
+  const diagnostics = charts.createChartDiagnostics(), scope = diagnostics.scope(0)
+  const primary = Object.assign(Error('SECRET_SENTINEL'), { code: '42501' })
+  const secondary = Object.assign(Error('SECRET_SENTINEL'), { code: '08006' })
+  await assert.rejects(scope.query({ query: async () => { throw primary } }, 'insert into recovery_charts.cursors values ($1)'), e => e === primary)
+  await assert.rejects(scope.query({ query: async () => { throw secondary } }, 'rollback'), e => e === secondary)
+  scope.fail(secondary)
+  diagnostics.lockRelease('FAILED')
+  const [report] = diagnostics.reports()
+  assert.equal(report.sqlstate, '42501'); assert.equal(report.rollback, 'FAILED'); assert.equal(report.lockRelease, 'FAILED')
+  const other = diagnostics.scope(1)
+  const hostile = Object.defineProperty({}, 'code', { get() { throw Error('must not inspect') } })
+  other.fail(hostile)
+  other.fail(primary)
+  assert.equal(diagnostics.reports()[1].sqlstate, null)
+  assert.equal(diagnostics.reports().length, 2)
+  assert.equal(JSON.stringify(diagnostics.reports()).includes('SECRET_SENTINEL'), false)
+})

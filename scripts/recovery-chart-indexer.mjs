@@ -15,6 +15,8 @@ import { canonicalTradeEvents } from '../src/trade-evidence.mjs'
 import { dammSwapEvents } from '../src/damm-trades.mjs'
 import { createMarketConfigResolver } from '../src/market-config.mjs'
 import { chartMigration } from '../src/market-chart.mjs'
+import { createChartDiagnostics } from './recovery-chart-diagnostics.mjs'
+export { createChartDiagnostics, validateChartDiagnostic } from './recovery-chart-diagnostics.mjs'
 
 export function createRecoveryChartProviders(env, fetchImpl = globalThis.fetch) {
   // Existing Mac invocations stay unchanged until the explicitly reviewed handoff.
@@ -108,21 +110,25 @@ export async function recoveryHistory(connection, verification, address, boundar
   return agreeGraduation(...await Promise.all([connection, verification].map(walk)))
 }
 
-export async function indexRecoveryMarket({ db, connection, verification, market, migration, config, legacyConfigs, assertSafe = () => {} }) {
+export async function indexRecoveryMarket({ db, connection, verification, market, migration, config, legacyConfigs, assertSafe = () => {}, diagnostics }) {
   const address = migration?.pool ?? market.pool
   const resolve = createMarketConfigResolver(config, legacyConfigs)
   const configKey = resolve(market) // even a migrated market must derive from an approved curve config
   const { rows: [cursor] } = await db.query('select signature from recovery_charts.cursors where pool=$1', [address])
   // The reviewed pre-recovery accounting checkpoint is only a starting boundary. Never update it here.
   const { rows: [baseline] } = cursor ? { rows: [] } : await db.query('select last_signature as signature from public.pool_fee_cursors where pool=$1', [address])
+  diagnostics?.phase('HISTORY')
   const history = await recoveryHistory(connection, verification, address, cursor?.signature ?? baseline?.signature)
   const dbc = new DynamicBondingCurveClient(connection, 'finalized'), coder = new CpAmm(connection)._program.coder
   let inserted = 0
   for (const item of history) {
+    diagnostics?.phase('TRANSACTION_READ')
     const tx = item.err ? null : await agreedFinalizedTransaction(connection, verification, item.signature)
     if (tx && (tx.slot !== item.slot || (migration && BigInt(tx.slot) < BigInt(migration.slot)))) throw Error('CHART_SLOT_MISMATCH')
+    diagnostics?.phase('COMPUTE')
     const events = !tx ? [] : migration ? dammSwapEvents(tx, market, address, coder)
       : canonicalTradeEvents(tx, { ...market, signature: item.signature }, configKey, dbc)
+    diagnostics?.phase('GUARD')
     assertSafe()
     await db.query('begin')
     try {
@@ -141,7 +147,7 @@ export async function indexRecoveryMarket({ db, connection, verification, market
         on conflict(pool) do update set signature=excluded.signature,slot=excluded.slot,checked_at=now()`, [address,item.signature,item.slot])
       assertSafe()
       await db.query('commit')
-    } catch (error) { await db.query('rollback'); throw error }
+    } catch (error) { diagnostics?.fail(error); await db.query('rollback'); throw error }
   }
   // A successful idle check is freshness evidence, not a fabricated trade timestamp.
   assertSafe()
@@ -149,15 +155,16 @@ export async function indexRecoveryMarket({ db, connection, verification, market
   return { repoId: market.repoId, transactions: history.length, inserted }
 }
 
-export async function runRecoveryCharts(env = process.env) {
+export async function runRecoveryCharts(env = process.env, diagnostics = createChartDiagnostics()) {
+  const coordinator = diagnostics.scope()
   const manifestBytes = readFileSync(new URL('../config/existing-market-custody.json', import.meta.url))
   if (createHash('sha256').update(manifestBytes).digest('hex') !== env.TRADING_CUSTODY_RECOVERY_SHA256) throw Error('CUSTODY_BINDING_REQUIRED')
   const custodyRecovery = JSON.parse(manifestBytes)
   const url = new URL(env.RECOVERY_CHART_DATABASE_URL)
   if (url.username !== 'repoing_chart_recovery' || url.searchParams.get('sslmode') !== 'verify-full' ||
     [...url.searchParams.keys()].some(k => k !== 'sslmode')) throw Error('CHART_ROLE_REQUIRED')
-  const db = new pg.Client({ connectionString: url.toString(), application_name: 'repoing-chart-recovery',
-    statement_timeout: 15000, query_timeout: 20000, connectionTimeoutMillis: 15000 })
+  const db = coordinator.wrap(new pg.Client({ connectionString: url.toString(), application_name: 'repoing-chart-recovery',
+    statement_timeout: 15000, query_timeout: 20000, connectionTimeoutMillis: 15000 }))
   const rpc = createRecoveryChartProviders(env)
   const { connection, verification, archiveVerification } = rpc
   const providers = [...new Set([connection, verification, archiveVerification])]
@@ -166,6 +173,7 @@ export async function runRecoveryCharts(env = process.env) {
   try {
     await db.connect()
     if ((await db.query('select current_user as role')).rows[0].role !== 'repoing_chart_recovery') throw Error('CHART_ROLE_REQUIRED')
+    coordinator.phase('GENESIS')
     if ((await Promise.all(providers.map(c => c.getGenesisHash()))).some(hash => hash !== '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d')) throw Error('NETWORK_MISMATCH')
     locked = (await db.query("select pg_try_advisory_lock(hashtext('recovery-charts')) as locked")).rows[0].locked
     if (!locked) return { busy: true }
@@ -179,18 +187,25 @@ export async function runRecoveryCharts(env = process.env) {
     readers = new pg.Pool({ connectionString: url.toString(), application_name: 'repoing-chart-reader', max: 4,
       statement_timeout: 15000, query_timeout: 20000, connectionTimeoutMillis: 15000 })
     const results = [], pending = [...markets]
-    const work = async () => {
-      const db = await readers.connect()
+    const work = async (_unused, worker) => {
+      const trace = diagnostics.scope(worker)
+      trace.phase('CONNECT')
+      let client
+      try { client = await readers.connect() } catch (e) { trace.fail(e); throw e }
+      const db = trace.wrap(client)
       try {
         while (pending.length) {
           rpc.assertSafe?.()
+          trace.market(markets.length - pending.length)
           const market = pending.shift()
           const result = { repoId: market.repoId }
           try {
+            trace.phase('COMPUTE')
             const graduation = graduates.find(g => String(g.github_repo_id) === market.repoId)
             const migration = chartMigration(market, graduation)
             const verifier = migration ? archiveVerification : verification
-            Object.assign(result, await indexRecoveryMarket({ db, connection, verification: verifier, market, migration, config: env.DBC_CONFIG, legacyConfigs: env.DBC_LEGACY_CONFIGS, assertSafe: rpc.assertSafe }))
+            Object.assign(result, await indexRecoveryMarket({ db, connection, verification: verifier, market, migration, config: env.DBC_CONFIG, legacyConfigs: env.DBC_LEGACY_CONFIGS, assertSafe: rpc.assertSafe, diagnostics: trace }))
+            trace.phase('GRADUATION')
             const state = await readGraduationState({ db, connection, verification: verifier, market, config: env.DBC_CONFIG, custodyRecovery })
             if (state.migration) {
               const { rows: [volume] } = await db.query(`select coalesce(sum(quote_amount),0)::text as lamports
@@ -206,22 +221,29 @@ export async function runRecoveryCharts(env = process.env) {
               on conflict(github_repo_id) do update set checked_at=excluded.checked_at,observation=excluded.observation`, [market.repoId,state.checkedAt,JSON.stringify(display)])
             result.progress = state.phase
           } catch (e) {
+            trace.fail(e)
             result.error = /^[A-Z_]+$/.test(e.message) ? e.message : 'CHART_READ_UNAVAILABLE'
             if (rpc.stop) { rpc.stop(result.error); throw Error(result.error) }
           }
           results.push(result)
           await new Promise(r => setTimeout(r, 500))
         }
-      } finally { db.release() }
+      } catch (e) { trace.fail(e); throw e } finally { db.release() }
     }
+    coordinator.phase('WORKERS')
     await Promise.allSettled(Array.from({ length: Math.min(4, markets.length) }, work)).then(outcomes => {
       const failed = outcomes.find(outcome => outcome.status === 'rejected')
       if (failed) throw failed.reason
     })
     return { at: new Date().toISOString(), results }
+  } catch (e) {
+    coordinator.fail(e); throw e
   } finally {
-    await readers?.end()
-    if (locked) await db.query("select pg_advisory_unlock(hashtext('recovery-charts'))").catch(() => {})
+    coordinator.phase('POOL_DRAIN')
+    try { await readers?.end() } catch (e) { coordinator.fail(e); throw e }
+    if (locked) await db.query("select pg_advisory_unlock(hashtext('recovery-charts'))")
+      .then(result => diagnostics.lockRelease(result.rows[0].pg_advisory_unlock === true ? 'SUCCEEDED' : 'FAILED'))
+      .catch(() => { diagnostics.lockRelease('FAILED') })
     await db.end()
   }
 }
