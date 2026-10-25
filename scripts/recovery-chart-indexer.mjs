@@ -9,7 +9,7 @@ import pg from 'pg'
 import { Connection, PublicKey } from '@solana/web3.js'
 import { CpAmm } from '@meteora-ag/cp-amm-sdk'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
-import { agreeGraduation, agreedFinalizedTransaction, evidenceJSON, readGraduationState } from '../src/graduation-state.mjs'
+import { agreeGraduation, agreedFinalizedTransaction, createCurveReads, evidenceJSON, readGraduationState } from '../src/graduation-state.mjs'
 import { publicGraduation } from '../src/graduation-readiness.mjs'
 import { canonicalTradeEvents } from '../src/trade-evidence.mjs'
 import { dammSwapEvents } from '../src/damm-trades.mjs'
@@ -89,6 +89,18 @@ export function createRecoveryChartProviders(env, fetchImpl = globalThis.fetch) 
   const [connection, verification] = endpoints.map(endpoint => new Connection(endpoint,
     { commitment: 'finalized', fetch, disableRetryOnRateLimit: true, httpAgent: false }))
   return { connection, verification, archiveVerification: verification, assertSafe, stop }
+}
+
+// Pool and config accounts for a whole pass, batched like the graduation worker's reads. Concurrent workers
+// queue behind one another so an expired batch is reloaded once, not once per worker.
+export function createChartCurveReads(options) {
+  const reads = createCurveReads(options)
+  let tail = Promise.resolve()
+  return { read(market) {
+    const result = tail.then(() => reads.read(market))
+    tail = result.catch(() => {})
+    return result
+  } }
 }
 
 export async function recoveryHistory(connection, verification, address, boundary, { pageSize = 100, maxPages = 10 } = {}) {
@@ -186,7 +198,11 @@ export async function runRecoveryCharts(env = process.env, diagnostics = createC
     // separate coordinator connection retains the process-wide advisory lock.
     readers = new pg.Pool({ connectionString: url.toString(), application_name: 'repoing-chart-reader', max: 4,
       statement_timeout: 15000, query_timeout: 20000, connectionTimeoutMillis: 15000 })
-    const results = [], pending = [...markets]
+    const results = [], pending = [...markets], curveReads = new Map()
+    const curveReadsFor = verifier => {
+      if (!curveReads.has(verifier)) curveReads.set(verifier, createChartCurveReads({ connection, verification: verifier, config: env.DBC_CONFIG, markets }))
+      return curveReads.get(verifier)
+    }
     const work = async (_unused, worker) => {
       const trace = diagnostics.scope(worker)
       trace.phase('CONNECT')
@@ -206,7 +222,8 @@ export async function runRecoveryCharts(env = process.env, diagnostics = createC
             const verifier = migration ? archiveVerification : verification
             Object.assign(result, await indexRecoveryMarket({ db, connection, verification: verifier, market, migration, config: env.DBC_CONFIG, legacyConfigs: env.DBC_LEGACY_CONFIGS, assertSafe: rpc.assertSafe, diagnostics: trace }))
             trace.phase('GRADUATION')
-            const state = await readGraduationState({ db, connection, verification: verifier, market, config: env.DBC_CONFIG, custodyRecovery })
+            const state = await readGraduationState({ db, connection, verification: verifier, market, config: env.DBC_CONFIG, custodyRecovery,
+              curveReads: curveReadsFor(verifier) })
             if (state.migration) {
               const { rows: [volume] } = await db.query(`select coalesce(sum(quote_amount),0)::text as lamports
                 from public.damm_trade_events where github_repo_id=$1 and pool=$2 and slot >= $3

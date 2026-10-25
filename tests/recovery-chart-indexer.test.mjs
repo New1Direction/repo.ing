@@ -144,3 +144,38 @@ test('diagnostics preserve the primary error when rollback fails, bound output a
   assert.equal(diagnostics.reports().length, 2)
   assert.equal(JSON.stringify(diagnostics.reports()).includes('SECRET_SENTINEL'), false)
 })
+
+test('chart workers share one batched pool/config read per provider instead of reading per market', async () => {
+  assert.equal(typeof charts.createChartCurveReads, 'function')
+  const { Keypair } = await import('@solana/web3.js')
+  const { NATIVE_MINT } = await import('@solana/spl-token')
+  const { deriveDbcPoolAddress } = await import('@meteora-ag/dynamic-bonding-curve-sdk')
+  const config = Keypair.generate().publicKey
+  const markets = Array.from({ length: 78 }, () => {
+    const mint = Keypair.generate().publicKey
+    return { mint: mint.toBase58(), pool: deriveDbcPoolAddress(NATIVE_MINT, mint, config).toBase58() }
+  })
+  const provider = name => {
+    const calls = { accounts: 0, times: 0 }
+    return { calls, rpcEndpoint: `https://${name}.invalid`,
+      getMultipleAccountsInfoAndContext: async keys => {
+        calls.accounts++; await delay(20)
+        return { context: { slot: 10 }, value: keys.map(key => ({ owner: config, data: Buffer.from(`${name}:${key.toBase58()}`) })) }
+      },
+      getBlockTime: async () => { calls.times++; return 1_700_000_000 } }
+  }
+  const primary = provider('primary'), verification = provider('verification')
+  const reads = charts.createChartCurveReads({ connection: primary, verification, config: config.toBase58(), markets })
+  const pending = [...markets], seen = []
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    while (pending.length) {
+      const market = pending.shift()
+      const [mine] = await reads.read(market)
+      seen.push(mine.snapshot.value[0].data.toString() === `primary:${market.pool}`)
+    }
+  }))
+  assert.equal(seen.length, 78)
+  assert.ok(seen.every(Boolean), 'each market gets its own pool account')
+  assert.deepEqual([primary.calls.accounts, verification.calls.accounts], [1, 1], '78 pools + 1 config fit one 100-account batch')
+  assert.deepEqual([primary.calls.times, verification.calls.times], [1, 1])
+})
