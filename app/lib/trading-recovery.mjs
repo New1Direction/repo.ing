@@ -10,7 +10,7 @@ import { RECOVERED_LAUNCH_CONFIG } from '../../src/launch-custody.mjs'
 import { markets } from '../../src/db/schema.mjs'
 import { Connection } from '@solana/web3.js'
 import { createNewMarketAdmissionReview } from '../../src/new-market-admission.mjs'
-import { assertNewMarketTrade } from '../../src/new-market-trading.mjs'
+import { assertNewMarketTrade, newMarketControls } from '../../src/new-market-trading.mjs'
 import { chain, database } from './server.mjs'
 
 // The public pages keep their SELECT-only projection. Only the trade API/router
@@ -102,4 +102,10 @@ export async function guardNewMarketTrade(manifest, { repoId, direction, amountL
   const reviewedRepoIds = manifest.poolCreators.map(row => row.repoId)
   if (reviewedRepoIds.includes(String(repoId))) return
   await assertNewMarketTrade(tradingDatabase(), { direction, amountLamports, reviewedRepoIds })
+}
+
+// Whether a recovery launch may include a first buy: the same owner switch that gates new-market buys.
+export async function newMarketBuysOpen() {
+  if (process.env.EXISTING_MARKET_TRADING_ONLY !== 'true') return false
+  try { return (await newMarketControls(tradingDatabase())).enabled } catch { return false }
 }

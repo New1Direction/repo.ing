@@ -47,7 +47,9 @@ async function launchRequest(body) {
 // early access, for a GitHub repository from its launch page; choosing it replaces the pair, early access and initial buy with
 // the raise's target and deadline, and opens a raise instead of launching (app/components/launch-bundle.jsx).
 export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft, launchFee: configLaunchFee = null,
-  verificationBonus = null, quoteOptions = null, earlyAccess = null, bundle = null, recovery = false }) {
+  verificationBonus = null, quoteOptions = null, earlyAccess = null, bundle = null, recovery = false, firstBuyAvailable = false }) {
+  // Recovery launches offer a first buy only while new-market buys are on (src/new-market-trading.mjs).
+  const noBuyOnly = recovery && !firstBuyAvailable
   const model = repo.source === 'huggingface'
   const stockPair = model || recovery ? null : quoteOptions?.find(option => option.type === 'TOKENIZED_EQUITY' && option.eligible) ?? null
   const [quoteAssetId, setQuoteAssetId] = useState('sol')
@@ -68,7 +70,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const [pairDropped, setPairDropped] = useState(false)
   const [busy, setBusy] = useState(false)
   const working = useRef(false)
-  const [choice, setChoice] = useState(recovery ? 'none' : draft?.initialBuy ?? 'none')
+  const [choice, setChoice] = useState(noBuyOnly ? 'none' : draft?.initialBuy ?? 'none')
   const [customBuy, setCustomBuy] = useState('')
   const [buyQuote, setBuyQuote] = useState(null)
   const [buyError, setBuyError] = useState(null)
@@ -86,7 +88,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const quoteKey = `${quoteAssetId}:${choice === 'custom' ? `custom:${customBuy}` : choice}`
   // A stock-paired launch has no initial buy yet (src/meteora-launch.mjs): the buy section is replaced by a note.
   const stockChosen = quoteAssetId !== 'sol'
-  const noBuy = recovery || stockChosen || choice === 'none' || (choice === 'custom' && /^(?:0+(?:\.0*)?)?$/.test(customBuy.trim()))
+  const noBuy = noBuyOnly || stockChosen || choice === 'none' || (choice === 'custom' && /^(?:0+(?:\.0*)?)?$/.test(customBuy.trim()))
   const quote = !noBuy && buyQuote?.key === quoteKey ? buyQuote : null
   const quoteError = !noBuy && buyError?.key === quoteKey ? buyError.message : ''
   const quoting = !noBuy && !quote && !quoteError
@@ -119,11 +121,11 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     try { if(!draft) saved=readLaunchDraft(window.sessionStorage,repo.repoId) } catch {}
     if(saved){
       const pair=restoredPair(saved,stockPair?.assetId)
-      setName(saved.name);setSymbol(saved.symbol);setChoice(recovery?'none':saved.choice);setCustomBuy(recovery?'':saved.customBuy);setTokenImage(saved.tokenImage)
+      setName(saved.name);setSymbol(saved.symbol);setChoice(noBuyOnly?'none':saved.choice);setCustomBuy(noBuyOnly?'':saved.customBuy);setTokenImage(saved.tokenImage)
       setQuoteAssetId(pair.quoteAssetId);setPairDropped(pair.pairDropped);setDraftRestored(true)
     }
     setDraftReady(repo.repoId)
-  }, [repo.repoId, draft, recovery])
+  }, [repo.repoId, draft, noBuyOnly])
   useEffect(() => {
     if(draftReady!==repo.repoId)return
     try {
@@ -227,7 +229,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     if (refresh) await prepare({ preventDefault() {} })
   }
   // A stock pair is never dropped on the way (pairRequest), so a confirmed launch with one chosen is that stock pair.
-  if (launched) return <LaunchSuccess repo={repo} launched={launched} symbol={symbol} image={tokenImage?.image} quote={stockChosen ? { symbol: stockPair?.symbol ?? null } : null} recovery={recovery}/>
+  if (launched) return <LaunchSuccess repo={repo} launched={launched} symbol={symbol} image={tokenImage?.image} quote={stockChosen ? { symbol: stockPair?.symbol ?? null } : null} recovery={recovery} tradingLive={firstBuyAvailable}/>
   return <form className="launch-panel" onSubmit={bundleMode ? opening.open : prepare}>
     {draftRestored && <p className="form-fineprint" role="status">Your saved launch details have been restored. Review current costs before signing.</p>}
     {pairDropped && <p className="form-fineprint" role="status">The stock pair you chose before is not offered for this repository right now, so this launch is paired with SOL.</p>}
@@ -257,7 +259,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         {earlyAccessOffered && <LaunchEarlyAccess terms={earlyAccess} value={earlyAccessSeconds} onChange={seconds => { setEarlyAccessSeconds(seconds); setError('') }}
           fairRamp={fairRamp} starUnlocks={starUnlocks} onFairRamp={on => { setFairRamp(on); if (!on) setStarUnlocks(false); setError('') }}
           onStarUnlocks={on => { setStarUnlocks(on); setError('') }}/>}
-        {recovery ? <p className="launch-buy-hint launch-pair-buy-note" role="note"><strong>No initial buy.</strong> You pay only launch account costs and the network fee. Lasting creator and fee-recipient rights go to the recovered 2-of-3 vault. Trading on newly launched markets remains paused on repo.ing until separately verified.</p> : bundleMode ? <BundleRaiseFields settings={bundle} value={raise} onChange={setRaise}/> : stockChosen ? <p className="launch-buy-hint launch-pair-buy-note" role="note">Stock-paired launches start without an initial buy. You can buy right after the launch.</p> : <>
+        {noBuyOnly ? <p className="launch-buy-hint launch-pair-buy-note" role="note"><strong>No initial buy.</strong> You pay only launch account costs and the network fee. Lasting creator and fee-recipient rights go to the recovered 2-of-3 vault. Trading on newly launched markets remains paused on repo.ing until separately verified.</p> : bundleMode ? <BundleRaiseFields settings={bundle} value={raise} onChange={setRaise}/> : stockChosen ? <p className="launch-buy-hint launch-pair-buy-note" role="note">Stock-paired launches start without an initial buy. You can buy right after the launch.</p> : <>
         <label className="field-label" htmlFor="initial-buy">Initial buy <span className="muted">(optional)</span></label>
         <div className={`launch-buy-presets${ramp ? ' launch-buy-presets-ramp' : ''}`} role="group" aria-label="Initial token allocation">
           {(ramp ? [[ 'none', 'No buy' ], [ '100', '1%' ], [ '200', 'Max 2%' ]] : [[ 'none', 'No buy' ], [ '100', '1%' ], [ '200', '2%' ], [ '300', 'Max 3%' ]]).map(([value, label]) =>
@@ -267,7 +269,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
           onChange={e => { setCustomBuy(e.target.value); setChoice('custom') }} aria-describedby="initial-buy-hint"/><span>SOL</span></div>
         <div className="field-hint">{wallet ? balance?.wallet === wallet ? balance.unavailable ? 'Wallet balance temporarily unavailable.' : `Wallet balance: ${sol(balance.lamports)}` : 'Checking wallet SOL balance…' : 'Connect your wallet to review launch costs.'}</div>
         <div id="initial-buy-hint" className="launch-buy-hint">{ramp ? `Buy up to ${ramp.startPercent}% of supply in the launch transaction: the fair ramp's starting limit. Later buys by every wallet follow the fair ramp.`
-          : 'Buy up to 3% of supply in the launch transaction. This limit applies to the initial buy; later market purchases are separate.'}{launchFee?.launcherBuyPercent && ` Your initial buy pays the regular ${launchFee.launcherBuyPercent} fee; the launch fee applies only to later trades.`}</div>
+          : 'Buy up to 3% of supply in the launch transaction. This limit applies to the initial buy; later market purchases are separate.'}{launchFee?.launcherBuyPercent && ` Your initial buy pays the regular ${launchFee.launcherBuyPercent} fee; the launch fee applies only to later trades.`}{recovery && ' Lasting creator and fee-recipient rights go to the recovered 2-of-3 vault.'}</div>
         <div className="launch-buy-quote" role="status" aria-live="polite">
           {quoting ? 'Calculating your initial buy…' : quote ? <>
             <strong>≈ {formatUnits(quote.tokenBaseUnits, 6, 0)} tokens · {(quote.supplyBps / 100).toFixed(2)}% of supply</strong>

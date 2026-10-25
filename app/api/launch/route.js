@@ -32,6 +32,8 @@ import { composeGuards, launchPair, marketPairGuard, stockMintCheck, stockPairGu
 import { refuseOverLimit } from '../../lib/request-limits.mjs'
 import { contributorSnapshotStep, earlyAccessGuard, earlyAccessRequest, earlyAccessSettings } from '../../lib/early-access-launch.mjs'
 import { isGithubRepoId } from '../../../src/market-identity.mjs'
+import { assertNewMarketTrade } from '../../../src/new-market-trading.mjs'
+import { newMarketBuysOpen, tradingCustodyRecovery, tradingDatabase } from '../../lib/trading-recovery.mjs'
 export const runtime = 'nodejs'
 // Launch reviews live in PostgreSQL (launch_sessions) so prepare and submit/cancel may land on different replicas.
 const launchSessions = (pool, creator) => createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
@@ -42,6 +44,12 @@ const safeError = (error, action) => {
   return Response.json({...result,supportCode},{status:400,headers:{'Cache-Control':'no-store'}})
 }
 
+// The switch and buy caps of src/new-market-trading.mjs, applied to a recovery launch's first buy.
+async function assertRecoveryFirstBuy(lamports) {
+  if (!(await newMarketBuysOpen())) throw Error('New-market trading is paused')
+  const reviewedRepoIds = tradingCustodyRecovery().poolCreators.map(row => row.repoId)
+  await assertNewMarketTrade(tradingDatabase(), { direction: 'buy', amountLamports: lamports, reviewedRepoIds })
+}
 // Initial-buy quotes are SOL only: a stock-paired launch has no initial buy yet (src/meteora-launch.mjs). Any other pair is
 // refused with its code before anything is read.
 function assertSolBuyQuote(body) {
@@ -113,10 +121,12 @@ export async function POST(request) {
     const launch = ordinaryLaunchRuntime()
     if (launch.recovery && (body.earlyAccessSeconds != null || body.fairRamp === true || body.starUnlocks === true || body.trendRevision != null ||
         (body.repoId != null && !isGithubRepoId(body.repoId)) ||
-        (body.quoteAssetId != null && body.quoteAssetId !== 'sol') ||
-        (body.initialBuyLamports != null && body.initialBuyLamports !== '0') ||
-        (body.supplyBps != null && body.supplyBps !== 0))) {
+        (body.quoteAssetId != null && body.quoteAssetId !== 'sol'))) {
       throw Error('Recovery currently accepts only ordinary no-buy GitHub launches')
+    }
+    // A recovery launch's first buy is a new-market buy: allowed only under the owner's switch and buy caps.
+    if (launch.recovery && ((body.initialBuyLamports != null && body.initialBuyLamports !== '0') || (body.supplyBps != null && body.supplyBps !== 0))) {
+      await assertRecoveryFirstBuy(body.supplyBps != null && body.supplyBps !== 0 && body.initialBuyLamports == null ? '1' : body.initialBuyLamports)
     }
     if (body.action === 'quote') {
       if (stockPairsBuyRefusal(body)) throw new QuoteAssetError(QUOTE_ERRORS.UNSUPPORTED_QUOTE_ASSET, 'Stock-paired launches have no initial buy yet. Buy after the launch.')
@@ -213,9 +223,13 @@ export async function POST(request) {
       // Single use on every replica: whoever consumes the review first submits it; it is never available again.
       const session = await store.consume(body.id)
       if (!session) throw new Error('Prepared launch expired; reload before trying again')
-      if (launch.recovery && (session.config !== launch.config || session.initialBuyLamports !== '0' ||
+      if (launch.recovery && (session.config !== launch.config ||
           !isGithubRepoId(session.githubRepoId) || session.trendRevision !== null || isVersionedLaunch(session.transaction))) {
         throw Error('Prepared launch is outside ordinary no-buy recovery; check its status before continuing')
+      }
+      // Re-checked at submit: the switch may have gone off since this launch was prepared. Nothing is sent; the market is released.
+      if (launch.recovery && session.initialBuyLamports !== '0') {
+        try { await assertRecoveryFirstBuy(session.initialBuyLamports) } catch (error) { await store.release(session); throw error }
       }
       const connection = chain(), config = session.config, repoId = BigInt(session.githubRepoId)
       // An early access review is a v0 transaction (docs/EARLY_ACCESS.md); every other review is the legacy launch, as before.

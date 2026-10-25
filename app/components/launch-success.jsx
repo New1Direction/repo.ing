@@ -12,7 +12,7 @@ import { modelShareText } from '../lib/hf-model-display.mjs'
 // 'huggingface') names the model and carries the community-launch disclaimer, in its share sheet text too. quote: the stock
 // pair launched ({ symbol }), null for SOL; its kit and share menu offer no README badge (it shows builder fees in SOL) and no
 // referral (its trades pay none).
-export function LaunchSuccess({ repo, launched, symbol, image, quote = null, recovery = false }) {
+export function LaunchSuccess({ repo, launched, symbol, image, quote = null, recovery = false, tradingLive = false }) {
   const heading = useRef(null)
   const model = repo.source === 'huggingface'
   useEffect(() => { heading.current?.focus({ preventScroll: true }) }, [])
@@ -24,7 +24,7 @@ export function LaunchSuccess({ repo, launched, symbol, image, quote = null, rec
     </div>
     <h2 ref={heading} tabIndex={-1}>{model ? 'Success — model has been tokenized' : 'Success — repo has been tokenized'}</h2>
     <p>{repo.fullName} now has a live market.</p>
-    {recovery && <p className="form-fineprint" role="note">Your launch is finalized with creator rights held by the recovered 2-of-3 vault. Trading on this new market and claims remain paused on repo.ing pending their separate acceptance.</p>}
+    {recovery && <p className="form-fineprint" role="note">Your launch is finalized with creator rights held by the recovered 2-of-3 vault. {tradingLive ? 'It can be traded on repo.ing now; claims remain paused pending their separate acceptance.' : 'Trading on this new market and claims remain paused on repo.ing pending their separate acceptance.'}</p>}
     {model && <p className="form-fineprint" role="note">{HF_DISCLAIMER}</p>}
     <Link className="button primary launch-submit" href={`/token/${launched.mint}`}>View market <ArrowRight size={18}/></Link>
     {model ? <ModelLaunchKit path={repo.fullName} mint={launched.mint} symbol={symbol}/>

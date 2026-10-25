@@ -65,10 +65,16 @@ test('ordinary recovery uses a separate bootstrap/config/database and refuses br
    globalThis.__repoingOrdinaryLaunchPool=runtime.pool;globalThis.__gitfunPool=publicPool
    if(publicUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=publicUrl
   }
-  for(const variant of [{initialBuyLamports:'1'},{quoteAssetId:'stock'},{earlyAccessSeconds:900},{fairRamp:true},{starUnlocks:true},{repoId:'-123'},{repoId:'4503599627370497'},{trendRevision:1}]){
+  for(const variant of [{quoteAssetId:'stock'},{earlyAccessSeconds:900},{fairRamp:true},{starUnlocks:true},{repoId:'-123'},{repoId:'4503599627370497'},{trendRevision:1}]){
    const response=await POST(new Request('https://repo.ing/api/launch',{method:'POST',body:JSON.stringify({action:'prepare',...variant})}))
    assert.equal(response.status,400)
    assert.match((await response.json()).error,/ordinary no-buy GitHub launches/i)
+  }
+  // A first buy is a new-market buy: refused before anything is reserved while the owner's switch is off.
+  for(const variant of [{initialBuyLamports:'1'},{supplyBps:100},{action:'quote',supplyBps:100}]){
+   const response=await POST(new Request('https://repo.ing/api/launch',{method:'POST',body:JSON.stringify({action:'prepare',...variant})}))
+   assert.equal(response.status,400)
+   assert.match((await response.json()).error,/New-market trading is paused/)
   }
   process.env.ORDINARY_LAUNCH_CONFIG='historical-trading-config'
   assert.throws(()=>server.ordinaryLaunchRuntime(),/recovered launch config/i)
@@ -93,4 +99,23 @@ test('recovered launch form offers no initial buy and describes paused claims an
  assert.match(markup,/No initial buy/)
  assert.match(markup,/Claims remain paused/)
  assert.match(markup,/Trading on newly launched markets remains paused/)
+})
+
+test('while new-market buys are on, the recovered launch form offers a first buy and says rights go to the vault',async()=>{
+ const {appModule,h,html}=await import('./fixtures/render-jsx.mjs')
+ const {LaunchForm}=await appModule('app/components/launch-form.jsx')
+ const markup=html(h(LaunchForm,{repo:{repoId:'123',owner:'fixture',name:'demo',fullName:'fixture/demo'},
+  available:true,recovery:true,firstBuyAvailable:true,discoveryEnabled:true,allocationEnabled:true,draft:{tokenName:'Demo',tokenSymbol:'DEMO',initialBuy:'300'}}),{wallet:true})
+ assert.match(markup,/id="initial-buy"/)
+ assert.match(markup,/rights go to the recovered 2-of-3 vault/)
+ assert.doesNotMatch(markup,/Trading on newly launched markets remains paused/)
+ assert.match(markup,/Claims remain paused/)
+})
+
+test('the recovered launch success note says the market can be traded only when new-market trading is live',async()=>{
+ const {appModule,h,html}=await import('./fixtures/render-jsx.mjs')
+ const {LaunchSuccess}=await appModule('app/components/launch-success.jsx')
+ const props={repo:{repoId:'123',owner:'fixture',name:'demo',fullName:'fixture/demo'},launched:{mint:'GxKu7xYvScZzCpJLRigToUDFt7RLm4UpZkA4guLqCHBg',signature:'x'},symbol:'DEMO',recovery:true}
+ assert.match(html(h(LaunchSuccess,{...props,tradingLive:true})),/It can be traded on repo.ing now; claims remain paused/)
+ assert.match(html(h(LaunchSuccess,props)),/Trading on this new market and claims remain paused/)
 })
