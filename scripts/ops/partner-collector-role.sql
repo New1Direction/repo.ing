@@ -5,6 +5,8 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 CREATE ROLE repoing_partner_collector LOGIN PASSWORD 'REPLACE_WITH_GENERATED_PASSWORD'
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2;
+-- Production revokes CONNECT from PUBLIC, so each login role is granted it explicitly.
+GRANT CONNECT ON DATABASE repoing_operational TO repoing_partner_collector;
 GRANT USAGE ON SCHEMA public TO repoing_partner_collector;
 GRANT SELECT ON public.markets, public.discovery_fee_events, public.discovery_claims TO repoing_partner_collector;
 GRANT SELECT, INSERT, UPDATE ON public.platform_fee_claims TO repoing_partner_collector;
