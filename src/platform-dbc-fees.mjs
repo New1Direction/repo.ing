@@ -27,15 +27,18 @@ export function platformTreasuryWallet(partner, env = process.env) {
   return new PublicKey(env.PLATFORM_FEE_TREASURY_WALLET || partner.toBase58())
 }
 
-export function dbcPlatformEntitlement({ gross, eligible, discoveryPaid, platformPaid, version, onchain }) {
+// includeDiscoveryReserve: the owner collects the whole reconciled pool balance, discovery share included, and pays
+// discoverers outside the app. The pool balance must still reconcile exactly; in-app discovery claims for it stay refused.
+export function dbcPlatformEntitlement({ gross, eligible, discoveryPaid, platformPaid, version, onchain, includeDiscoveryReserve = false }) {
   if ([gross, eligible, discoveryPaid, platformPaid, onchain].some(n => BigInt(n) < 0n) || BigInt(eligible) > BigInt(gross)) throw Error('Invalid partner fee evidence')
   const earned = version == null ? 0n : discoveryEarned(eligible, version)
   const reserved = earned - BigInt(discoveryPaid)
   const expected = BigInt(gross) - BigInt(discoveryPaid) - BigInt(platformPaid)
-  if (reserved < 0n || expected < reserved) throw Error('Partner or discovery entitlement is inconsistent')
+  if (reserved < 0n || (!includeDiscoveryReserve && expected < reserved)) throw Error('Partner or discovery entitlement is inconsistent')
   if (BigInt(onchain) !== expected) throw Error('DBC partner fees need indexing or reconciliation before collection')
   return { gross: String(gross), discoveryEarned: String(earned), discoveryReserved: String(reserved),
-    platformPaid: String(platformPaid), onchainAvailable: String(onchain), available: String(expected - reserved) }
+    platformPaid: String(platformPaid), onchainAvailable: String(onchain),
+    available: String(includeDiscoveryReserve ? expected : expected - reserved) }
 }
 
 // earlyAccess (EARLY_ACCESS_DBC_CONFIG), passed by the paths that collect from them: a contributor early access market's partner
@@ -44,7 +47,7 @@ export function dbcPlatformEntitlement({ gross, eligible, discoveryPaid, platfor
 // custodyRecovery (config/existing-market-custody.json): a pool whose creator was moved to custody is accepted only under its
 // exact binding, the same rule chart and trading reads use. Unbound pools must still match the recorded creator.
 export function createDbcPlatformFees({ pool, connection, config, partner, verification = null, env = process.env, earlyAccess = null,
-  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, custodyRecovery = null }) {
+  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, custodyRecovery = null, includeDiscoveryReserve = false }) {
   const custody = createCustodyRecovery(custodyRecovery)
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const resolve = createMarketConfigResolver(config, undefined, undefined, { earlyAccess, hookProgram })
@@ -98,7 +101,7 @@ export function createDbcPlatformFees({ pool, connection, config, partner, verif
       (select count(*)::int from discovery_claims where github_repo_id=$1 and status='pending') as "discoveryPending",
       (select count(*)::int from platform_fee_claims where github_repo_id=$1 and status='pending') as "platformPending"`, [String(repoId)])
     if (totals.discoveryPending || totals.platformPending) throw Error('A partner fee claim is already in flight')
-    const entitlement = dbcPlatformEntitlement({ ...totals, version: m.version, onchain: s.partnerQuoteFee.toString() })
+    const entitlement = dbcPlatformEntitlement({ ...totals, version: m.version, onchain: s.partnerQuoteFee.toString(), includeDiscoveryReserve })
     const terms = { phase: 'DBC', repoId: String(repoId), mint: m.mint, pool: m.pool, config: configKey.toBase58(),
       receiver: receiver.toBase58(), source: partner.publicKey.toBase58(), ...entitlement }
     return { ...terms, termsHash: hash(terms), slot: reads[0].context.slot, quoteVault: s.quoteVault.toBase58(),

@@ -52,7 +52,7 @@ const env = { ...process.env, PLATFORM_FEE_TREASURY_WALLET: treasury,
 const pool = new pg.Pool({ connectionString: process.env.COLLECTOR_DATABASE_URL, max: 2 })
 const service = createDbcPlatformFees({ pool, connection: new Connection(process.env.SOLANA_RPC_URL, 'finalized'),
   verification: new Connection(process.env.GRADUATION_VERIFICATION_RPC_URL, 'finalized'), config: configs[0],
-  partner: partnerSigner(), env, custodyRecovery: manifest })
+  partner: partnerSigner(), env, custodyRecovery: manifest, includeDiscoveryReserve: true })
 const sol = lamports => (Number(BigInt(lamports)) / 1e9).toFixed(9)
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 
