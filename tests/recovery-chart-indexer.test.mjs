@@ -179,3 +179,32 @@ test('chart workers share one batched pool/config read per provider instead of r
   assert.deepEqual([primary.calls.accounts, verification.calls.accounts], [1, 1], '78 pools + 1 config fit one 100-account batch')
   assert.deepEqual([primary.calls.times, verification.calls.times], [1, 1])
 })
+
+test('the paced transport reports its first failure code so a wrapped RPC error is not misread', async () => {
+  assert.equal(typeof charts.createRecoveryChartProviders, 'function')
+  const providers = charts.createRecoveryChartProviders(pacedEnv, async (_url, options) =>
+    new Response(JSON.stringify({ jsonrpc: '2.0', id: JSON.parse(options.body).id, result: 1 }), { status: 429 }))
+  await assert.rejects(providers.connection.getGenesisHash())
+  assert.equal(providers.failure(), 'CHART_RPC_FAILED')
+  providers.stop('CHART_SLOT_MISMATCH')
+  assert.equal(providers.failure(), 'CHART_RPC_FAILED', 'the first failure wins')
+  const quiet = charts.createRecoveryChartProviders(pacedEnv, async () => { throw Error('unused') })
+  assert.equal(quiet.failure(), undefined)
+  quiet.stop('RPC_DISAGREEMENT')
+  assert.equal(quiet.failure(), 'RPC_DISAGREEMENT')
+})
+
+test('only transient RPC failures are retryable; data problems and unknown errors latch', () => {
+  assert.equal(typeof charts.chartFailure, 'function')
+  assert.equal(charts.CHART_RETRY_EXIT, 75)
+  for (const code of ['CHART_RPC_FAILED', 'STALE_PROGRESS', 'RPC_UNAVAILABLE', 'RPC_RATE_LIMITED']) {
+    assert.deepEqual(charts.chartFailure(Error(code)), { code, retryable: true }, code)
+  }
+  for (const code of ['CHART_SLOT_MISMATCH', 'RPC_DISAGREEMENT', 'CHART_HISTORY_INCOMPLETE', 'CHART_HISTORY_LIMIT',
+    'CONFIG_OR_POOL_MISMATCH', 'MIGRATION_EVIDENCE_INCOMPLETE', 'NETWORK_MISMATCH', 'CHART_RPC_DENIED', 'CHART_RPC_LIMIT',
+    'INCOMPLETE_CYCLE', 'CHART_READ_UNAVAILABLE', 'CUSTODY_BINDING_REQUIRED']) {
+    assert.deepEqual(charts.chartFailure(Error(code)), { code, retryable: false }, code)
+  }
+  assert.deepEqual(charts.chartFailure(Error('connect ECONNREFUSED 10.0.0.1:5432 SECRET_SENTINEL')), { code: 'UNCLASSIFIED', retryable: false })
+  assert.deepEqual(charts.chartFailure(null), { code: 'UNCLASSIFIED', retryable: false })
+})

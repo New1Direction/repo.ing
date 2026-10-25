@@ -88,7 +88,16 @@ export function createRecoveryChartProviders(env, fetchImpl = globalThis.fetch) 
   }
   const [connection, verification] = endpoints.map(endpoint => new Connection(endpoint,
     { commitment: 'finalized', fetch, disableRetryOnRateLimit: true, httpAgent: false }))
-  return { connection, verification, archiveVerification: verification, assertSafe, stop }
+  return { connection, verification, archiveVerification: verification, assertSafe, stop, failure: () => failure }
+}
+
+// A failed pass exits CHART_RETRY_EXIT only for provider hiccups, so the unit retries instead of latching.
+// Data problems (mismatch, disagreement, incomplete history) and anything unrecognised still latch.
+export const CHART_RETRY_EXIT = 75
+const RETRYABLE_FAILURES = new Set(['CHART_RPC_FAILED', 'STALE_PROGRESS', 'RPC_UNAVAILABLE', 'RPC_RATE_LIMITED'])
+export function chartFailure(error) {
+  const code = typeof error?.message === 'string' && /^[A-Z_]+$/.test(error.message) ? error.message : 'UNCLASSIFIED'
+  return { code, retryable: RETRYABLE_FAILURES.has(code) }
 }
 
 // Pool and config accounts for a whole pass, batched like the graduation worker's reads. Concurrent workers
@@ -240,7 +249,8 @@ export async function runRecoveryCharts(env = process.env, diagnostics = createC
           } catch (e) {
             trace.fail(e)
             result.error = /^[A-Z_]+$/.test(e.message) ? e.message : 'CHART_READ_UNAVAILABLE'
-            if (rpc.stop) { rpc.stop(result.error); throw Error(result.error) }
+            // The first failure is the cause; later markets only see the stopped transport.
+            if (rpc.stop) { rpc.stop(result.error); throw Error(rpc.failure()) }
           }
           results.push(result)
           await new Promise(r => setTimeout(r, 500))

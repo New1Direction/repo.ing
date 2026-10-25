@@ -9,7 +9,7 @@ fs.mkdirSync(dir + '/scripts', { recursive: true }); fs.mkdirSync(dir + '/config
 const manifest = fs.readFileSync('config/existing-market-custody.json')
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 fs.writeFileSync(dir + '/config/existing-market-custody.json', manifest)
-const contents = `import { runRecoveryCharts, createChartDiagnostics } from './scripts/recovery-chart-indexer.mjs';
+const contents = `import { runRecoveryCharts, createChartDiagnostics, chartFailure, CHART_RETRY_EXIT } from './scripts/recovery-chart-indexer.mjs';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 const report = o => process.stdout.write(JSON.stringify(o)+'\\n');
@@ -40,7 +40,11 @@ if(process.argv.length === 3 && process.argv[2] === '--validate') {
     phase = 'COMPLETENESS';
     if(!Array.isArray(result.results)||result.results.length===0||result.results.some(r=>r.error))throw Error('INCOMPLETE_CYCLE');
     report({lane:'chart',status:'CYCLE_COMPLETED',at:result.at,markets:result.results.length,transactions:result.results.reduce((n,r)=>n+r.transactions,0),inserted:result.results.reduce((n,r)=>n+r.inserted,0)});
-  } catch(error) {report({lane:'chart',status:'CYCLE_FAILED',diagnostics:failure(error,phase)});process.exitCode=1}
+  } catch(error) {
+    const {code,retryable}=chartFailure(error);
+    report({lane:'chart',status:'CYCLE_FAILED',code,retryable,diagnostics:failure(error,phase)});
+    process.exitCode=retryable?CHART_RETRY_EXIT:1;
+  }
   finally {clearTimeout(deadline)}
 }`
 const result = await build({ stdin: { contents, resolveDir: process.cwd(), sourcefile: 'chart-runner.mjs', loader: 'js' },
