@@ -114,3 +114,6 @@ spikes/*/program/target/
 /hooklab-owner-runs/
 # e2e runner output (tests/e2e/hooks-native/e2e.config.ts); never holds private ELFs or keys
 .e2e/
+
+# Local unredacted status notes (server access, provider IDs)
+STATUS.private.md

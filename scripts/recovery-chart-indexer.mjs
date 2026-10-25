@@ -3,6 +3,8 @@
 import { pathToFileURL } from 'node:url'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { performance } from 'node:perf_hooks'
+import { setTimeout as delay } from 'node:timers/promises'
 import pg from 'pg'
 import { Connection, PublicKey } from '@solana/web3.js'
 import { CpAmm } from '@meteora-ag/cp-amm-sdk'
@@ -13,6 +15,79 @@ import { canonicalTradeEvents } from '../src/trade-evidence.mjs'
 import { dammSwapEvents } from '../src/damm-trades.mjs'
 import { createMarketConfigResolver } from '../src/market-config.mjs'
 import { chartMigration } from '../src/market-chart.mjs'
+
+export function createRecoveryChartProviders(env, fetchImpl = globalThis.fetch) {
+  // Existing Mac invocations stay unchanged until the explicitly reviewed handoff.
+  if (env.RECOVERY_CHART_RPC_MODE === undefined) {
+    const connection = new Connection(env.SOLANA_RPC_URL, 'finalized')
+    const verification = new Connection(env.SOLANA_VERIFICATION_RPC_URL, 'finalized')
+    const archiveVerification = env.SOLANA_ARCHIVE_VERIFICATION_RPC_URL
+      ? new Connection(env.SOLANA_ARCHIVE_VERIFICATION_RPC_URL, 'finalized') : verification
+    return { connection, verification, archiveVerification }
+  }
+  if (env.RECOVERY_CHART_RPC_MODE !== 'archival-paced') throw Error('CHART_RPC_MODE')
+  const endpoints = [env.SOLANA_RPC_URL, env.SOLANA_ARCHIVE_VERIFICATION_RPC_URL]
+  try {
+    if (endpoints.some(e => new URL(e).protocol !== 'https:')) throw Error()
+    // This detects hostname reuse, not common provider operators or upstreams.
+    if (new URL(endpoints[0]).hostname === new URL(endpoints[1]).hostname) throw Error()
+  } catch { throw Error('CHART_RPC_CONFIG') }
+  const queues = new Map(), abort = new AbortController()
+  let failure, calls = 0, bytes = 0
+  const stop = (code = 'CHART_RPC_FAILED') => { failure ??= code; abort.abort() }
+  const assertSafe = () => { if (failure) throw Error(failure) }
+  const fetch = async (endpoint, options) => {
+    assertSafe()
+    try {
+      const { method, params } = JSON.parse(options.body)
+      const finalized = Array.isArray(params) && params.length === 2 && params[1]?.commitment === 'finalized'
+      const allowed = method === 'getGenesisHash' && params.length === 0 ||
+        method === 'getBlockTime' && params.length === 1 && Number.isSafeInteger(params[0]) && params[0] >= 0 ||
+        finalized && (['getTransaction', 'getAccountInfo'].includes(method) ||
+          method === 'getMultipleAccounts' && Array.isArray(params[0]) && params[0].length <= 100 ||
+          method === 'getSignaturesForAddress' && Number.isInteger(params[1].limit) && params[1].limit > 0 && params[1].limit <= 1000)
+      if (!allowed) { stop('CHART_RPC_DENIED'); assertSafe() }
+      if (++calls > 2000) { stop('CHART_RPC_LIMIT'); assertSafe() }
+      const origin = new URL(endpoint).origin
+      if (!queues.has(origin)) queues.set(origin, { tail: Promise.resolve(), lastStart: -Infinity })
+      const queue = queues.get(origin)
+      const task = queue.tail.then(async () => {
+        try {
+          assertSafe()
+          while (performance.now() - queue.lastStart < 1000) {
+            await delay(Math.ceil(1000 - (performance.now() - queue.lastStart)), undefined, { signal: abort.signal })
+          }
+          assertSafe()
+          const responsePromise = fetchImpl(endpoint, { ...options, redirect: 'error',
+            signal: AbortSignal.any([abort.signal, AbortSignal.timeout(15000)]) })
+          queue.lastStart = performance.now()
+          const response = await responsePromise
+          if (!response.ok) { await response.body?.cancel(); throw Error() }
+          const reader = response.body.getReader(), chunks = []; let size = 0
+          try {
+            for (;;) {
+              const { done, value } = await reader.read()
+              if (done) break
+              size += value.byteLength; bytes += value.byteLength
+              if (size > 8 * 1024 * 1024 || bytes > 64 * 1024 * 1024) throw Error()
+              chunks.push(Buffer.from(value))
+            }
+          } finally { await reader.cancel() }
+          assertSafe()
+          const text = Buffer.concat(chunks).toString('utf8'), payload = JSON.parse(text)
+          if (payload.error || !Object.hasOwn(payload, 'result')) throw Error()
+          return new Response(text, { status: 200 })
+        } catch { stop(); assertSafe() }
+      })
+      // Aliases share the slot until their entire body is consumed and checked.
+      queue.tail = task.catch(() => {})
+      return await task
+    } catch { stop(); assertSafe() }
+  }
+  const [connection, verification] = endpoints.map(endpoint => new Connection(endpoint,
+    { commitment: 'finalized', fetch, disableRetryOnRateLimit: true, httpAgent: false }))
+  return { connection, verification, archiveVerification: verification, assertSafe, stop }
+}
 
 export async function recoveryHistory(connection, verification, address, boundary, { pageSize = 100, maxPages = 10 } = {}) {
   if (!verification || connection.rpcEndpoint === verification.rpcEndpoint) throw Error('INDEPENDENT_RPC_REQUIRED')
@@ -33,7 +108,7 @@ export async function recoveryHistory(connection, verification, address, boundar
   return agreeGraduation(...await Promise.all([connection, verification].map(walk)))
 }
 
-export async function indexRecoveryMarket({ db, connection, verification, market, migration, config, legacyConfigs }) {
+export async function indexRecoveryMarket({ db, connection, verification, market, migration, config, legacyConfigs, assertSafe = () => {} }) {
   const address = migration?.pool ?? market.pool
   const resolve = createMarketConfigResolver(config, legacyConfigs)
   const configKey = resolve(market) // even a migrated market must derive from an approved curve config
@@ -48,6 +123,7 @@ export async function indexRecoveryMarket({ db, connection, verification, market
     if (tx && (tx.slot !== item.slot || (migration && BigInt(tx.slot) < BigInt(migration.slot)))) throw Error('CHART_SLOT_MISMATCH')
     const events = !tx ? [] : migration ? dammSwapEvents(tx, market, address, coder)
       : canonicalTradeEvents(tx, { ...market, signature: item.signature }, configKey, dbc)
+    assertSafe()
     await db.query('begin')
     try {
       for (const e of events) {
@@ -63,10 +139,12 @@ export async function indexRecoveryMarket({ db, connection, verification, market
       }
       await db.query(`insert into recovery_charts.cursors(pool,signature,slot,checked_at) values($1,$2,$3,now())
         on conflict(pool) do update set signature=excluded.signature,slot=excluded.slot,checked_at=now()`, [address,item.signature,item.slot])
+      assertSafe()
       await db.query('commit')
     } catch (error) { await db.query('rollback'); throw error }
   }
   // A successful idle check is freshness evidence, not a fabricated trade timestamp.
+  assertSafe()
   await db.query('update recovery_charts.cursors set checked_at=now() where pool=$1', [address])
   return { repoId: market.repoId, transactions: history.length, inserted }
 }
@@ -80,10 +158,8 @@ export async function runRecoveryCharts(env = process.env) {
     [...url.searchParams.keys()].some(k => k !== 'sslmode')) throw Error('CHART_ROLE_REQUIRED')
   const db = new pg.Client({ connectionString: url.toString(), application_name: 'repoing-chart-recovery',
     statement_timeout: 15000, query_timeout: 20000, connectionTimeoutMillis: 15000 })
-  const connection = new Connection(env.SOLANA_RPC_URL, 'finalized'), verification = new Connection(env.SOLANA_VERIFICATION_RPC_URL, 'finalized')
-  // Graduated markets need historical migration receipts that pruned RPCs cannot serve.
-  const archiveVerification = env.SOLANA_ARCHIVE_VERIFICATION_RPC_URL
-    ? new Connection(env.SOLANA_ARCHIVE_VERIFICATION_RPC_URL, 'finalized') : verification
+  const rpc = createRecoveryChartProviders(env)
+  const { connection, verification, archiveVerification } = rpc
   const providers = [...new Set([connection, verification, archiveVerification])]
   if ([verification, archiveVerification].some(c => new URL(connection.rpcEndpoint).hostname === new URL(c.rpcEndpoint).hostname)) throw Error('INDEPENDENT_RPC_REQUIRED')
   let locked = false, readers
@@ -107,13 +183,14 @@ export async function runRecoveryCharts(env = process.env) {
       const db = await readers.connect()
       try {
         while (pending.length) {
+          rpc.assertSafe?.()
           const market = pending.shift()
           const result = { repoId: market.repoId }
           try {
             const graduation = graduates.find(g => String(g.github_repo_id) === market.repoId)
             const migration = chartMigration(market, graduation)
             const verifier = migration ? archiveVerification : verification
-            Object.assign(result, await indexRecoveryMarket({ db, connection, verification: verifier, market, migration, config: env.DBC_CONFIG, legacyConfigs: env.DBC_LEGACY_CONFIGS }))
+            Object.assign(result, await indexRecoveryMarket({ db, connection, verification: verifier, market, migration, config: env.DBC_CONFIG, legacyConfigs: env.DBC_LEGACY_CONFIGS, assertSafe: rpc.assertSafe }))
             const state = await readGraduationState({ db, connection, verification: verifier, market, config: env.DBC_CONFIG, custodyRecovery })
             if (state.migration) {
               const { rows: [volume] } = await db.query(`select coalesce(sum(quote_amount),0)::text as lamports
@@ -124,10 +201,14 @@ export async function runRecoveryCharts(env = process.env) {
             // Use the same freshness and immutable migration checks the public endpoint enforces.
             publicGraduation({ status: 'VERIFIED', observation: JSON.stringify(state), migration_evidence_hash: graduation?.evidence_hash })
             const { accountEvidence, positionEvidence, platform, partnerWallet, ...display } = state
+            rpc.assertSafe?.()
             await db.query(`insert into recovery_charts.observations(github_repo_id,checked_at,observation) values($1,$2,$3)
               on conflict(github_repo_id) do update set checked_at=excluded.checked_at,observation=excluded.observation`, [market.repoId,state.checkedAt,JSON.stringify(display)])
             result.progress = state.phase
-          } catch (e) { result.error = /^[A-Z_]+$/.test(e.message) ? e.message : 'CHART_READ_UNAVAILABLE' }
+          } catch (e) {
+            result.error = /^[A-Z_]+$/.test(e.message) ? e.message : 'CHART_READ_UNAVAILABLE'
+            if (rpc.stop) { rpc.stop(result.error); throw Error(result.error) }
+          }
           results.push(result)
           await new Promise(r => setTimeout(r, 500))
         }
