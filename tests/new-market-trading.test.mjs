@@ -16,23 +16,22 @@ function fakeDb({ row = { enabled: true, max_buy_lamports: String(SOL), daily_bu
   } }
 }
 
-test('no control row, a database error or a disabled row all mean new-market trading is off', async () => {
+test('no control row, a database error or a disabled row all mean new-market buys are off', async () => {
   assert.deepEqual(await newMarketControls(fakeDb({ row: null })), { enabled: false })
   assert.deepEqual(await newMarketControls(fakeDb({ fail: true })), { enabled: false })
   assert.equal((await newMarketControls(fakeDb({ row: { enabled: false, max_buy_lamports: '1', daily_buy_lamports: '1' } }))).enabled, false)
-  for (const direction of ['buy', 'sell']) {
-    await assert.rejects(assertNewMarketTrade(fakeDb({ row: null }), { direction, amountLamports: 1n, reviewedRepoIds: reviewed }),
-      /New-market trading is paused/)
-  }
+  await assert.rejects(assertNewMarketTrade(fakeDb({ row: null }), { direction: 'buy', amountLamports: 1n, reviewedRepoIds: reviewed }),
+    /New-market trading is paused/)
 })
 
-test('the kill switch stops buys and sells immediately, without a redeploy', async () => {
-  const db = fakeDb()
-  await assertNewMarketTrade(db, { direction: 'sell', amountLamports: 5n * SOL, reviewedRepoIds: reviewed })
-  db.calls.length = 0
+test('the kill switch stops buys immediately, without a redeploy; holders can always sell', async () => {
   const off = fakeDb({ row: { enabled: false, max_buy_lamports: String(SOL), daily_buy_lamports: String(3n * SOL) } })
-  await assert.rejects(assertNewMarketTrade(off, { direction: 'sell', amountLamports: 1n, reviewedRepoIds: reviewed }), /paused/)
   await assert.rejects(assertNewMarketTrade(off, { direction: 'buy', amountLamports: 1n, reviewedRepoIds: reviewed }), /paused/)
+  for (const db of [off, fakeDb({ row: null }), fakeDb({ fail: true })]) {
+    db.calls.length = 0
+    await assertNewMarketTrade(db, { direction: 'sell', amountLamports: 5n * SOL, reviewedRepoIds: reviewed })
+    assert.equal(db.calls.length, 0, 'a sell never depends on the switch or a database read')
+  }
 })
 
 test('a buy above the per-trade cap is refused; sells are never capped', async () => {

@@ -69,6 +69,7 @@ export async function POST(request) {
       const slippageBps = parseSlippageBps(body.slippageBps)
       const refused = refuseOverLimit(request, 'trade:quote')
       if (refused) return refused
+      await guardNewMarketTrade(tradingCustodyRecovery(), { repoId: body.githubRepoId, direction: body.direction, amountLamports: body.amountBaseUnits })
       const engine = await trader()(body.githubRepoId)
       const args = { githubRepoId: body.githubRepoId, wallet: body.wallet, slippageBps,
         [body.direction === 'sell' ? 'amountBaseUnits' : 'amountLamports']: body.amountBaseUnits }
@@ -80,6 +81,7 @@ export async function POST(request) {
       const slippageBps = parseSlippageBps(body.slippageBps)
       const refused = refuseOverLimit(request, 'trade:costs')
       if (refused) return refused
+      await guardNewMarketTrade(tradingCustodyRecovery(), { repoId: body.githubRepoId, direction: body.direction, amountLamports: body.amountBaseUnits })
       const engine = await trader()(body.githubRepoId)
       const prepared = await prepareTrade(engine, body, null, slippageBps)
       // Read-only preview. Only prepare creates a signable session and simulates it.
