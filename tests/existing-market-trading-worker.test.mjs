@@ -225,6 +225,7 @@ test('binds only the reader, separate trading credential and exact public review
   assert.equal(body.PRIVATE_KEY, undefined)
   assert.equal(body.PUBLIC_DATABASE_URL, undefined)
   assert.equal(body.SOLANA_RPC_URL, 'https://api.mainnet-beta.solana.com')
+  assert.equal(body.GRADUATION_VERIFICATION_RPC_URL, '', 'no independent verifier when the primary is the public endpoint')
   assert.equal(f.runtime.starts, 2)
   await f.request()
   assert.equal(f.runtime.starts, 2)
@@ -370,7 +371,9 @@ test('the restored RPC is restricted to the rotated mainnet provider and include
   await f.request()
   const starts = f.runtime.starts
   f.env.SOLANA_RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=fixture-only'
-  assert.equal((await (await f.request()).json()).SOLANA_RPC_URL, f.env.SOLANA_RPC_URL)
+  const restored = await (await f.request()).json()
+  assert.equal(restored.SOLANA_RPC_URL, f.env.SOLANA_RPC_URL)
+  assert.equal(restored.GRADUATION_VERIFICATION_RPC_URL, 'https://api.mainnet-beta.solana.com')
   assert.equal(f.runtime.starts, starts + 1)
   for (const url of ['https://devnet.helius-rpc.com/?api-key=fixture-only', 'http://mainnet.helius-rpc.com/?api-key=x', 'https://mainnet.helius-rpc.com/?api-key=x&api-key=y']) {
     f.env.SOLANA_RPC_URL = url

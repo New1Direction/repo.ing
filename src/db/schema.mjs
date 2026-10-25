@@ -1087,6 +1087,15 @@ export const tradeOutcomes = pgTable('trade_outcomes', {
   check('trade_outcomes_outcome_check',sql`${t.outcome} in ('prepared','submitted','confirmed','expired','failed','verification_failed')`),
   check('trade_outcomes_direction_check',sql`${t.direction} is null or ${t.direction} in ('buy','sell')`)])
 
+// Migration 0086 (src/new-market-trading.mjs): owner switches and buy caps; no row means that market group is off.
+export const tradingControls = pgTable('trading_controls', {
+  key: varchar('key',{length:32}).primaryKey(), enabled: boolean('enabled').default(false).notNull(),
+  maxBuyLamports: bigint('max_buy_lamports',{mode:'bigint'}).notNull(), dailyBuyLamports: bigint('daily_buy_lamports',{mode:'bigint'}).notNull(),
+  updatedAt: timestamp('updated_at',{withTimezone:true}).defaultNow().notNull(), updatedBy: text('updated_by').notNull(),
+},t=>[check('trading_controls_key_check',sql`${t.key} in ('new_markets')`),
+  check('trading_controls_max_buy_lamports_check',sql`${t.maxBuyLamports} > 0`),
+  check('trading_controls_daily_buy_lamports_check',sql`${t.dailyBuyLamports} >= ${t.maxBuyLamports}`)])
+
 // Prepared trade sessions shared by every web instance (see drizzle/0029_trade_sessions.sql). Deleted after 10 minutes.
 export const tradeSessions = pgTable('trade_sessions', {
   id: uuid('id').primaryKey(), wallet: varchar('wallet',{length:44}).notNull(), phase: varchar('phase',{length:16}).notNull(),

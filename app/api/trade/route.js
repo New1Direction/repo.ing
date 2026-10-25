@@ -10,14 +10,14 @@ import { tradeResultFields, tradeStatus } from '../../lib/trade-status.mjs'
 import { settleConfirmedTrade } from '../../lib/trade-settlement.mjs'
 import { tradeRouter as trader } from '../../lib/trader.mjs'
 import { tradeSessions } from '../../lib/trade-sessions.mjs'
-import { tradingCustodyRecovery, tradingDatabase as database } from '../../lib/trading-recovery.mjs'
+import { guardNewMarketTrade, tradingCustodyRecovery, tradingDatabase as database } from '../../lib/trading-recovery.mjs'
 import { existingMarketTest } from '../../lib/existing-market-test.mjs'
 import { publicError } from '../../lib/public-error.mjs'
 import { refuseOverLimit } from '../../lib/request-limits.mjs'
 import { statusOutcome, submitOutcome, trackTradeOutcome } from '../../lib/trade-tracking.mjs'
 import { recordReferredTrade } from '../../../src/referral-leaderboard.mjs'
 import { DEFAULT_SLIPPAGE_BPS, isPreflightSlippageError, parseSlippageBps, SLIPPAGE_EXCEEDED, slippageLabel, swapInstructionIndex } from '../../../src/trade-slippage.mjs'
-const SAFE = /^(This wallet cannot trade|Contributor early access|The trade window closed|Trading is not configured|Invalid trade|Invalid transaction signature|Invalid slippage|Transaction (does not match|did not swap)|Prepared trade|Wallet returned|Trade (was not prepared|failed|size guide|simulation|transaction|balances)|You need approximately|No executable output|Network cost estimate|Account setup estimate|Repository has no indexed|Canonical|Buy balances|Sell balances|Quote fee|Pool and mint|Input amount|Fixed DBC|Unsupported trade action)/
+const SAFE = /^(This wallet cannot trade|New-market trading|Contributor early access|The trade window closed|Trading is not configured|Invalid trade|Invalid transaction signature|Invalid slippage|Transaction (does not match|did not swap)|Prepared trade|Wallet returned|Trade (was not prepared|failed|size guide|simulation|transaction|balances)|You need approximately|No executable output|Network cost estimate|Account setup estimate|Repository has no indexed|Canonical|Buy balances|Sell balances|Quote fee|Pool and mint|Input amount|Fixed DBC|Unsupported trade action)/
 export const runtime = 'nodejs'
 // Sessions live in trade_sessions (see src/trade-sessions.mjs), so a deploy or another replica can finish a trade.
 // A missing or expired session (or a slow approval) means nothing was broadcast: the client shows this as not
@@ -90,6 +90,7 @@ export async function POST(request) {
       const slippageBps = parseSlippageBps(body.slippageBps)
       const refused = refuseOverLimit(request, 'trade:prepare')
       if (refused) return refused
+      await guardNewMarketTrade(tradingCustodyRecovery(), { repoId: body.githubRepoId, direction: body.direction, amountLamports: body.amountBaseUnits })
       const engine = await trader()(body.githubRepoId)
       const build = referrer => prepareCheckedTrade({ engine, connection: chain(), direction: body.direction, githubRepoId: body.githubRepoId,
         wallet: body.wallet, amountBaseUnits: body.amountBaseUnits, referrer, slippageBps })
@@ -125,6 +126,9 @@ export async function POST(request) {
       const loaded = await store.load(body.id)
       // Checked against the exact reviewed message bytes stored at prepare, not a rebuilt transaction.
       const { signed, signature, signedMessage } = acceptSignedTrade(loaded, body.transaction)
+      // Re-checked at submit: the switch may have gone off, or the day's buys filled, since this trade was prepared.
+      const { githubRepoId, direction, amountIn } = loaded.prepared.record
+      await guardNewMarketTrade(tradingCustodyRecovery(), { repoId: githubRepoId, direction, amountLamports: amountIn })
       // A repeat of an earlier submit of this signature may follow a broadcast that is still in flight.
       const firstSubmission = !loaded.signature
       // Recorded (first signature wins across replicas) before anything is broadcast, so any instance can verify it.

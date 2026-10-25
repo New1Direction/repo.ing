@@ -8,7 +8,10 @@ import { createDatabasePool } from '../../src/database-pool.mjs'
 import { approvedConfigs, createMarketConfigResolver } from '../../src/market-config.mjs'
 import { RECOVERED_LAUNCH_CONFIG } from '../../src/launch-custody.mjs'
 import { markets } from '../../src/db/schema.mjs'
-import { database } from './server.mjs'
+import { Connection } from '@solana/web3.js'
+import { createNewMarketAdmissionReview } from '../../src/new-market-admission.mjs'
+import { assertNewMarketTrade, newMarketControls } from '../../src/new-market-trading.mjs'
+import { chain, database } from './server.mjs'
 
 // The public pages keep their SELECT-only projection. Only the trade API/router
 // receives this separate, table-limited credential; no owner or custody signer.
@@ -40,7 +43,7 @@ export function tradingCustodyRecovery() {
 
 // Recovery is not permission to trade every market in the operational database.
 // Both engines, including restored-session verification, use this exact loader.
-export function tradingMarketLoader(pool, config, manifest) {
+export function tradingMarketLoader(pool, config, manifest, newMarkets = {}) {
   if (process.env.EXISTING_MARKET_TRADING_ONLY !== 'true') return undefined
   const rows = manifest.poolCreators
   const expected = [...new Set(rows.map(row => row.config))].sort()
@@ -51,9 +54,10 @@ export function tradingMarketLoader(pool, config, manifest) {
   if (allowed.size !== rows.length) throw Error('Trading reviewed existing-market allowlist is ambiguous')
   const resolveConfig = createMarketConfigResolver(config, expected, null)
   const db = drizzle(pool)
+  const admitNewMarket = newMarketLoader(pool, db, newMarkets)
   return async repoId => {
     const binding = allowed.get(String(repoId))
-    if (!binding) throw Error('Repository is outside the reviewed existing-market allowlist')
+    if (!binding) return admitNewMarket(repoId)
     const market = (await db.select().from(markets).where(eq(markets.githubRepoId, BigInt(repoId))).limit(1))[0]
     if (!market || market.status !== 'confirmed' || market.indexedAt == null || market.launchFinality !== 'finalized' ||
       String(market.githubRepoId) !== binding.repoId || market.mint !== binding.mint || market.pool !== binding.curve ||
@@ -64,4 +68,39 @@ export function tradingMarketLoader(pool, config, manifest) {
     if (resolveConfig(market).toBase58() !== binding.config) throw Error('Trading reviewed config allowlist changed')
     return market
   }
+}
+
+// A market outside the reviewed allowlist trades only while the owner's new_markets switch is on, and only after the
+// two-provider admission rule (safe config, vault creator, finalized launch handoff) admits it. Launch evidence is
+// immutable, so an admission is reused for ADMISSION_TTL_MS; the switch is read on every load.
+const ADMISSION_TTL_MS = 10 * 60_000
+function newMarketLoader(pool, db, { review = defaultAdmissionReview(), now = Date.now } = {}) {
+  const admitted = new Map()
+  return async repoId => {
+    if (!(await newMarketControls(pool)).enabled) throw Error('New-market trading is paused')
+    if (!review) throw Error('New-market trading needs an independent verification RPC')
+    const market = (await db.select().from(markets).where(eq(markets.githubRepoId, BigInt(repoId))).limit(1))[0]
+    if (!market) throw Error('Repository has no indexed market')
+    const cached = admitted.get(String(repoId))
+    if (!cached || now() - cached.at >= ADMISSION_TTL_MS || cached.pool !== market.pool) {
+      const result = await review(market)
+      if (result.state !== 'eligible-for-review' || result.pool !== market.pool) throw Error('New-market trading refused: this market does not meet the admission rule')
+      admitted.set(String(repoId), { at: now(), pool: market.pool })
+    }
+    return market
+  }
+}
+
+function defaultAdmissionReview(env = process.env) {
+  if (!env.GRADUATION_VERIFICATION_RPC_URL) return null
+  try { return createNewMarketAdmissionReview({ connections: [chain(), new Connection(env.GRADUATION_VERIFICATION_RPC_URL, 'finalized')] }) }
+  catch { return null }
+}
+
+// Route-side guard for prepare and submit: the switch and the buy caps, counted against every non-reviewed market.
+export async function guardNewMarketTrade(manifest, { repoId, direction, amountLamports }) {
+  if (process.env.EXISTING_MARKET_TRADING_ONLY !== 'true') return
+  const reviewedRepoIds = manifest.poolCreators.map(row => row.repoId)
+  if (reviewedRepoIds.includes(String(repoId))) return
+  await assertNewMarketTrade(tradingDatabase(), { direction, amountLamports, reviewedRepoIds })
 }

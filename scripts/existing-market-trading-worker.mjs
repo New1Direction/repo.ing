@@ -17,6 +17,12 @@ const primaryConfig = '2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M'
 const legacyConfigs = ['8TXNGgx6g5TcsVCYt7wz3cAxJkynzzBZWXeQtXZaz6A3', '261xpZVAz5k3ZfwfxXdgkgLowiH6NUzFEHtihhD4YMq1', 'D7oz8xQ4seaNaEgiDS4fu3YJfmUvR5iPuznxuqKV4u1c']
 // Optional read support for the finalized custody-safe config; the trading manifest stays unchanged.
 const recoveredReadConfig = 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7'
+// Public, keyless second provider for new-market admission (app/lib/trading-recovery.mjs). Empty when it would not be
+// independent of the primary RPC, which keeps rule-admitted markets refused.
+const PUBLIC_VERIFIER = 'https://api.mainnet-beta.solana.com'
+const verificationRpc = primary => {
+  try { return new URL(primary).hostname === new URL(PUBLIC_VERIFIER).hostname ? '' : PUBLIC_VERIFIER } catch { return '' }
+}
 const bindingNames = ['PUBLIC_DATABASE_URL', 'TRADING_DATABASE_URL', 'DBC_CONFIG', 'DBC_LEGACY_CONFIGS', 'TRADING_CUSTODY_RECOVERY_SHA256', 'TRADING_CUSTODY_RECOVERY_JSON', 'EXISTING_MARKET_TRADING_ONLY', 'EXISTING_MARKET_TRADING_STAGE']
 const testBindingNames = ['EXISTING_MARKET_TEST_PLAN', 'EXISTING_MARKET_TEST_SUBMISSION', 'EXISTING_MARKET_TEST_ACCESS_TOKEN']
 const launchBindingNames = ['ORDINARY_LAUNCH_RECOVERY_ENABLED', 'ORDINARY_LAUNCH_DATABASE_URL', 'ORDINARY_LAUNCH_CONFIG', 'ORDINARY_LAUNCH_BOOTSTRAP_SECRET_KEY',
@@ -196,6 +202,7 @@ export class PublicSite extends Container {
         ACCOUNTING_RECOVERY_ENABLED: bindings.ACCOUNTING_RECOVERY_ENABLED === 'true' ? 'true' : 'false',
         ...bindings.ACCOUNTING_RECOVERY_ENABLED === 'true' ? Object.fromEntries(accountingBindingNames.slice(1).map(name => [name, bindings[name]])) : {},
         SOLANA_RPC_URL: bindings.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com',
+        GRADUATION_VERIFICATION_RPC_URL: verificationRpc(bindings.SOLANA_RPC_URL),
         HOOK_PRODUCTION_BOOTSTRAP: 'false',
         HOOK_NATIVE_LAUNCH_ENABLED: 'false',
         HOOK_NATIVE_LAUNCHES_ENABLED: 'false',

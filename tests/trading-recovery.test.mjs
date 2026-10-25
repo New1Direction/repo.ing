@@ -78,13 +78,13 @@ test('trading-only router admits only the reviewed market identity and exact con
   try {
     const load = tradingMarketLoader(pool, binding.config, manifest)
     assert.equal((await load(binding.repoId)).mint, binding.mint)
-    await assert.rejects(load('9999999'), /reviewed existing-market allowlist/)
-    assert.equal(reads, 1, 'unknown repository is refused before database or chain reads')
+    await assert.rejects(load('9999999'), /New-market trading is paused/)
+    assert.equal(reads, 2, 'with the switch off an unknown repository is refused after reading only the switch')
     process.env.DBC_LEGACY_CONFIGS = 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7'
     const withRecoveredReads = tradingMarketLoader(pool, binding.config, manifest)
     assert.equal((await withRecoveredReads(binding.repoId)).mint, binding.mint)
-    await assert.rejects(withRecoveredReads('1278009399'), /reviewed existing-market allowlist/)
-    assert.equal(reads, 2, 'read-only config support does not admit newly launched markets to trading')
+    await assert.rejects(withRecoveredReads('1278009399'), /New-market trading is paused/)
+    assert.equal(reads, 4, 'read-only config support does not admit newly launched markets while the switch is off')
     assert.throws(() => tradingMarketLoader(pool, process.env.DBC_LEGACY_CONFIGS, manifest), /reviewed config allowlist/)
     process.env.DBC_LEGACY_CONFIGS = ''
     for (const patch of [null, { mint: binding.owner }, { pool: binding.owner }, { creatorWallet: binding.owner },
@@ -168,5 +168,61 @@ test('trading-only startup requires pinned public custody bindings, including on
     delete globalThis.__gitfunPool
     delete globalThis.__gitfunTrader
     delete globalThis.__gitfunTraderConfig
+  }
+})
+
+test('with the switch on, an unreviewed market trades only after the admission rule admits it', async () => {
+  process.env.EXISTING_MARKET_TRADING_ONLY = 'true'
+  process.env.DBC_LEGACY_CONFIGS = ''
+  const fresh = { id: '2', githubRepoId: 1278009399n, mint: 'GxKu7xYvScZzCpJLRigToUDFt7RLm4UpZkA4guLqCHBg',
+    pool: '37uhKHh9TdvyBnh1XDHebLgLQfkcYtDTP1t3CCLJgrfV', status: 'confirmed' }
+  let enabled = true, row = fresh, clock = 0
+  const pool = { query: async sql => typeof sql === 'string' && /trading_controls/.test(sql)
+    ? { rows: [{ enabled, max_buy_lamports: '1000000000', daily_buy_lamports: '5000000000' }] }
+    : { rows: row ? [Object.keys(getTableColumns(markets)).map(key => row[key] ?? null)] : [] } }
+  const reviews = []
+  let verdict = market => ({ state: 'eligible-for-review', tradingEnabled: false, pool: market.pool })
+  const review = async market => { reviews.push(market.pool); return verdict(market) }
+  try {
+    const load = tradingMarketLoader(pool, binding.config, manifest, { review, now: () => clock })
+    assert.equal((await load('1278009399')).mint, fresh.mint)
+    await load('1278009399'); clock += 9 * 60_000; await load('1278009399')
+    assert.equal(reviews.length, 1, 'immutable launch evidence is reviewed once per ten minutes')
+    clock += 60_000; await load('1278009399')
+    assert.equal(reviews.length, 2)
+    verdict = () => ({ state: 'denied', tradingEnabled: false }); clock += 11 * 60_000
+    await assert.rejects(load('1278009399'), /does not meet the admission rule/)
+    verdict = () => ({ state: 'eligible-for-review', tradingEnabled: false, pool: binding.curve })
+    await assert.rejects(load('1278009399'), /does not meet the admission rule/, 'an admission for a different pool is refused')
+    verdict = market => ({ state: 'eligible-for-review', tradingEnabled: false, pool: market.pool })
+    enabled = false
+    const before = reviews.length
+    await assert.rejects(load('1278009399'), /New-market trading is paused/)
+    assert.equal(reviews.length, before, 'the kill switch refuses before any chain review')
+    enabled = true; row = null
+    await assert.rejects(load('1278009399'), /no indexed market/)
+    const noVerifier = tradingMarketLoader(pool, binding.config, manifest, { review: null })
+    row = fresh
+    await assert.rejects(noVerifier('1278009399'), /independent verification RPC/)
+  } finally {
+    delete process.env.EXISTING_MARKET_TRADING_ONLY
+    delete process.env.DBC_LEGACY_CONFIGS
+  }
+})
+
+test('the trade route refuses new-market preparation while the switch is off and shows the reason', async () => {
+  const saved = { ...process.env }
+  Object.assign(process.env, { EXISTING_MARKET_TRADING_ONLY: 'true', EXISTING_MARKET_TRADING_STAGE: 'live',
+    TRADING_DATABASE_URL: 'postgres://nobody@127.0.0.1:1/none',
+    TRADING_CUSTODY_RECOVERY_SHA256: '2c31354ba8009acb0da1319b068f479216b0615120328510cba50665f0ecd888' })
+  try {
+    const response = await POST(new Request('https://repo.ing/api/trade', { method: 'POST', body: JSON.stringify({
+      action: 'prepare', direction: 'buy', githubRepoId: '1278009399', amountBaseUnits: '1000000',
+      wallet: '4euCWuZo1Ud3PfhFQr9ShmJVzqmARGqY2LR23YECDYce' }) }))
+    assert.equal(response.status, 400)
+    assert.equal((await response.json()).error, 'New-market trading is paused')
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key]
+    Object.assign(process.env, saved)
   }
 })
