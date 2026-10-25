@@ -20,8 +20,10 @@ export async function indexRecoveryFees({ pool, connection, verification, config
     locked = (await db.query('select pg_try_advisory_lock(hashtextextended($1,0)) as locked', [market.pool])).rows[0].locked
     if (!locked) return { busy: true }
     const { rows: [cursor] } = await db.query('select last_signature,last_slot::text from pool_fee_cursors where pool=$1', [market.pool])
-    const history = await recoveryHistory(connection, verification, market.pool, cursor?.last_signature ?? market.launchSignature,
-      { pageSize: 1000, maxPages: 20 })
+    // With no cursor yet, read back to and including the launch transaction: it carries any first buy.
+    const history = cursor?.last_signature
+      ? await recoveryHistory(connection, verification, market.pool, cursor.last_signature, { pageSize: 1000, maxPages: 20 })
+      : await recoveryHistory(connection, verification, market.pool, null, { pageSize: 1000, maxPages: 20, origin: market.launchSignature })
     let creditedBaseUnits = 0n
     for (const item of history) {
       if (!item.err) {

@@ -28,7 +28,7 @@ test('recovery fees require agreeing receipts, survive restart/replayed cursor, 
     const verification = { rpcEndpoint: 'https://verifier.invalid', getSignaturesForAddress: async () => history }
     const dbc = new DynamicBondingCurveClient(connection, 'finalized'), coder = dbc.state.getProgram().coder
     const proto = Object.getPrototypeOf(dbc.state)
-    t.mock.method(proto, 'getPool', async () => ({ poolState: { creator, config, baseMint: mint, creatorQuoteFee: new BN(3) } }))
+    t.mock.method(proto, 'getPool', async () => ({ poolState: { creator, config, baseMint: mint, creatorQuoteFee: new BN(5) } }))
     t.mock.method(proto, 'getPoolConfig', async () => ({ quoteMint: NATIVE_MINT, collectFeeMode: 0, creatorTradingFeePercentage: 71 }))
     const receipt = (signature, fee) => {
       const data = { pool: address, config, tradeDirection: 1, hasReferral: false,
@@ -37,7 +37,7 @@ test('recovery fees require agreeing receipts, survive restart/replayed cursor, 
           nextSqrtPrice: new BN(100), tradingFee: new BN(fee), protocolFee: new BN(1), referralFee: new BN(0) } }
       const event = Buffer.concat([Buffer.from('e445a52e51cb9a1d', 'hex'),
         Buffer.from(dbc.state.getProgram().idl.events.find(e => e.name === 'evtSwap').discriminator), coder.types.encode('evtSwap', data)])
-      return { slot: signature === 'a' ? 11 : 12, blockTime: 1700000001, version: 'legacy',
+      return { slot: { a: 11, launch: 10 }[signature] ?? 12, blockTime: 1700000001, version: 'legacy',
         transaction: { signatures: [signature], message: { accountKeys: [key(1), config, address, key(2), key(3), key(4), key(5), mint, NATIVE_MINT, creator, programId],
           header: { numRequiredSignatures: 1 }, instructions: [{ programIdIndex: 10, accounts: [0,1,2,3,4,5,6,7,8,9], data: bs58.encode(Buffer.from([248,198,158,145,225,117,135,200])) }] } },
         meta: { err: null, fee: 5000, preBalances: [10000], postBalances: [5000], preTokenBalances: [], postTokenBalances: [],
@@ -47,7 +47,8 @@ test('recovery fees require agreeing receipts, survive restart/replayed cursor, 
     const finalized = await import('../src/finalized-transaction.mjs')
     t.mock.module('../src/finalized-transaction.mjs', { namedExports: {
       ...finalized,
-      loadFinalizedTransaction: async (rpc, signature) => receipt(signature, signature === 'a' ? 2 : disagree && rpc === verification ? 5 : 4),
+      // The launch transaction carries a first buy: a market with no cursor is read from (and including) its launch.
+      loadFinalizedTransaction: async (rpc, signature) => receipt(signature, signature === 'a' ? 2 : signature === 'launch' ? 4 : disagree && rpc === verification ? 5 : 4),
       forgetFinalizedTransaction() {},
     } })
     const { indexRecoveryFees } = await import('../scripts/recovery-fee-indexer.mjs')
@@ -77,16 +78,16 @@ test('recovery fees require agreeing receipts, survive restart/replayed cursor, 
         (select sum(partner_amount)::text from discovery_fee_events) partner,
         (select count(*)::int from fee_events) events,
         (select count(*)::int from repo_claims) claims`)).rows[0]
-      assert.deepEqual(await totals(), { creator: '3', partner: '3', events: 2, claims: 0 })
+      assert.deepEqual(await totals(), { creator: '5', partner: '5', events: 3, claims: 0 }, 'the first buy in the launch transaction is accounted')
       assert.equal((await run()).creditedBaseUnits, 0n)
       await pool.query('delete from pool_fee_cursors')
       assert.equal((await run()).creditedBaseUnits, 0n)
-      assert.deepEqual(await totals(), { creator: '3', partner: '3', events: 2, claims: 0 })
+      assert.deepEqual(await totals(), { creator: '5', partner: '5', events: 3, claims: 0 })
       const { createReconciler } = await import('../src/reconcile.mjs')
       const reconciled = await createReconciler({ pool: reader, connection, config,
         custodyRecovery: { version: 1, poolCreators: [], positions: [] } }).reconcile('101')
       assert.equal(reconciled.status, 'MATCH')
-      assert.equal(reconciled.recordedEarned, 3n)
+      assert.equal(reconciled.recordedEarned, 5n)
       for (const role of [reader, writer]) for (const query of ['select signed_transaction from repo_claims',
         'select * from launch_sessions', 'update repo_beneficiaries set wallet=wallet',
         'insert into custody_fee_payouts default values', 'insert into repo_claims default values',
@@ -133,6 +134,7 @@ test('recovery fees require agreeing receipts, survive restart/replayed cursor, 
       await pool.query("update fee_events set amount_base_units=9 where signature='a'")
       await pool.query('delete from pool_fee_cursors')
       await assert.rejects(run(), /contradicts finalized/)
-      assert.equal((await pool.query('select count(*)::int n from pool_fee_cursors')).rows[0].n, 0)
+      assert.deepEqual((await pool.query('select last_signature from pool_fee_cursors')).rows, [{ last_signature: 'launch' }],
+        'the cursor stops before the contradicting event and never passes it')
     } finally { await pool.end() }
   })
