@@ -112,18 +112,23 @@ export function createChartCurveReads(options) {
   } }
 }
 
-export async function recoveryHistory(connection, verification, address, boundary, { pageSize = 100, maxPages = 10 } = {}) {
+// origin: for a market with no earlier boundary, its own finalized launch signature. Its whole history is read and must
+// end exactly at the launch (included: it carries any first buy), which proves nothing before or between is missing.
+export async function recoveryHistory(connection, verification, address, boundary, { pageSize = 100, maxPages = 10, origin = null } = {}) {
   if (!verification || connection.rpcEndpoint === verification.rpcEndpoint) throw Error('INDEPENDENT_RPC_REQUIRED')
-  if (!boundary) throw Error('CHART_BASELINE_REQUIRED')
+  if (!boundary && !origin) throw Error('CHART_BASELINE_REQUIRED')
   const walk = async rpc => {
     const result = []; let before
     for (let n = 0; n < maxPages; n++) {
       const page = await rpc.getSignaturesForAddress(new PublicKey(address), { limit: pageSize, ...(before ? { before } : {}) }, 'finalized')
       for (const { signature, slot, err } of page) {
-        if (signature === boundary) return result.reverse()
+        if (boundary && signature === boundary) return result.reverse()
         result.push({ signature, slot, err })
       }
-      if (page.length < pageSize) throw Error('CHART_HISTORY_INCOMPLETE')
+      if (page.length < pageSize) {
+        if (!boundary && result.at(-1)?.signature === origin) return result.reverse()
+        throw Error('CHART_HISTORY_INCOMPLETE')
+      }
       before = page.at(-1).signature
     }
     throw Error('CHART_HISTORY_LIMIT')
@@ -139,7 +144,9 @@ export async function indexRecoveryMarket({ db, connection, verification, market
   // The reviewed pre-recovery accounting checkpoint is only a starting boundary. Never update it here.
   const { rows: [baseline] } = cursor ? { rows: [] } : await db.query('select last_signature as signature from public.pool_fee_cursors where pool=$1', [address])
   diagnostics?.phase('HISTORY')
-  const history = await recoveryHistory(connection, verification, address, cursor?.signature ?? baseline?.signature)
+  // A market launched after the recovery has neither: its own finalized launch is the start of its curve history.
+  const origin = !migration && market.launchFinality === 'finalized' ? market.launchSignature : null
+  const history = await recoveryHistory(connection, verification, address, cursor?.signature ?? baseline?.signature, { origin })
   const dbc = new DynamicBondingCurveClient(connection, 'finalized'), coder = new CpAmm(connection)._program.coder
   let inserted = 0
   for (const item of history) {
@@ -199,7 +206,8 @@ export async function runRecoveryCharts(env = process.env, diagnostics = createC
     locked = (await db.query("select pg_try_advisory_lock(hashtext('recovery-charts')) as locked")).rows[0].locked
     if (!locked) return { busy: true }
     const { rows: markets } = await db.query(`select github_repo_id::text as "repoId",mint,pool,bundle_id as "bundleId",creator_wallet as "creatorWallet",
-      early_access_end as "earlyAccessEnd",transfer_hook_program as "transferHookProgram"
+      early_access_end as "earlyAccessEnd",transfer_hook_program as "transferHookProgram",
+      launch_signature as "launchSignature",launch_finality as "launchFinality"
       from public.markets where status='confirmed' and indexed_at is not null and launch_finality='finalized' and quote_asset_id is null`)
     const { rows: graduates } = await db.query('select * from public.graduation_events')
     // A slow serial RPC pass can exceed the observation freshness window. Each

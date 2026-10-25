@@ -208,3 +208,18 @@ test('only transient RPC failures are retryable; data problems and unknown error
   assert.deepEqual(charts.chartFailure(Error('connect ECONNREFUSED 10.0.0.1:5432 SECRET_SENTINEL')), { code: 'UNCLASSIFIED', retryable: false })
   assert.deepEqual(charts.chartFailure(null), { code: 'UNCLASSIFIED', retryable: false })
 })
+
+test('a market with no earlier history is read from its own finalized launch transaction, and must end exactly there', async () => {
+  const pages = { head: [item('buy', 30), item('launch', 20)] }
+  assert.deepEqual(await recoveryHistory(rpc('primary', pages), rpc('verifier', pages), pool, null, { origin: 'launch', pageSize: 3 }),
+    [item('launch', 20), item('buy', 30)], 'the launch transaction is included: it carries the first buy')
+  const older = { head: [item('buy', 30), item('launch', 20), item('older', 10)] }
+  await assert.rejects(recoveryHistory(rpc('primary', older), rpc('verifier', older), pool, null, { origin: 'launch', pageSize: 5 }),
+    /CHART_HISTORY_INCOMPLETE/, 'activity before the recorded launch means the origin is wrong')
+  await assert.rejects(recoveryHistory(rpc('primary', { head: [item('buy', 30)] }), rpc('verifier', { head: [item('buy', 30)] }), pool, null,
+    { origin: 'launch', pageSize: 5 }), /CHART_HISTORY_INCOMPLETE/, 'history must reach the launch')
+  await assert.rejects(recoveryHistory(rpc('primary', pages), rpc('verifier', { head: [item('other', 30), item('launch', 20)] }), pool, null,
+    { origin: 'launch', pageSize: 3 }), /RPC_DISAGREEMENT/)
+  await assert.rejects(recoveryHistory(rpc('primary', pages), rpc('verifier', pages), pool, null), /CHART_BASELINE_REQUIRED/,
+    'without a boundary or a launch origin the market is still refused')
+})
