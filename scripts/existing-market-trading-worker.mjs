@@ -58,13 +58,14 @@ const hookPages = new Set(['/hooks/launch-review', '/hooks/mine', '/hooks/trade'
 const hookReadRoute = new RegExp(`^(/hooks/token/${mint}|/api/hook-lab/market/${mint}(/(candles|holders|trades))?|/api/hook-lab/wallet/${mint}` +
   '|/api/hook-lab/coins/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(image|metadata))$')
 // The wallet-session routes: the only Hooks routes that receive the two wallet cookies, each with its POST actions and body
-// bound (the app's own limits). Only wallet-identity may set them. cosign (owner-approved launches), fund, withdraw and quote
-// (the bridged stack) and native-estimate (selected hooks) are never forwarded.
+// bound (the app's own limits). Only wallet-identity may set them. cosign is the server's mint-key signature of an open
+// launch (the server holds no admin key). fund, withdraw and quote (the bridged stack) and native-estimate (selected hooks)
+// are never forwarded.
 const hookSessionRoutes = {
   '/api/hook-lab/wallet-identity': { get: true, limit: 2048, actions: ['challenge', 'verify', 'logout'], setsCookie: true },
   '/api/hook-lab/launch-requests': { get: true, limit: 540_000, actions: ['create', 'get', 'cancel'] },
-  '/api/hook-lab/native-launch': { limit: 65_536, actions: ['reserve', 'review', 'get', 'refresh-review', 'wallet-request', 'submit', 'reconcile', 'expire', 'retain-wallet'] },
-  '/api/hook-lab/native-claim': { limit: 8192, actions: ['status', 'get', 'claim'] },
+  '/api/hook-lab/native-launch': { limit: 65_536, actions: ['reserve', 'review', 'get', 'refresh-review', 'wallet-request', 'cosign', 'submit', 'reconcile', 'expire', 'retain-wallet'] },
+  '/api/hook-lab/native-claim': { limit: 8192, actions: ['status', 'claim', 'get', 'wallet-request', 'submit', 'reconcile', 'retain-wallet'] },
   '/api/hook-lab/inclusive-trade': { limit: 8192, actions: ['native-quote', 'get', 'refresh-review', 'wallet-request', 'submit', 'reconcile', 'expire', 'retain-wallet'] },
 }
 const hookCoinImage = '/api/hook-lab/coin-image'

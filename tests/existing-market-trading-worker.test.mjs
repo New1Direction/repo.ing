@@ -593,7 +593,10 @@ const hookReads = ['/hooks/launch-review', '/hooks/mine', '/hooks/trade', '/hook
   `/api/hook-lab/market/${mint}`, `/api/hook-lab/market/${mint}/candles`, `/api/hook-lab/market/${mint}/holders`, `/api/hook-lab/market/${mint}/trades`,
   `/api/hook-lab/wallet/${mint}`, `/api/hook-lab/coins/${coinId}/image`, `/api/hook-lab/coins/${coinId}/metadata`]
 const hookPosts = [['/api/hook-lab/wallet-identity', 'challenge'], ['/api/hook-lab/launch-requests', 'create'], ['/api/hook-lab/native-launch', 'reserve'],
-  ['/api/hook-lab/native-claim', 'claim'], ['/api/hook-lab/inclusive-trade', 'native-quote']]
+  ['/api/hook-lab/native-claim', 'claim'], ['/api/hook-lab/inclusive-trade', 'native-quote'],
+  // cosign: the server's mint-key signature in every open launch (app/lib/hooklab-native-launch.mjs:99); a claim's signing
+  // lifecycle (app/lib/hooklab-native-claim.mjs:19-24).
+  ['/api/hook-lab/native-launch', 'cosign'], ...['wallet-request', 'submit', 'reconcile', 'retain-wallet'].map(action => ['/api/hook-lab/native-claim', action])]
 const HOOK_COOKIE = '__Host-hook-wallet-session=c2Vzc2lvbg; repoing_github=other'
 
 test('Hooks stay closed and every Hook flag false unless HOOKS_RECOVERY_ENABLED is on with valid bindings', async () => {
@@ -663,7 +666,7 @@ test('Hooks on: exactly the open-launch, native trading and claim routes, with t
   // Refused even with Hooks on: other origins, other bodies, unknown actions, oversized bodies, selected hooks, funding, the bridged stack.
   const refused = [post('/api/hook-lab/native-launch', { action: 'reserve' }, { origin: 'https://evil.example' }),
     post('/api/hook-lab/native-launch', { action: 'reserve' }, { 'content-type': 'text/plain' }),
-    post('/api/hook-lab/native-launch', 'not json'), post('/api/hook-lab/native-launch', { action: 'cosign' }),
+    post('/api/hook-lab/native-launch', 'not json'),
     post('/api/hook-lab/native-claim', { action: 'claim', pad: 'x'.repeat(9000) }),
     post('/api/hook-lab/launch-requests', { action: 'create', selectedHook: { program: mint, flags: 1 } }),
     post('/api/hook-lab/launch-requests', { action: 'create', hookPublication: { id: coinId } }),
@@ -682,3 +685,4 @@ test('Hooks on: exactly the open-launch, native trading and claim routes, with t
   assert.equal(page.headers.get('set-cookie'), null)
   assert.equal(f.runtime.calls.at(-1).request.headers.has('cookie'), false)
 })
+
