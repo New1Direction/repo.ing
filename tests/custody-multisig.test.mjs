@@ -119,3 +119,33 @@ test('incomplete block history, wrong linkage, missing metadata and missing spen
   }
   await assert.rejects(custody.collectCustodyGovernance({...observedFixture(),signature:'execution',maxBlocks:1}),/Custody/)
 })
+
+test('member change: exact Squads config actions, current-member approvals, refusal of unsafe sets', () => {
+  assert.equal(typeof custody.prepareCustodyMemberChange, 'function')
+  const [keep, old2, old3] = custody.CUSTODY_MEMBERS
+  const new2 = new PublicKey(Buffer.alloc(32, 21)).toBase58(), new3 = new PublicKey(Buffer.alloc(32, 22)).toBase58()
+  const plan = custody.prepareCustodyMemberChange({ add: [new2, new3], remove: [old2, old3], transactionIndex: 19n,
+    creator: keep, rentPayer: keep, approvers: [keep, old2], executor: keep })
+  const data = plan.createInstruction.data
+  // discriminator 8, actions u32 4, then AddMember(0, key, mask 7) x2 and RemoveMember(1, key) x2, then memo None.
+  assert.equal(data.readUInt32LE(8), 4)
+  assert.equal(data[12], 0); assert.equal(new PublicKey(data.subarray(13, 45)).toBase58(), new2); assert.equal(data[45], 7)
+  assert.equal(data[46], 0); assert.equal(new PublicKey(data.subarray(47, 79)).toBase58(), new3); assert.equal(data[79], 7)
+  assert.equal(data[80], 1); assert.equal(new PublicKey(data.subarray(81, 113)).toBase58(), old2)
+  assert.equal(data[113], 1); assert.equal(new PublicKey(data.subarray(114, 146)).toBase58(), old3)
+  assert.equal(data[146], 0); assert.equal(data.length, 147)
+  assert.deepEqual(plan.membersAfter, [keep, new2, new3])
+  assert.equal(plan.executeInstruction.keys.length, 6)
+  assert.equal(plan.executeInstruction.keys[4].pubkey.toBase58(), keep)
+  assert.equal(plan.executeInstruction.keys[4].isSigner, true)
+  const base = { add: [new2, new3], remove: [old2, old3], transactionIndex: 19n, creator: keep, rentPayer: keep, approvers: [keep, old2], executor: keep }
+  for (const bad of [
+    { ...base, add: [new2, new2] },                  // duplicate new member
+    { ...base, add: [new2, old2] },                  // adding a current member
+    { ...base, remove: [old2, custody.MULTISIG_VAULT] }, // removing a non-member
+    { ...base, remove: [old2, old3, keep], add: [new2, new3] }, // would leave fewer than 3 members
+    { ...base, approvers: [keep] },                  // below threshold
+    { ...base, approvers: [keep, new2] },            // approver not a current member
+    { ...base, transactionIndex: 0n },
+  ]) assert.throws(() => custody.prepareCustodyMemberChange(bad))
+})

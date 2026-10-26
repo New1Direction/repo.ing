@@ -56,6 +56,34 @@ export function prepareCustodyMultisig({ instructions, transactionIndex, creator
     beneficiaryPaid: false, signed: false, submitted: false }
 }
 
+// Squads v4 config transaction that swaps members (AddMember = 0, RemoveMember = 1; idl/squads_multisig_program.json in
+// @sqds/multisig 2.1.4). Threshold stays 2 and the member count stays 3. Approvers and executor are CURRENT members;
+// the execute pays any multisig realloc from rentPayer.
+export function prepareCustodyMemberChange({ add, remove, transactionIndex, creator, rentPayer, approvers, executor, members = CUSTODY_MEMBERS }) {
+  custodyAssert(typeof transactionIndex === 'bigint' && transactionIndex > 0n && transactionIndex <= 0xffffffffffffffffn)
+  const current = members.map(addr), added = add.map(addr), removed = remove.map(addr)
+  custodyAssert(added.length > 0 && new Set(added).size === added.length && added.every(k => !current.includes(k) && k !== MULTISIG_VAULT))
+  custodyAssert(new Set(removed).size === removed.length && removed.every(k => current.includes(k)))
+  const membersAfter = [...current.filter(k => !removed.includes(k)), ...added]
+  custodyAssert(membersAfter.length === 3)
+  custodyAssert([creator, executor, ...approvers].every(a => current.includes(addr(a))) && approvers.length >= 2 &&
+    new Set(approvers.map(addr)).size === approvers.length)
+  const [multisig] = pda(['multisig', 'multisig', pk(current[0]).toBuffer()])
+  custodyAssert(addr(multisig) === CUSTODY_MULTISIG)
+  const [transaction] = pda(['multisig', multisig.toBuffer(), 'transaction', u(transactionIndex, 8)])
+  const [proposal] = pda(['multisig', multisig.toBuffer(), 'transaction', u(transactionIndex, 8), 'proposal'])
+  const actions = [...added.map(k => Buffer.concat([u(0, 1), pk(k).toBuffer(), u(7, 1)])), ...removed.map(k => Buffer.concat([u(1, 1), pk(k).toBuffer()]))]
+  const createInstruction = ix('config_transaction_create', [meta(multisig, true), meta(transaction, true), meta(creator, false, true),
+    meta(rentPayer, true, true), meta(SystemProgram.programId)], Buffer.concat([u(actions.length, 4), ...actions, u(0, 1)]))
+  const proposalInstruction = ix('proposal_create', [meta(multisig), meta(proposal, true), meta(creator, false, true),
+    meta(rentPayer, true, true), meta(SystemProgram.programId)], Buffer.concat([u(transactionIndex, 8), u(0, 1)]))
+  return { transactionIndex, multisig: addr(multisig), transaction: addr(transaction), proposal: addr(proposal), membersBefore: current, membersAfter,
+    createInstruction, proposalInstruction,
+    approveInstructions: approvers.map(a => ix('proposal_approve', [meta(multisig), meta(a, true, true), meta(proposal, true)], u(0, 1))),
+    executeInstruction: ix('config_transaction_execute', [meta(multisig, true), meta(executor, false, true), meta(proposal, true),
+      meta(transaction), meta(rentPayer, true, true), meta(SystemProgram.programId)]) }
+}
+
 class Reader {
   constructor(data) { custodyAssert(Buffer.isBuffer(data)); this.b = data; this.o = 0 }
   take(n) { custodyAssert(Number.isSafeInteger(n) && n >= 0 && this.o + n <= this.b.length); const b = this.b.subarray(this.o, this.o += n); return b }
