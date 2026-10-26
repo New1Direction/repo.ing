@@ -40,6 +40,38 @@ const claimPage = /^\/claim\/[1-9]\d{0,15}$/
 const claimRoute = (url, method) => ['GET', 'HEAD'].includes(method)
   ? claimPage.test(url.pathname) || ['/api/github/start', '/api/github/callback'].includes(url.pathname)
   : method === 'POST' && ['/api/bind', '/api/claim/payout'].includes(url.pathname)
+// Hooks on our own stack (owner, 2026-10-26): self-serve open launches, native-SOL trading and creator claims. Off unless
+// HOOKS_RECOVERY_ENABLED is 'true' on the live stage with every binding below valid; off, none of them is read or forwarded.
+// Creator-chosen (selected) hooks, wallet funding, owner-approved launches and the retired bridged stack stay off whatever
+// the bindings say.
+const hookSwitchNames = ['HOOK_OPEN_LAUNCHES', 'HOOK_NATIVE_LAUNCH_ENABLED', 'HOOK_NATIVE_LAUNCHES_ENABLED', 'HOOK_WALLET_IDENTITY_ENABLED',
+  'HOOK_INCLUSIVE_TRADING_ENABLED', 'HOOK_NATIVE_TRADING_ENABLED', 'HOOK_TRADING_PUBLIC']
+const hookBindingNames = ['HOOKS_RECOVERY_ENABLED', 'HOOK_WALLET_IDENTITY_DATABASE_URL', 'HOOK_NATIVE_KEYRING_JSON', 'HOOK_NATIVE_ACTIVE_KEY_ID',
+  'HOOKLAB_PRODUCTION_RPC_PRIMARY_URL', 'HOOKLAB_PRODUCTION_RPC_SECONDARY_URL', 'HOOKLAB_PRODUCTION_BUNDLE_FILE', 'HOOKLAB_PRODUCTION_BUNDLE_SHA256',
+  'HOOKLAB_STACK_BUNDLE_FILE', 'HOOKLAB_STACK_BUNDLE_SHA256', 'HOOK_LAUNCH_ADMIN_ADDRESS', 'HOOK_STACK_ADMIN_ADDRESS', 'HOOKLAB_PRIORITY_MICROLAMPORTS',
+  ...hookSwitchNames]
+// Optional: the wallets that may trade before HOOK_TRADING_PUBLIC is 'true'.
+const hookOptionalNames = ['HOOK_TRADING_TESTER_WALLETS']
+const hooksEnabled = bindings => bindings.EXISTING_MARKET_TRADING_STAGE === 'live' && bindings.HOOKS_RECOVERY_ENABLED === 'true'
+const base58Key = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
+const hookPages = new Set(['/hooks/launch-review', '/hooks/mine', '/hooks/trade', '/hooks/blocks', '/hooks/new', '/hooks/wallet-identity'])
+const hookReadRoute = new RegExp(`^(/hooks/token/${mint}|/api/hook-lab/market/${mint}(/(candles|holders|trades))?|/api/hook-lab/wallet/${mint}` +
+  '|/api/hook-lab/coins/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(image|metadata))$')
+// The wallet-session routes: the only Hooks routes that receive the two wallet cookies, each with its POST actions and body
+// bound (the app's own limits). Only wallet-identity may set them. cosign (owner-approved launches), fund, withdraw and quote
+// (the bridged stack) and native-estimate (selected hooks) are never forwarded.
+const hookSessionRoutes = {
+  '/api/hook-lab/wallet-identity': { get: true, limit: 2048, actions: ['challenge', 'verify', 'logout'], setsCookie: true },
+  '/api/hook-lab/launch-requests': { get: true, limit: 540_000, actions: ['create', 'get', 'cancel'] },
+  '/api/hook-lab/native-launch': { limit: 65_536, actions: ['reserve', 'review', 'get', 'refresh-review', 'wallet-request', 'submit', 'reconcile', 'expire', 'retain-wallet'] },
+  '/api/hook-lab/native-claim': { limit: 8192, actions: ['status', 'get', 'claim'] },
+  '/api/hook-lab/inclusive-trade': { limit: 8192, actions: ['native-quote', 'get', 'refresh-review', 'wallet-request', 'submit', 'reconcile', 'expire', 'retain-wallet'] },
+}
+const hookCoinImage = '/api/hook-lab/coin-image'
+const HOOK_COOKIES = new Set(['__Host-hook-wallet-binding', '__Host-hook-wallet-session'])
+const hookRoute = (url, method) => ['GET', 'HEAD'].includes(method)
+  ? hookPages.has(url.pathname) || hookReadRoute.test(url.pathname) || hookSessionRoutes[url.pathname]?.get === true
+  : method === 'POST' && (Object.hasOwn(hookSessionRoutes, url.pathname) || url.pathname === hookCoinImage)
 const ordinaryLaunchEnabled = bindings => bindings.EXISTING_MARKET_TRADING_STAGE === 'live' && bindings.ORDINARY_LAUNCH_RECOVERY_ENABLED === 'true'
 const ordinaryRepoPath = path => {
   const id = /^\/(?:launch|api\/repo-images)\/([1-9]\d{0,15})$/.exec(path)?.[1]
@@ -51,8 +83,80 @@ async function sha256(value) {
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('')
 }
 
+// Hooks bindings are read only with the switch on, so Hooks-shaped values left in the environment never change the
+// container's identity (no restart) while Hooks are off.
 function snapshotBindings(env) {
-  return Object.fromEntries([...bindingNames, ...testBindingNames, ...launchBindingNames, ...accountingBindingNames, ...claimBindingNames, 'SOLANA_RPC_URL'].map(name => [name, env[name]]))
+  const hooks = env.HOOKS_RECOVERY_ENABLED === 'true' ? [...hookBindingNames, ...hookOptionalNames] : []
+  return Object.fromEntries([...bindingNames, ...testBindingNames, ...launchBindingNames, ...accountingBindingNames, ...claimBindingNames, ...hooks, 'SOLANA_RPC_URL'].map(name => [name, env[name]]))
+}
+
+// Why the Hooks bindings are not a set the reviewed bootstrap accepts (src/hooklab-production-bootstrap.mjs), or ''.
+function hookBindingProblem(bindings) {
+  if (!hooksEnabled(bindings)) return 'Hooks run only on the live stage'
+  if (hookBindingNames.some(name => typeof bindings[name] !== 'string' || !bindings[name].trim())) return 'a Hooks binding is missing'
+  if (hookSwitchNames.some(name => !['true', 'false'].includes(bindings[name]))) return 'a Hooks switch is not true or false'
+  if (bindings.HOOK_NATIVE_LAUNCH_ENABLED !== 'true' || bindings.HOOK_WALLET_IDENTITY_ENABLED !== 'true') return 'native launch and wallet identity must be on'
+  if (bindings.HOOK_OPEN_LAUNCHES === 'true' && bindings.HOOK_NATIVE_LAUNCHES_ENABLED !== 'true') return 'open launches are native SOL only'
+  if (bindings.HOOK_NATIVE_TRADING_ENABLED === 'true' && bindings.HOOK_INCLUSIVE_TRADING_ENABLED !== 'true') return 'native trading rides on the trade runtime'
+  let db
+  try { db = new URL(bindings.HOOK_WALLET_IDENTITY_DATABASE_URL) } catch { /* Refuse without logging credentials. */ }
+  if (!db || !['postgres:', 'postgresql:'].includes(db.protocol) || db.username !== 'repoing_hooks_site' || db.pathname !== '/repoing_operational' ||
+      db.searchParams.get('sslmode') !== 'verify-full' || db.searchParams.size !== 1) return 'Hooks database binding mismatched'
+  let ring = null
+  try { ring = JSON.parse(bindings.HOOK_NATIVE_KEYRING_JSON) } catch { /* refused below */ }
+  const keys = ring && typeof ring === 'object' && !Array.isArray(ring) ? Object.entries(ring) : []
+  if (!keys.length || keys.length > 4 || !keys.every(([id, key]) => /^[a-z0-9-]{1,32}$/.test(id) && typeof key === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(key)) ||
+      !Object.hasOwn(ring, bindings.HOOK_NATIVE_ACTIVE_KEY_ID)) return 'Hooks key ring mismatched'
+  const rpcs = ['HOOKLAB_PRODUCTION_RPC_PRIMARY_URL', 'HOOKLAB_PRODUCTION_RPC_SECONDARY_URL'].map(name => { try { return new URL(bindings[name]) } catch { return null } })
+  if (rpcs.some(u => !u || u.protocol !== 'https:' || u.username || u.password || u.hash) || rpcs[0].hostname === rpcs[1].hostname) return 'Hooks RPC bindings mismatched'
+  for (const name of ['HOOKLAB_PRODUCTION_BUNDLE', 'HOOKLAB_STACK_BUNDLE']) {
+    if (!/^\/app\/[A-Za-z0-9_-]+(\/[A-Za-z0-9_.-]+)*\.json$/.test(bindings[`${name}_FILE`]) || bindings[`${name}_FILE`].includes('..') ||
+        !/^[a-f0-9]{64}$/.test(bindings[`${name}_SHA256`])) return 'Hooks bundle bindings mismatched'
+  }
+  if (!base58Key.test(bindings.HOOK_LAUNCH_ADMIN_ADDRESS) || !base58Key.test(bindings.HOOK_STACK_ADMIN_ADDRESS)) return 'Hooks admin bindings mismatched'
+  if (!/^(0|[1-9][0-9]{0,6})$/.test(bindings.HOOKLAB_PRIORITY_MICROLAMPORTS)) return 'Hooks priority binding mismatched'
+  const testers = bindings.HOOK_TRADING_TESTER_WALLETS
+  if (testers !== undefined && (testers.split(',').length > 20 || !testers.split(',').every(wallet => base58Key.test(wallet.trim())))) return 'Hooks tester wallets mismatched'
+  return ''
+}
+
+// The container environment for Hooks: the validated bindings, the bootstrap switch and the fixed origin.
+const hookEnvironment = (bindings, appOrigin) => ({
+  ...Object.fromEntries([...hookBindingNames.slice(1), ...hookOptionalNames].filter(name => bindings[name] !== undefined).map(name => [name, bindings[name]])),
+  HOOK_PRODUCTION_BOOTSTRAP: 'true', HOOK_WALLET_IDENTITY_ORIGIN: appOrigin,
+})
+
+// A Hooks request: only the two Hooks wallet cookies, and only on the wallet-session routes; same-origin bodies within each
+// route's bound; listed actions only; nothing that names a creator-chosen hook. null refuses it.
+const SELECTED_KEYS = new Set(['selectedHook', 'hookPublication', 'quoteCut', 'authorShareBps'])
+function namesSelectedHook(value, depth = 0) {
+  if (depth > 6 || !value || typeof value !== 'object') return false
+  return Object.entries(value).some(([key, v]) => SELECTED_KEYS.has(key) || (key === 'policyKind' && v === 'selected-hook') || namesSelectedHook(v, depth + 1))
+}
+async function hookRequest(request, url) {
+  const session = hookSessionRoutes[url.pathname]
+  const headers = new Headers()
+  for (const name of ['accept', 'accept-language', 'content-type', 'origin', 'rsc', 'next-router-state-tree', 'next-router-prefetch', 'next-url',
+    'if-none-match', 'if-modified-since', 'cf-connecting-ip']) {
+    if (request.headers.has(name)) headers.set(name, request.headers.get(name))
+  }
+  const cookies = session ? (request.headers.get('cookie') ?? '').split(';').map(part => part.trim())
+    .filter(part => HOOK_COOKIES.has(part.split('=')[0])) : []
+  if (cookies.length) headers.set('cookie', cookies.join('; '))
+  if (request.method !== 'POST') return new Request(request.url, { method: request.method, headers, redirect: 'manual' })
+  const type = request.headers.get('content-type')?.split(';')[0].trim()
+  const image = url.pathname === hookCoinImage
+  if (request.headers.get('origin') !== url.origin || (image ? !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(type) : type !== 'application/json')) return null
+  const limit = image ? 2 * 1024 * 1024 : session.limit
+  if (Number(request.headers.get('content-length')) > limit) return null
+  const body = await request.arrayBuffer().catch(() => null)
+  if (!body || body.byteLength > limit) return null
+  if (!image) {
+    let payload
+    try { payload = JSON.parse(new TextDecoder().decode(body)) } catch { return null }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !session.actions.includes(payload.action) || namesSelectedHook(payload)) return null
+  }
+  return new Request(request.url, { method: 'POST', headers, body, redirect: 'manual' })
 }
 
 async function validateBindings(bindings) {
@@ -97,6 +201,7 @@ async function validateBindings(bindings) {
       throw Error('Claims bindings missing or mismatched')
     }
   }
+  if (bindings.HOOKS_RECOVERY_ENABLED === 'true' && hookBindingProblem(bindings)) throw Error('Hooks bindings missing or mismatched')
   if (bindings.EXISTING_MARKET_TRADING_STAGE === 'test' &&
     (bindings.EXISTING_MARKET_TEST_PLAN !== 'existing-markets-six-swaps-v1' ||
       !['false', 'true'].includes(bindings.EXISTING_MARKET_TEST_SUBMISSION) ||
@@ -253,9 +358,12 @@ export class PublicSite extends Container {
         HOOK_NATIVE_LAUNCHES_ENABLED: 'false',
         HOOK_INCLUSIVE_TRADING_ENABLED: 'false',
         HOOK_NATIVE_TRADING_ENABLED: 'false',
-        HOOK_WALLET_FUNDING_ENABLED: 'false',
         HOOK_WALLET_IDENTITY_ENABLED: 'false',
+        ...hooksEnabled(bindings) ? hookEnvironment(bindings, appOrigin) : {},
+        // Never on from here: creator-chosen hooks, wallet funding and owner-approved launches.
+        HOOK_WALLET_FUNDING_ENABLED: 'false',
         HOOK_SELECTED_HOOKS_ENABLED: 'false',
+        ...hooksEnabled(bindings) ? { HOOK_OWNER_APPROVED_LAUNCHES: 'false' } : {},
       }
       const dispatched = super.fetch(request)
       this.pendingDispatches.add(dispatched)
@@ -305,7 +413,9 @@ export default {
     if (url.hostname.endsWith('.workers.dev')) headers['X-Robots-Tag'] = 'noindex, nofollow, noarchive'
     const bindings = snapshotBindings({ ...env, TRADING_CUSTODY_RECOVERY_JSON: custodyManifest })
     const claim = claimsEnabled(bindings) && claimRoute(url, request.method) && !request.headers.has('upgrade')
+    const hook = !claim && hooksEnabled(bindings) && hookRoute(url, request.method) && !request.headers.has('upgrade')
     const boundary = claim ? (await claimRequest(request, url) ?? Response.json({ error: 'CLAIM_REQUEST_REFUSED' }, { status: 403 }))
+      : hook ? (await hookRequest(request, url) ?? Response.json({ error: 'HOOKS_REQUEST_REFUSED' }, { status: 403 }))
       : await tradeBoundary(request, bindings)
     if (boundary instanceof Response) {
       for (const [key, value] of Object.entries(headers)) boundary.headers.set(key, value)
@@ -346,7 +456,8 @@ export default {
       return Response.json({ error: 'TRADING_REVIEW_UNAVAILABLE', reason }, { status: 503, headers: { ...headers, 'Retry-After': '5' } })
     }
     const safe = new Response(response.body, response)
-    if (!claim) safe.headers.delete('set-cookie') // Only the claim routes may set the GitHub session cookies.
+    // Only the claim routes may set the GitHub session cookies, and only wallet-identity the Hooks wallet cookies.
+    if (!claim && !(hook && hookSessionRoutes[url.pathname]?.setsCookie)) safe.headers.delete('set-cookie')
     for (const [key, value] of Object.entries(headers)) safe.headers.set(key, value)
     // Only build assets and explicit public illustrations are cacheable. Pages,
     // APIs (including token images), errors and financial responses stay no-store.

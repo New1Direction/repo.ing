@@ -575,3 +575,110 @@ test('claim routes carry cookies only with valid claims bindings; every other ro
   f.env.CLAIMS_DATABASE_URL = 'postgres://repoing_owner:x@db.example/repoing_operational?sslmode=verify-full'
   assert.equal((await send('GET', '/claim/1278009399')).status, 503)
 })
+
+// Hooks on our own stack (owner, 2026-10-26): open launches, native-SOL trading and creator claims, behind HOOKS_RECOVERY_ENABLED.
+const hookBindings = () => ({
+  HOOKS_RECOVERY_ENABLED: 'true',
+  HOOK_WALLET_IDENTITY_DATABASE_URL: 'postgres://repoing_hooks_site:x@db.example/repoing_operational?sslmode=verify-full',
+  HOOK_NATIVE_KEYRING_JSON: JSON.stringify({ k1: Buffer.alloc(32, 7).toString('base64') }), HOOK_NATIVE_ACTIVE_KEY_ID: 'k1',
+  HOOKLAB_PRODUCTION_RPC_PRIMARY_URL: 'https://mainnet.helius-rpc.com/?api-key=k', HOOKLAB_PRODUCTION_RPC_SECONDARY_URL: 'https://solana-rpc.publicnode.com',
+  HOOKLAB_PRODUCTION_BUNDLE_FILE: '/app/hooklab/production-bundle.json', HOOKLAB_PRODUCTION_BUNDLE_SHA256: 'a'.repeat(64),
+  HOOKLAB_STACK_BUNDLE_FILE: '/app/hooklab/stack-bundle.json', HOOKLAB_STACK_BUNDLE_SHA256: 'b'.repeat(64),
+  HOOK_LAUNCH_ADMIN_ADDRESS: 'DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5', HOOK_STACK_ADMIN_ADDRESS: 'DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5',
+  HOOKLAB_PRIORITY_MICROLAMPORTS: '0', HOOK_OPEN_LAUNCHES: 'true', HOOK_NATIVE_LAUNCH_ENABLED: 'true', HOOK_NATIVE_LAUNCHES_ENABLED: 'true',
+  HOOK_WALLET_IDENTITY_ENABLED: 'true', HOOK_INCLUSIVE_TRADING_ENABLED: 'true', HOOK_NATIVE_TRADING_ENABLED: 'true', HOOK_TRADING_PUBLIC: 'false',
+})
+const coinId = '0f8e3a2c-1b4d-4e5f-8a9b-0c1d2e3f4a5b'
+const hookReads = ['/hooks/launch-review', '/hooks/mine', '/hooks/trade', '/hooks/blocks', '/hooks/new', '/hooks/wallet-identity', `/hooks/token/${mint}`,
+  `/api/hook-lab/market/${mint}`, `/api/hook-lab/market/${mint}/candles`, `/api/hook-lab/market/${mint}/holders`, `/api/hook-lab/market/${mint}/trades`,
+  `/api/hook-lab/wallet/${mint}`, `/api/hook-lab/coins/${coinId}/image`, `/api/hook-lab/coins/${coinId}/metadata`]
+const hookPosts = [['/api/hook-lab/wallet-identity', 'challenge'], ['/api/hook-lab/launch-requests', 'create'], ['/api/hook-lab/native-launch', 'reserve'],
+  ['/api/hook-lab/native-claim', 'claim'], ['/api/hook-lab/inclusive-trade', 'native-quote']]
+const HOOK_COOKIE = '__Host-hook-wallet-session=c2Vzc2lvbg; repoing_github=other'
+
+test('Hooks stay closed and every Hook flag false unless HOOKS_RECOVERY_ENABLED is on with valid bindings', async () => {
+  const f = await fixture()
+  f.env.EXISTING_MARKET_TRADING_STAGE = 'live'
+  const fingerprint = async () => { await f.request(); return [...f.storage.values()][0] }
+  const before = await fingerprint()
+  // Hooks-shaped values without the switch change nothing: not forwarded, not fingerprinted, routes closed.
+  Object.assign(f.env, (({ HOOKS_RECOVERY_ENABLED, ...rest }) => rest)(hookBindings()))
+  assert.equal(await fingerprint(), before, 'no restart while Hooks are off')
+  for (const path of hookReads) assert.equal((await f.request(path)).status, 403, path)
+  for (const [path, action] of hookPosts) assert.equal((await f.request(path, { method: 'POST', headers: { origin: 'https://repo.ing', 'content-type': 'application/json' }, body: JSON.stringify({ action }) })).status, 403, path)
+  const body = await (await f.request()).json()
+  for (const key of hookFlags) assert.equal(body[key], 'false')
+  assert.equal(body.HOOK_WALLET_IDENTITY_DATABASE_URL, undefined)
+  assert.equal(body.HOOK_NATIVE_KEYRING_JSON, undefined)
+  // On outside the live stage, or with any binding wrong: the whole site fails closed.
+  f.env.HOOKS_RECOVERY_ENABLED = 'true'; f.env.EXISTING_MARKET_TRADING_STAGE = 'review'
+  assert.equal((await f.request('/explore')).status, 503)
+  f.env.EXISTING_MARKET_TRADING_STAGE = 'live'
+  const wrong = { HOOK_WALLET_IDENTITY_DATABASE_URL: 'postgres://repoing_owner:x@db.example/repoing_operational?sslmode=verify-full',
+    HOOK_NATIVE_KEYRING_JSON: '{"k1":"c2hvcnQ="}', HOOK_NATIVE_ACTIVE_KEY_ID: 'k2', HOOKLAB_PRODUCTION_RPC_SECONDARY_URL: 'http://solana-rpc.publicnode.com',
+    HOOKLAB_STACK_BUNDLE_FILE: '/app/../etc/passwd', HOOKLAB_STACK_BUNDLE_SHA256: 'xyz', HOOK_STACK_ADMIN_ADDRESS: 'not-base58!',
+    HOOKLAB_PRIORITY_MICROLAMPORTS: '-1', HOOK_TRADING_PUBLIC: 'yes', HOOK_OPEN_LAUNCHES: 'true' }
+  for (const [name, value] of Object.entries(wrong)) {
+    Object.assign(f.env, hookBindings(), { [name]: value }, name === 'HOOK_OPEN_LAUNCHES' ? { HOOK_NATIVE_LAUNCHES_ENABLED: 'false' } : {})
+    assert.equal((await f.request('/explore')).status, 503, `${name}=${value}`)
+  }
+  for (const name of Object.keys(hookBindings())) {
+    Object.assign(f.env, hookBindings()); delete f.env[name]
+    if (name !== 'HOOKS_RECOVERY_ENABLED') assert.equal((await f.request('/explore')).status, 503, `missing ${name}`)
+  }
+})
+
+test('Hooks on: exactly the open-launch, native trading and claim routes, with their environment; wallet cookies only where needed', async () => {
+  const f = await fixture()
+  Object.assign(f.env, { EXISTING_MARKET_TRADING_STAGE: 'live' }, hookBindings())
+  for (const path of hookReads) {
+    const response = await f.request(path, { headers: { cookie: HOOK_COOKIE } })
+    assert.equal(response.status, 200, path)
+    assert.equal(response.headers.get('set-cookie'), null, `${path} sets no cookie`)
+    assert.equal(f.runtime.calls.at(-1).request.headers.has('cookie'), false, `${path} receives no cookie`)
+  }
+  const env = f.runtime.calls.at(-1).env
+  for (const [name, value] of Object.entries(hookBindings())) if (name !== 'HOOKS_RECOVERY_ENABLED') assert.equal(env[name], value, name)
+  assert.deepEqual([env.HOOK_PRODUCTION_BOOTSTRAP, env.HOOK_WALLET_IDENTITY_ORIGIN], ['true', 'https://repo.ing'])
+  assert.deepEqual([env.HOOK_SELECTED_HOOKS_ENABLED, env.HOOK_WALLET_FUNDING_ENABLED, env.HOOK_OWNER_APPROVED_LAUNCHES], ['false', 'false', 'false'],
+    'creator-chosen hooks, wallet funding and owner-approved launches stay off')
+  const post = (path, payload, headers = {}) => f.request(path, { method: 'POST', headers: { origin: 'https://repo.ing', 'content-type': 'application/json',
+    cookie: HOOK_COOKIE, ...headers }, body: typeof payload === 'string' ? payload : JSON.stringify(payload) })
+  for (const [path, action] of hookPosts) {
+    const response = await post(path, { action })
+    assert.equal(response.status, 200, path)
+    const call = f.runtime.calls.at(-1)
+    assert.equal(call.request.headers.get('cookie'), '__Host-hook-wallet-session=c2Vzc2lvbg', `${path} receives only the Hooks wallet cookies`)
+    assert.equal(call.body, JSON.stringify({ action }))
+    assert.equal(response.headers.get('set-cookie'), path === '/api/hook-lab/wallet-identity' ? 'unsafe=session' : null, `${path} Set-Cookie`)
+  }
+  for (const path of ['/api/hook-lab/wallet-identity', '/api/hook-lab/launch-requests']) {
+    await f.request(path, { headers: { cookie: HOOK_COOKIE } })
+    assert.equal(f.runtime.calls.at(-1).request.headers.get('cookie'), '__Host-hook-wallet-session=c2Vzc2lvbg', `GET ${path} carries the session`)
+  }
+  const image = await f.request('/api/hook-lab/coin-image', { method: 'POST', headers: { origin: 'https://repo.ing', 'content-type': 'image/png' }, body: new Uint8Array(1000) })
+  assert.equal(image.status, 200)
+  assert.equal(f.runtime.calls.at(-1).body.length, 1000)
+  const calls = f.runtime.calls.length
+  // Refused even with Hooks on: other origins, other bodies, unknown actions, oversized bodies, selected hooks, funding, the bridged stack.
+  const refused = [post('/api/hook-lab/native-launch', { action: 'reserve' }, { origin: 'https://evil.example' }),
+    post('/api/hook-lab/native-launch', { action: 'reserve' }, { 'content-type': 'text/plain' }),
+    post('/api/hook-lab/native-launch', 'not json'), post('/api/hook-lab/native-launch', { action: 'cosign' }),
+    post('/api/hook-lab/native-claim', { action: 'claim', pad: 'x'.repeat(9000) }),
+    post('/api/hook-lab/launch-requests', { action: 'create', selectedHook: { program: mint, flags: 1 } }),
+    post('/api/hook-lab/launch-requests', { action: 'create', hookPublication: { id: coinId } }),
+    post('/api/hook-lab/inclusive-trade', { action: 'native-quote', request: { policyKind: 'selected-hook' } }),
+    ...['native-estimate', 'fund', 'withdraw', 'quote'].map(action => post('/api/hook-lab/inclusive-trade', { action })),
+    f.request('/api/hook-lab/coin-image', { method: 'POST', headers: { origin: 'https://repo.ing', 'content-type': 'image/png' }, body: new Uint8Array(2 * 1024 * 1024 + 1) }),
+    f.request('/api/hook-lab/coin-image', { method: 'POST', headers: { origin: 'https://repo.ing', 'content-type': 'image/svg+xml' }, body: '<svg/>' }),
+    ...['/api/hook-lab/owner-approvals', '/api/hook-lab/hook-catalog', '/api/hook-lab/production', '/api/hook-lab/local-operations', '/api/hook-lab/coin-moderation',
+      '/api/hook-lab/new-mint-preparation', '/api/hook-lab/wallet-launch-assessment', '/api/hook-lab'].map(path => post(path, { action: 'get' })),
+    ...['/hooks/custom', '/hooks/publish', '/h/AAAAAAAAAAAAAAAAAAAAAA', '/api/hook-lab/hook-catalog', '/api/hook-lab/production/receipts',
+      `/api/hook-lab/coins/${coinId}/other`, `/api/hook-lab/market/${mint}/other`].map(path => f.request(path))]
+  for (const response of await Promise.all(refused)) assert.equal(response.status, 403)
+  assert.equal(f.runtime.calls.length, calls, 'nothing refused reached the container')
+  // Ordinary pages still get no cookie and set none.
+  const page = await f.request('/explore', { headers: { cookie: HOOK_COOKIE } })
+  assert.equal(page.headers.get('set-cookie'), null)
+  assert.equal(f.runtime.calls.at(-1).request.headers.has('cookie'), false)
+})
