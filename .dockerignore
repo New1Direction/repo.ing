@@ -17,6 +17,8 @@
 !public/**
 !config/
 !config/existing-market-custody.json
+!config/hooklab-production-bundle-2.json
+!config/hooklab-stack-bundle.json
 !drizzle/
 !drizzle/meta/
 !drizzle/meta/_journal.json

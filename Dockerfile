@@ -19,6 +19,8 @@ LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
 COPY --from=build --chown=node:node /app/public ./public
+# Hooks: the public operator bundles (no keys) the production bootstrap reads, approved by their sha256 bindings.
+COPY --from=build --chown=node:node /app/config/hooklab-production-bundle-2.json /app/config/hooklab-stack-bundle.json ./config/
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
