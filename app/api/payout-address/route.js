@@ -1,5 +1,5 @@
 import { createPayoutAddresses, PayoutAddressError } from '../../../src/payout-address.mjs'
-import { createBuilderReminders, createReminderSender } from '../../../src/builder-reminders.mjs'
+import { notifyPayoutAddressChange as notify } from '../../lib/payout-notice.mjs'
 import { chain, database } from '../../lib/server.mjs'
 import { backerLabels } from '../../lib/backers.mjs'
 import { githubSessionCookie, readGithubSession, assertSameOrigin } from '../../lib/auth.mjs'
@@ -20,19 +20,6 @@ const SAFE = error => error instanceof PayoutAddressError || DENIED.test(error?.
 // repo.ing's own wallets as the backers list labels them: team, buyback, fee wallet, launch signer, the configured
 // creator and partner signers, and the tip wallet. Each is read on its own, so one unreadable key never drops the others.
 const reserved = () => [...backerLabels().keys()]
-
-// Opted-in builders hear about the change at once. Started after the request is saved and not awaited (the web service
-// is a long-running Node server): email never delays, blocks or undoes the change.
-function notify(request, notice) {
-  const origin = publicOrigin(request.url)
-  void (async () => {
-    try {
-      const reminders = createBuilderReminders({ pool: database(), send: createReminderSender(), secret: process.env.BUILDER_REMINDER_SECRET, origin })
-      const result = await reminders.notifyPayoutAddressChange(notice)
-      if (result.failed) console.error('payout address notice failed', { accepted: result.accepted, failed: result.failed })
-    } catch (error) { console.error('payout address notice failed', { error: error?.name ?? 'error' }) }
-  })()
-}
 
 export async function POST(request) {
   try {

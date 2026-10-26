@@ -1,4 +1,4 @@
-import { createWalletBinding } from '../../../../src/wallet-binding.mjs'
+import { BindingReplacementHeld, createWalletBinding } from '../../../../src/wallet-binding.mjs'
 import { createPayoutAddresses, PayoutAddressError } from '../../../../src/payout-address.mjs'
 import { hfMarketsEnabled } from '../../../../src/hf-launch.mjs'
 import { takeQuota } from '../../../../src/request-quota.mjs'
@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic'
 // A model market's payout wallet, behind a Hugging Face session for that market: an exact same-origin POST, a per-user
 // rate limit, and a fresh check of the model's current owner (src/hf-verification.mjs) before every change.
 //   challenge { wallet }                    → the model binding message to sign (its own domain, never GitHub's)
-//   bind { wallet, nonce, signature }       → binds at once; replaces a waiting pasted address
+//   bind { wallet, nonce, signature }       → a first wallet binds at once; replacing another waits the 24-hour hold
 //   paste { address, confirm }              → a pasted address, active after the 24-hour hold (src/payout-address.mjs)
 //   cancel { requestId }                    → cancels a waiting pasted address
 //   repoint { url }                         → "Model moved?": the registry follows the model only to a URL with the same _id
@@ -66,9 +66,17 @@ export async function POST(request) {
       return reply({ nonce: challenge.nonce, message: challenge.message, expiresAt: challenge.expiresAt })
     }
     if (typeof body.signature !== 'string' || body.signature.length > 200) throw new BindError('Invalid Solana wallet signature.')
-    const bound = await binder.bindWallet({ githubRepoId: marketId, wallet: body.wallet, nonce: body.nonce,
-      signature: Buffer.from(body.signature, 'base64'), authority: verified })
-    return reply({ wallet: bound.wallet, boundAt: bound.boundAt })
+    try {
+      const bound = await binder.bindWallet({ githubRepoId: marketId, wallet: body.wallet, nonce: body.nonce,
+        signature: Buffer.from(body.signature, 'base64'), authority: verified })
+      return reply({ wallet: bound.wallet, boundAt: bound.boundAt })
+    } catch (error) {
+      if (!(error instanceof BindingReplacementHeld)) throw error
+      // Replacing a different wallet waits the 24-hour hold, as a pasted address does; an owner may cancel it.
+      const service = createPayoutAddresses({ pool, connection: chain(), reserved: [...backerLabels().keys()] })
+      const result = await service.request({ githubRepoId: marketId, address: error.wallet, confirm: error.wallet.slice(-4), verifyAuthority: authority.verifyAuthority })
+      return reply({ pending: { id: result.id, wallet: result.wallet, requestedAt: result.requestedAt, activeAt: result.activeAt }, previousWallet: result.previousWallet })
+    }
   } catch (error) {
     if (error instanceof BindError) return reply({ error: error.message }, error.status)
     if (BINDING_ERRORS.test(error?.message ?? '')) return reply({ error: error.message }, 400)

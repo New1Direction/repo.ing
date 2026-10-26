@@ -22,6 +22,21 @@ const positiveId = value => {
   return id
 }
 
+// A signature binding sets a repository's FIRST payout wallet at once. Replacing a different active wallet takes the
+// 24-hour hold with a maintainer notice (owner rule, 2026-10-26): the binding refuses with BindingReplacementHeld after
+// the signature checks out, and the route files a payout address request instead (src/payout-address.mjs).
+export class BindingReplacementHeld extends Error {
+  constructor(repoId, wallet, previousWallet) {
+    super('Changing the payout wallet takes effect 24 hours after the request')
+    this.name = 'BindingReplacementHeld'; this.code = 'REPLACEMENT_HELD'
+    this.repoId = repoId.toString(); this.wallet = wallet; this.previousWallet = previousWallet
+  }
+}
+async function assertFirstBinding(tx, repoId, wallet) {
+  const { rows: [bound] } = await tx.execute(sql`select wallet from repo_beneficiaries where github_repo_id = ${repoId.toString()} for update`)
+  if (bound && bound.wallet !== wallet) throw new BindingReplacementHeld(repoId, wallet, bound.wallet)
+}
+
 // A wallet-signature binding takes effect at once (as before) and replaces a pasted address still waiting out its hold
 // (src/payout-address.mjs), so that address can never activate over the newer binding. Recorded in the audit log, with
 // the GitHub user or, on a model market, the Hugging Face user who signed.
@@ -139,6 +154,7 @@ export function createWalletBinding({ pool }) {
       const message = modelBindingMessage({ ...challenge, hfId: auth.hfId })
       const publicKey = createPublicKey({ key: Buffer.concat([ED25519_SPKI_PREFIX, walletKey.toBuffer()]), format: 'der', type: 'spki' })
       if (!verifySignature(null, Buffer.from(message, 'utf8'), publicKey, signatureBytes)) throw new Error('Invalid Solana wallet signature')
+      await assertFirstBinding(tx, repoId, walletAddress)
       const [consumed] = await tx.update(walletBindingChallenges).set({ consumedAt: now }).where(and(
         eq(walletBindingChallenges.nonce, nonce), isNull(walletBindingChallenges.consumedAt), gt(walletBindingChallenges.expiresAt, now),
       )).returning()
@@ -193,6 +209,7 @@ export function createWalletBinding({ pool }) {
       if (!verifySignature(null, Buffer.from(message, 'utf8'), publicKey, signatureBytes)) {
         throw new Error('Invalid Solana wallet signature')
       }
+      await assertFirstBinding(tx, repoId, walletAddress)
       const [consumed] = await tx.update(walletBindingChallenges).set({ consumedAt: now }).where(and(
         eq(walletBindingChallenges.nonce, nonce), isNull(walletBindingChallenges.consumedAt),
         gt(walletBindingChallenges.expiresAt, now),

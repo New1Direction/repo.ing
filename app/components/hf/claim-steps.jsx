@@ -161,6 +161,12 @@ export function ModelClaimSteps({ summary, repoId, signedIn, authority, benefici
       const signature = walletSignatureBytes(await provider().signMessage(new TextEncoder().encode(challenge.message)))
       setStage('Verifying and saving your payout wallet…')
       const result = await post({ action: 'bind', marketId: repoId, wallet: address, nonce: challenge.nonce, signature: btoa(String.fromCharCode(...signature)) })
+      if (result.pending) {
+        // Replacing a different payout wallet waits the 24-hour hold; the current one keeps receiving claims until then.
+        setPasteOpen(false); setConfirmChange(false)
+        setStage(`New payout wallet saved. It takes effect ${formatUtcDateTime(result.pending.activeAt)} unless it is cancelled.`)
+        router.refresh(); return
+      }
       setAwaitingReview(true); setBound(result.wallet); setBoundMethod('signature'); setPasteOpen(false); setConfirmChange(false)
       setStage('Payout wallet set. Refreshing your claim review…'); router.refresh()
     } catch (cause) { setError(cause.message || 'Could not set the payout wallet'); setStage('') }

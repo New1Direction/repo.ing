@@ -82,3 +82,15 @@ test('unverified GitHub user cannot request or complete a binding', async () => 
   await assert.rejects(binder.bindWallet({ githubRepoId: repoId, githubUserId: 999n, wallet: signer.address,
     nonce: challenge.nonce, signature: signer.signMessage(challenge.message) }), /Recent GitHub admin verification required/)
 })
+
+test('a signature for a different wallet never replaces the bound one at once; the same wallet re-binds', async () => {
+  const { BindingReplacementHeld } = await import('../src/wallet-binding.mjs')
+  const [bound] = await db.select().from(repoBeneficiaries).where(eq(repoBeneficiaries.githubRepoId, repoId))
+  const next = wallet()
+  const challenge = await binder.requestChallenge({ githubRepoId: repoId, githubUserId: userId, wallet: next.address })
+  await assert.rejects(binder.bindWallet({ githubRepoId: repoId, githubUserId: userId, wallet: next.address, nonce: challenge.nonce,
+    signature: next.signMessage(challenge.message) }), error => error instanceof BindingReplacementHeld && error.previousWallet === bound.wallet)
+  const [after] = await db.select().from(repoBeneficiaries).where(eq(repoBeneficiaries.githubRepoId, repoId))
+  assert.equal(after.wallet, bound.wallet, 'the bound wallet is unchanged')
+  assert.equal((await db.select().from(walletBindingChallenges).where(eq(walletBindingChallenges.nonce, challenge.nonce)))[0].consumedAt, null)
+})

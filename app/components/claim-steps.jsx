@@ -101,6 +101,12 @@ export function ClaimSteps({ payoutClaim = null, summary, reinvestEnabled = fals
         body: JSON.stringify({ action: 'bind', githubRepoId: repoId, wallet: address, nonce: challenge.nonce, signature: signatureBase64 }) })
       const result = await response.json()
       if (!response.ok) throw new Error(result.error)
+      if (result.pending) {
+        // Replacing a different payout wallet waits the 24-hour hold; the current one keeps receiving claims until then.
+        setConfirmChange(false); setPasteOpen(false)
+        setStage(`New payout wallet saved. It takes effect ${formatUtcDateTime(result.pending.activeAt)}; the maintainer is emailed, and an admin can cancel it.`)
+        router.refresh(); return
+      }
       setAwaitingReview(true); setBound(result.wallet); setBoundMethod('signature'); setConfirmChange(false); setPasteOpen(false); setExpanded(null)
       setStage('Payout wallet set. Refreshing your claim review…'); router.refresh()
     } catch (cause) { setError(cause.message || 'Could not set payout wallet'); setStage('') }

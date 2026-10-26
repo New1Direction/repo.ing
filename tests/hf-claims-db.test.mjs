@@ -13,7 +13,7 @@ import { deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { createHfClient } from '../src/hf-api.mjs'
 import { createHfOAuth, createHfVerifier } from '../src/hf-verification.mjs'
 import { HF_OPT_OUT_ERROR, hfLaunchGuard, registerModel } from '../src/hf-launch.mjs'
-import { createWalletBinding, modelBeneficiary } from '../src/wallet-binding.mjs'
+import { BindingReplacementHeld, createWalletBinding, modelBeneficiary } from '../src/wallet-binding.mjs'
 import { createClaim } from '../src/claim.mjs'
 import { activateDuePayoutAddresses, createPayoutAddresses } from '../src/payout-address.mjs'
 import { activeDecision, createMaintainerDecisions } from '../src/maintainer-opt-outs.mjs'
@@ -109,6 +109,16 @@ function transfer(server) {
 const verifierFor = (pool, server) => createHfVerifier({ pool, hf: createHfClient({ fetchImpl: server.fetchImpl, sleep: async () => {} }),
   oauth: createHfOAuth({ ...OAUTH, fetchImpl: server.fetchImpl }) })
 const check = (verifier, marketId, token, subject, extra = {}) => verifier.verifyMarketAuthority({ marketId, accessToken: token, expectedSubject: subject, ...extra })
+// A request's hold, passed: both timestamps move back with the guard triggers off (the hold check still holds).
+async function backdateRequest(pool, id) {
+  const client = await pool.connect()
+  try {
+    await client.query('begin'); await client.query('set local session_replication_role = replica')
+    await client.query(`update payout_address_requests set requested_at = requested_at - interval '25 hours', active_at = active_at - interval '25 hours' where id = $1`, [id])
+    await client.query('commit')
+  } finally { client.release() }
+}
+
 async function bindAs(pool, verifier, marketId, token, subject, signer = wallet()) {
   const authority = await check(verifier, marketId, token, subject)
   const binder = createWalletBinding({ pool })
@@ -291,7 +301,13 @@ test('real PostgreSQL: a model claim pays only a binding made by the current own
       { s: NEW_OWNER, o: NEW_OWNER })
     await assert.rejects(addresses.request({ githubRepoId: marketId, address: first.wallet, confirm: last4(first.wallet), verifyAuthority: newOwner }), code('ALREADY_PENDING'))
 
-    const rebound = await bindAs(pool, verifier, marketId, TOKENS.newOwner, NEW_OWNER)
+    // Replacing the previous owner's wallet by signature waits the 24-hour hold too (owner rule, 2026-10-26).
+    await assert.rejects(bindAs(pool, verifier, marketId, TOKENS.newOwner, NEW_OWNER), error => error instanceof BindingReplacementHeld)
+    // The new owner's request passes its hold: the binding names the new owner, and only then does a claim proceed.
+    await backdateRequest(pool, repasted.id)
+    await activateDuePayoutAddresses(pool, { repoIds: [marketId] })
+    const { rows: [rebound] } = await pool.query(`select authority_subject as "authoritySubject", authority_owner_subject as "authorityOwnerSubject"
+      from repo_beneficiaries where github_repo_id = $1`, [marketId])
     assert.deepEqual([rebound.authoritySubject, rebound.authorityOwnerSubject], [NEW_OWNER, NEW_OWNER])
     await assert.rejects(claimAs(TOKENS.newOwner, NEW_OWNER).claim(request), new RegExp(sentinel))
     assert.equal((await pool.query('select count(*)::int as n from repo_claims')).rows[0].n, 0, 'no payout intent was created in any case')
@@ -338,11 +354,11 @@ test('real PostgreSQL: a pasted model address records its Hugging Face actor, wa
     const { rows: [binding] } = await pool.query(`select wallet, method, github_user_id, authority_source, authority_subject, authority_owner_subject
       from repo_beneficiaries where github_repo_id = $1`, [marketId])
     assert.deepEqual(binding, { wallet: first, method: 'pasted', github_user_id: null, authority_source: 'huggingface', authority_subject: OWNER, authority_owner_subject: OWNER })
-    // A wallet signature by the current owner replaces a waiting pasted address, recorded under the Hugging Face user.
+    // With a wallet already bound, a signature for a different wallet is held like a paste: the waiting request stays as it is.
     const waiting = await service.request({ githubRepoId: marketId, address: second, confirm: last4(second), verifyAuthority: as(TOKENS.owner, OWNER) })
-    await bindAs(pool, verifier, marketId, TOKENS.owner, OWNER)
+    await assert.rejects(bindAs(pool, verifier, marketId, TOKENS.owner, OWNER), error => error instanceof BindingReplacementHeld)
     assert.deepEqual((await pool.query('select status, resolved_by_subject as "by" from payout_address_requests where id = $1', [waiting.id])).rows[0],
-      { status: 'superseded', by: OWNER })
+      { status: 'pending', by: null })
   } finally { await server.close(); await pool.end() }
 })
 
