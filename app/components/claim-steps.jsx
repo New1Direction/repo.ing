@@ -19,8 +19,9 @@ import { ClaimChecklist, WalletExplainer } from './claim-checklist'
 import { claimPageStep } from '../lib/claim-checklist.mjs'
 import { PasteAddressForm, PayoutDestination, pasteSavedMessage } from './payout-address'
 import { bindingLabel, formatUtcDateTime } from '../../src/payout-address-policy.mjs'
+import { PayoutClaim } from './payout-claim'
 
-export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClaim = false, creditsEnabled = false, creditsAfterClaim = false, creditsNetwork = 'mainnet', creditsKeysLink = false, graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, beneficiaryMethod = 'signature', beneficiaryBoundAt = null, pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review, source = null, notAdmin = null }) {
+export function ClaimSteps({ payoutClaim = null, summary, reinvestEnabled = false, reinvestAfterClaim = false, creditsEnabled = false, creditsAfterClaim = false, creditsNetwork = 'mainnet', creditsKeysLink = false, graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, beneficiaryMethod = 'signature', beneficiaryBoundAt = null, pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review, source = null, notAdmin = null }) {
   const router = useRouter()
   const { wallet, connect, changeWallet, provider } = useWallet()
   const [bound, setBound] = useState(beneficiaryWallet)
@@ -33,6 +34,7 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
   const [awaitingReview, setAwaitingReview] = useState(false)
   const [error, setError] = useState(errorCode === 'payout-unavailable' ? 'Payouts are paused while the network-cost wallet is replenished. Your fees remain in the pool.' :
     errorCode === 'payout-address-pending' ? 'Your pasted payout address is still in its 24-hour hold. Claims open when it becomes active.' :
+    errorCode === 'payouts-off' ? 'Builder payouts are paused. Your fees keep accruing and wait for you.' :
     errorCode === 'review-changed' ? 'The amount or payout details changed. Review the updated fees below, then claim again.' :
     errorCode === 'claim-failed' ? 'The payout could not be confirmed. Check the receipt and available balance before trying again.' :
     VERIFICATION_ERRORS.includes(errorCode) ? '' :
@@ -185,7 +187,8 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
     </div>
     <div className={`claim-step last ${currentStep === 3 ? 'current' : ''}`}>
       <div className="step-number">3</div><div className="step-content">{stepHeading(3, 'Review and claim', false, 'Review your fees and payout address before claiming.')}
-        {currentStep === 3 && <div className="claim-review"><strong className="claim-review-amount">{claimAmount}</strong>{usdEstimate && <span className="muted">≈ {usdEstimate}</span>}
+        {currentStep === 3 && payoutClaim && <PayoutClaim repoId={repoId} payoutWallet={bound} {...payoutClaim}/>}
+        {currentStep === 3 && !payoutClaim && <div className="claim-review"><strong className="claim-review-amount">{claimAmount}</strong>{usdEstimate && <span className="muted">≈ {usdEstimate}</span>}
           <div className="claim-wallet-details"><span>Paid to</span><CopyAddress address={bound} label="payout wallet"/><small>{bindingLabel({ wallet: bound, method: boundMethod, boundAt: beneficiaryBoundAt })}</small></div>
           <p>SOL is sent only to this payout wallet. GitHub admin access and pool fees are checked again before payout.{graduated && ' Graduated pool payouts include all SOL fees accrued before confirmation.'}</p>
           {pendingAddress && <p className="claim-next">A pasted address replaces this one from {formatUtcDateTime(pendingAddress.activeAt)} unless an admin cancels it. Claims before then still pay the address above.</p>}

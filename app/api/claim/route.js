@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClaim } from '../../../src/claim.mjs'
+import { payoutControls } from '../../../src/builder-payouts.mjs'
 import { claimProgressStream } from '../../../src/claim-progress.mjs'
 import { database, chain, configAddress, creatorSigner } from '../../lib/server.mjs'
 import { githubSessionCookie, readGithubSession, readClaimReview, assertSameOrigin } from '../../lib/auth.mjs'
@@ -40,6 +41,11 @@ export async function POST(request) {
       { status: 403, headers: { 'Cache-Control': 'no-store' } })
   }
   const back = new URL(`/claim/${session.repoId}`, origin)
+  // The builder payouts switch (claim_controls) stops every claim path, this one included.
+  if (!(await payoutControls(database())).enabled) {
+    back.searchParams.set('error', 'payouts-off')
+    return NextResponse.redirect(back, 303)
+  }
   const stream = claimProgressStream(async report => {
     try {
       const creator = creatorSigner(), config = configAddress()

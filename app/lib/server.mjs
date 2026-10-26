@@ -60,6 +60,20 @@ export function creatorSigner() {
   return Keypair.fromSecretKey(bytes)
 }
 
+// The capped payout wallet for builder claims (src/builder-payouts.mjs). It holds at most 2 SOL and is refilled from the
+// vault through the multisig; no vault member key is ever present here.
+export function payoutSigner() {
+  const value = process.env.BUILDER_PAYOUT_SECRET_KEY
+  if (!value) return null
+  return Keypair.fromSecretKey(value.trim().startsWith('[') ? Uint8Array.from(JSON.parse(value)) : bs58.decode(value))
+}
+
+// The independently operated second provider that payout receipts must agree with; null when unset.
+export function verificationChain() {
+  const url = process.env.GRADUATION_VERIFICATION_RPC_URL
+  return url ? new Connection(url, 'finalized') : null
+}
+
 export function partnerSigner() {
   const value = process.env.PLATFORM_PARTNER_SECRET_KEY
   if (!value) return null

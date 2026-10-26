@@ -14,6 +14,7 @@ import { ClaimPageDecision } from '../../../components/maintainer-declined'
 import { ClaimBuilderTools } from '../../../components/builder-tools'
 import { githubAppConfigurationUrl, githubInstallationForRepository } from '../../../../src/github-app-auth.mjs'
 import { marketByRepo, feeStatus, database, chain, creatorSigner } from '../../../lib/server.mjs'
+import { claimWindow, owedLamports, payoutControls } from '../../../../src/builder-payouts.mjs'
 import { displayRepository } from '../../../lib/repository-display.mjs'
 import { formatUnits, formatSolDisplay, formatUsdEstimate } from '../../../lib/format.mjs'
 import { solUsdPrice } from '../../../lib/sol-usd.mjs'
@@ -124,7 +125,11 @@ async function ClaimContent({ market, repo, query }) {
     <div className="claim-fee-history"><span>Total earned <strong title={`${formatUnits(market.earned)} SOL`}>{formatSolDisplay(market.earned)} SOL</strong></span><span>Already paid <strong title={`${formatUnits(market.claimed)} SOL`}>{formatSolDisplay(market.claimed)} SOL</strong></span></div>
     {BigInt(market.platformCollected ?? '0') > 0n && <p>Platform collections: <strong title={`${formatUnits(market.platformCollected)} SOL`}>{formatSolDisplay(market.platformCollected)} SOL</strong>, not paid to the owner. <Link href="/how-it-works#builder-collections">Collection policy</Link></p>}
   </div>
-  return <ClaimSteps summary={summary} repoId={repoId} mint={market.mint} repoName={repo.fullName} appAccess={access} appSettingsUrl={appSettingsUrl}
+  // Builder payouts from the capped payout wallet (src/builder-payouts.mjs): the ledger's owed amount, the claim window and the switch.
+  const [owed, windowRow, controls] = await Promise.all([owedLamports(pool, repoId), claimWindow(pool, repoId), payoutControls(pool)])
+  const payoutClaim = { owedLamports: owed.toString(), paused: !controls.enabled,
+    claimWindow: windowRow && { openedAt: new Date(windowRow.openedAt).toISOString(), unclaimedAfter: windowRow.unclaimedAfter.toISOString() } }
+  return <ClaimSteps payoutClaim={payoutClaim} summary={summary} repoId={repoId} mint={market.mint} repoName={repo.fullName} appAccess={access} appSettingsUrl={appSettingsUrl}
     verifiedUser={verifiedUser} beneficiaryWallet={beneficiary?.wallet ?? null} beneficiaryMethod={beneficiary?.method ?? 'signature'}
     beneficiaryBoundAt={beneficiary?.boundAt ?? null} pendingAddress={pendingAddress || null} claimable={claimable} usdEstimate={usdEstimate}
     feeStatus={fees.status} payoutReady={funded} settledClaim={receipt} review={review}

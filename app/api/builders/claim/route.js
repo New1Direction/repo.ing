@@ -1,4 +1,5 @@
 import { createClaim } from '../../../../src/claim.mjs'
+import { payoutControls } from '../../../../src/builder-payouts.mjs'
 import { database, chain, configAddress, creatorSigner } from '../../../lib/server.mjs'
 import { githubSessionCookie, readGithubSession, readBuilderReview, assertSameOrigin } from '../../../lib/auth.mjs'
 import { sessionVerifier } from '../../../lib/github-session.mjs'
@@ -18,6 +19,10 @@ export async function POST(request) {
   // anyway is refused before any payout code runs. An unreadable stamp falls through to createClaim, which refuses stock pairs.
   const stockPair = await stockPairOf(database(), review.repoId).catch(() => null)
   if (stockPair) return Response.json({ status: 'failed', code: STOCK_PAIR_NO_OWNER_CLAIM, error: noOwnerClaimMessage(stockPair) }, { status: 409, headers })
+  // The builder payouts switch (claim_controls) stops every claim path, this one included.
+  if (!(await payoutControls(database())).enabled) {
+    return Response.json({ status: 'failed', code: 'payouts-off', error: 'Builder payouts are paused. Your fees keep accruing and wait for you.' }, { status: 409, headers })
+  }
   try {
     const creator = creatorSigner(), config = configAddress()
     if (!creator || !config) throw new Error('Payout signer needs SOL for network costs')
