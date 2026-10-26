@@ -201,7 +201,9 @@ function memberFromKit(path) {
   const passphrase = execFileSync('osascript', ['-e', 'text returned of (display dialog "Passphrase for the multisig member kit ' +
     '(repo.ing creator fee collection)" default answer "" with hidden answer with title "repo.ing custody")'],
   { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).replace(/\n$/, '')
-  const entries = openKit({ kit: JSON.parse(readFileSync(path, 'utf8')), passphrase })
+  let entries
+  try { entries = openKit({ kit: JSON.parse(readFileSync(path, 'utf8')), passphrase }) }
+  catch (error) { throw Error(`${error.message} (typed ${[...passphrase.normalize('NFKC')].length} characters)`) }
   let member = null
   for (const { keypair } of entries) {
     const candidate = Keypair.fromSecretKey(Uint8Array.from(keypair)); keypair.fill(0)
