@@ -10,7 +10,7 @@ import { hasFairRamp, marketHookRules, rulesMatch } from './early-access-rules.m
 import { bundleCurveConfig, isBundleMarket } from './bundles.mjs'
 import { BUNDLE_VAULT_PROGRAM_ID, STATUS, bundleAddress, decodeBundle } from './bundle-vault.mjs'
 import { MULTISIG_VAULT } from './custody-multisig.mjs'
-import { RECOVERED_LAUNCH_CONFIG, readLaunchCustodyHandoff } from './launch-custody.mjs'
+import { isCustodyLaunchConfig, readLaunchCustodyHandoff } from './launch-custody.mjs'
 
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 // SDK 1.5.13 IDL: initializeVirtualPoolWithSplToken.
@@ -77,9 +77,9 @@ export function createLaunchEvidenceVerifier({ connection, config, earlyAccessCo
     const keys = message.accountKeys ?? message.staticAccountKeys
     if (!keys) return { state: 'invalid', reason: 'Launch transaction has no account keys' }
     let initialCreator = creator
-    if (configKey.toBase58() === RECOVERED_LAUNCH_CONFIG) {
+    if (isCustodyLaunchConfig(configKey.toBase58())) {
       if (creator.toBase58() !== MULTISIG_VAULT) return { state: 'mismatch', reason: 'Recovered launch must record the custody vault as creator' }
-      try { initialCreator = readLaunchCustodyHandoff(Transaction.populate(message), { mint, pool, launcher }) }
+      try { initialCreator = readLaunchCustodyHandoff(Transaction.populate(message), { mint, pool, launcher, config: configKey }) }
       catch { return { state: 'mismatch', reason: 'Recovered launch custody handoff is missing or inconsistent' } }
     }
     const isKey = (index, expected) => keys[index]?.equals(expected)

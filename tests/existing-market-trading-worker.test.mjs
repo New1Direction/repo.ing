@@ -11,7 +11,7 @@ const manifest = readFileSync(new URL('../config/existing-market-custody.json', 
 const configs = [...new Set(JSON.parse(manifest).poolCreators.map(row => row.config))]
 const inputs = { configs, custody: { sha256: '2c31354ba8009acb0da1319b068f479216b0615120328510cba50665f0ecd888' },
   proposedEnvironment: { EXISTING_MARKET_TRADING_ONLY: 'true', EXISTING_MARKET_TRADING_STAGE: 'review',
-    DBC_CONFIG: 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7', DBC_LEGACY_CONFIGS: configs.join(','),
+    DBC_CONFIG: '3ZESQPHgao8ZyyEU4tJSwDmrVC3nunhGnTFVGdarRDbZ', DBC_LEGACY_CONFIGS: ['Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7', ...configs].join(','),
     TRADING_CUSTODY_RECOVERY_SHA256: '2c31354ba8009acb0da1319b068f479216b0615120328510cba50665f0ecd888' } }
 const mint = '59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be'
 const hookFlags = ['HOOK_PRODUCTION_BOOTSTRAP', 'HOOK_NATIVE_LAUNCH_ENABLED', 'HOOK_NATIVE_LAUNCHES_ENABLED', 'HOOK_INCLUSIVE_TRADING_ENABLED', 'HOOK_NATIVE_TRADING_ENABLED', 'HOOK_WALLET_FUNDING_ENABLED', 'HOOK_WALLET_IDENTITY_ENABLED', 'HOOK_SELECTED_HOOKS_ENABLED']
@@ -307,7 +307,7 @@ test('live stage exposes only existing-market trades while launches, hooks, clai
 test('both DB bindings and raw config changes restart warm instances; rollback restarts too', async () => {
   const f = await fixture()
   await f.request()
-  for (const [key, value] of [['PUBLIC_DATABASE_URL', 'rotated-reader'], ['TRADING_DATABASE_URL', 'rotated-trader'], ['DBC_LEGACY_CONFIGS', [...inputs.configs].reverse().join(',')], ['TRADING_DATABASE_URL', 'trade-only']]) {
+  for (const [key, value] of [['PUBLIC_DATABASE_URL', 'rotated-reader'], ['TRADING_DATABASE_URL', 'rotated-trader'], ['DBC_LEGACY_CONFIGS', ['Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7', ...inputs.configs].reverse().join(',')], ['TRADING_DATABASE_URL', 'trade-only']]) {
     const starts = f.runtime.starts
     f.env[key] = value
     const body = await (await f.request()).json()
@@ -457,7 +457,7 @@ test('ordinary launch admission is separately bound and never opens other financ
   assert.equal((await post('/api/launch', { action: 'prepare' })).status, 403)
   Object.assign(f.env, {
     ORDINARY_LAUNCH_RECOVERY_ENABLED: 'true',
-    ORDINARY_LAUNCH_CONFIG: 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7',
+    ORDINARY_LAUNCH_CONFIG: '3ZESQPHgao8ZyyEU4tJSwDmrVC3nunhGnTFVGdarRDbZ',
     ORDINARY_LAUNCH_DATABASE_URL: 'postgres://repoing_ordinary_launcher:synthetic@localhost/repoing_operational?sslmode=verify-full',
     ORDINARY_LAUNCH_BOOTSTRAP_SECRET_KEY: '1'.repeat(88),
     GITHUB_APP_PRIVATE_KEY_BASE64: 'synthetic', GITHUB_APP_CLIENT_ID: 'synthetic', GITHUB_APP_INSTALLATION_ID: '1',

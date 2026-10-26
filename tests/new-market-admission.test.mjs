@@ -30,6 +30,8 @@ test('safe finalized mint/config/pool/vault proof is reviewable without authoriz
   assert.equal(result.tradingEnabled, false)
   assert.equal(result.repoId, '1278009399')
   assert.equal(result.launchSlot, '460857170')
+  // CCTOOLKIT launched on Fy2bh before 3ZESQ became current: it keeps, and is checked on, the config it launched on.
+  assert.equal(result.config, 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7')
   for (const patch of [{ githubRepoId: 123n }, { creatorWallet: market.launcherWallet }, { pool: market.mint },
     { mint: market.launcherWallet }, { bundleId: '1' }, { transferHookProgram: market.mint }, { quoteMint: market.mint },
     { earlyAccessEnd: new Date() }, { status: 'pending' }, { indexedAt: null }, { launchFinality: 'confirmed' }, { launchSlot: 460857171n }]) {

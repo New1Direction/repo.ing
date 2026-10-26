@@ -14,10 +14,11 @@ const tokenMetadata = new RegExp(`^/api/token-metadata/${mint}$`)
 const marketBalance = new RegExp(`^/api/market/${mint}/balance$`)
 const custodyDigest = '2c31354ba8009acb0da1319b068f479216b0615120328510cba50665f0ecd888'
 // Public config identities; never caller-selected. DBC_CONFIG is the custody-safe config new launches use (fee claimer: the
-// multisig vault). Every config of the reviewed trading manifest is legacy, the retired 2YbBp included: read and traded, never
-// the current config again. Any other pair of values fails closed. The trading manifest itself is unchanged.
-const primaryConfig = 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7'
-const legacyConfigs = ['2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M', '8TXNGgx6g5TcsVCYt7wz3cAxJkynzzBZWXeQtXZaz6A3',
+// multisig vault; 3ZESQ, the 20%-extra early fee). The previous custody config Fy2bh and every config of the reviewed trading
+// manifest, the retired 2YbBp included, are legacy: read and traded, never the current config again. Any other pair of values
+// fails closed. The trading manifest itself is unchanged.
+const primaryConfig = '3ZESQPHgao8ZyyEU4tJSwDmrVC3nunhGnTFVGdarRDbZ'
+const legacyConfigs = ['Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7', '2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M', '8TXNGgx6g5TcsVCYt7wz3cAxJkynzzBZWXeQtXZaz6A3',
   '261xpZVAz5k3ZfwfxXdgkgLowiH6NUzFEHtihhD4YMq1', 'D7oz8xQ4seaNaEgiDS4fu3YJfmUvR5iPuznxuqKV4u1c']
 // Public, keyless second provider for new-market admission (app/lib/trading-recovery.mjs). Empty when it would not be
 // independent of the primary RPC, which keeps rule-admitted markets refused.

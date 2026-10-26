@@ -11,7 +11,7 @@ import { matchesReviewedLaunch } from './launch-wallet-assertions.mjs'
 import { LAUNCH_REVIEW_EXPIRED } from './launch-expiry.mjs'
 import { MULTISIG_VAULT } from './custody-multisig.mjs'
 import { verifyCreatedLaunchFeeConfig } from './launch-fee-config.mjs'
-import { RECOVERED_LAUNCH_CONFIG, RECOVERED_LAUNCH_CONFIG_SHA256, launchCustodyHandoff, readLaunchCustodyHandoff } from './launch-custody.mjs'
+import { CUSTODY_LAUNCH_CONFIGS, isCustodyLaunchConfig, launchCustodyHandoff, readLaunchCustodyHandoff } from './launch-custody.mjs'
 import { isMarketId } from './market-identity.mjs'
 
 // The launch did not happen and cannot happen from this attempt, so it may be reviewed again. The name is set explicitly:
@@ -103,7 +103,7 @@ export function createMeteoraLauncher({ connection, config, creator, metadataOri
   const client = new DynamicBondingCurveClient(connection, 'confirmed')
   const stock = quote.type !== 'SOL'
   const quoteMint = stock ? new PublicKey(quote.mint) : NATIVE_MINT
-  const custody = configKey.toBase58() === RECOVERED_LAUNCH_CONFIG
+  const custody = isCustodyLaunchConfig(configKey.toBase58())
   const finalCreator = custody ? new PublicKey(MULTISIG_VAULT) : creator.publicKey
   return {
     creatorWallet: finalCreator.toBase58(),
@@ -115,7 +115,7 @@ export function createMeteoraLauncher({ connection, config, creator, metadataOri
       }
       if (stock && BigInt(initialBuyLamports) !== 0n) throw new Error('Stock-paired launches have no initial buy yet. Buy after the launch.')
       const fixed = custody ? await verifyCreatedLaunchFeeConfig({ connection, config: configKey,
-        accountDataSha256: RECOVERED_LAUNCH_CONFIG_SHA256 }) : await client.state.getPoolConfig(configKey)
+        accountDataSha256: CUSTODY_LAUNCH_CONFIGS[configKey.toBase58()] }) : await client.state.getPoolConfig(configKey)
       // Base fee: the proven flat 1.75%, or exactly the approved launch-fee schedule whose launcher first buy
       // pays 1.75% (src/launch-fee.mjs). Any other schedule could charge the launcher or traders differently.
       // A stock config must also quote that stock's mint through Token-2022 (quoteTokenFlag 1).
@@ -144,10 +144,10 @@ export function createMeteoraLauncher({ connection, config, creator, metadataOri
         firstBuyParam: { buyer: launcher, buyAmount: new BN(initialBuyLamports),
           minimumAmountOut: buy.minimumAmountOut, referralTokenAccount: null } })
         : await client.creator.createPool(createPoolParam)
-      if (custody) built.add(launchCustodyHandoff({ pool, creator: creator.publicKey }))
+      if (custody) built.add(launchCustodyHandoff({ pool, creator: creator.publicKey, config: configKey }))
       const latest = await connection.getLatestBlockhash('confirmed')
       const { transaction: tx, ...landing } = await withLaunchPriorityFee(connection, built, { feePayer: launcher, blockhash: latest.blockhash })
-      if (custody) readLaunchCustodyHandoff(tx, { mint: mint.publicKey, pool, launcher, creator: creator.publicKey })
+      if (custody) readLaunchCustodyHandoff(tx, { mint: mint.publicKey, pool, launcher, creator: creator.publicKey, config: configKey })
       return {
         mint: mint.publicKey.toBase58(), pool: pool.toBase58(), initialBuyOutput: buy?.outputAmount.toString() ?? null,
         blockhash: latest.blockhash, lastValidBlockHeight: BigInt(latest.lastValidBlockHeight),
@@ -168,7 +168,7 @@ export function createMeteoraLauncher({ connection, config, creator, metadataOri
       if (!tx.feePayer?.equals(launcher) || tx.recentBlockhash !== blockhash) throw new DefinitiveLaunchError('Prepared launch transaction does not match its review')
       if (custody) {
         try { readLaunchCustodyHandoff(tx, { mint, pool: deriveDbcPoolAddress(NATIVE_MINT, mintKeypair.publicKey, configKey),
-          launcher, creator: creator.publicKey }) }
+          launcher, creator: creator.publicKey, config: configKey }) }
         catch { throw new DefinitiveLaunchError('Prepared launch custody handoff is missing or inconsistent') }
       }
       return { mint, blockhash, lastValidBlockHeight: BigInt(lastValidBlockHeight), sign: prepareLaunchSigning(tx, launcher, creator, mintKeypair) }
@@ -182,7 +182,7 @@ export function createMeteoraLauncher({ connection, config, creator, metadataOri
         const receipt = await connection.getTransaction(launchSignature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 })
         if (!receipt || receipt.meta?.err) return false
         try { readLaunchCustodyHandoff(Transaction.populate(receipt.transaction.message), { mint, pool,
-          launcher: receipt.transaction.message.accountKeys[0], creator: creator.publicKey }) }
+          launcher: receipt.transaction.message.accountKeys[0], creator: creator.publicKey, config: configKey }) }
         catch { return false }
       }
       return Boolean(state && mintInfo?.owner.equals(TOKEN_PROGRAM_ID) &&

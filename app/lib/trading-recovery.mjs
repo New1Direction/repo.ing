@@ -6,7 +6,7 @@ import { eq } from 'drizzle-orm'
 import { createCustodyRecovery } from '../../src/custody-recovery.mjs'
 import { createDatabasePool } from '../../src/database-pool.mjs'
 import { approvedConfigs, createMarketConfigResolver } from '../../src/market-config.mjs'
-import { RECOVERED_LAUNCH_CONFIG } from '../../src/launch-custody.mjs'
+import { RECOVERED_LAUNCH_CONFIG, isCustodyLaunchConfig } from '../../src/launch-custody.mjs'
 import { markets } from '../../src/db/schema.mjs'
 import { Connection } from '@solana/web3.js'
 import { createNewMarketAdmissionReview } from '../../src/new-market-admission.mjs'
@@ -49,7 +49,7 @@ export function tradingMarketLoader(pool, config, manifest, newMarkets = {}) {
   const expected = [...new Set(rows.map(row => row.config))].sort()
   // The current config is the safe launch config (or, before it was, a manifest config); it adds no trading identity. The
   // reviewed manifest's configs must be exactly the other approved configs.
-  const configured = approvedConfigs(config).map(key => key.toBase58()).filter(key => key !== RECOVERED_LAUNCH_CONFIG).sort()
+  const configured = approvedConfigs(config).map(key => key.toBase58()).filter(key => !isCustodyLaunchConfig(key)).sort()
   if (!rows.length || !(String(config) === RECOVERED_LAUNCH_CONFIG || expected.includes(String(config))) ||
     JSON.stringify(expected) !== JSON.stringify(configured)) throw Error('Trading reviewed config allowlist changed')
   const allowed = new Map(rows.map(row => [row.repoId, Object.freeze({ ...row })]))
