@@ -54,7 +54,9 @@ function observedFixture() {
     getMultipleAccountsInfoAndContext:async()=>({context:{slot:50},value:[accounts.multisig,accounts.transaction,accounts.proposal]}),
     getProgramAccounts:async(_program,config)=>({context:{slot:52},value:config.withContext && config.filters.length===2 &&
       config.filters[1].memcmp.offset===8 && !config.filters.some(f=>f.dataSize!==undefined)?[]:[{}]}),
-    getBlock:async slot=>blocks.get(slot),
+    // Raw JSON-RPC: web3.js cannot parse blocks that contain version 1 transactions.
+    _rpcRequest:async(method,[slot,config])=>method==='getBlock' && config.maxSupportedTransactionVersion===1 &&
+      config.encoding==='json'?{result:blocks.get(slot)??null}:{error:{message:'unexpected request'}},
     // An incorrectly chosen address-history proof would miss a later config change.
     getSignaturesForAddress:async()=>[{signature:'execution',slot:50,err:null,confirmationStatus:'finalized'}],
   }
@@ -71,6 +73,20 @@ test('finalized block ancestry reconstructs unchanged execution control without 
   assert.equal(custody.validateCustodyGovernance({plan:f.plan,proof:result.governanceProof,slot:50,signature:'execution'}).vaultControlVerified,true)
   result.governanceProof.snapshot.blocks[0].block.transactions.push(f.entry('hidden-change',[f.plan.multisig]))
   assert.throws(()=>custody.validateCustodyGovernance({plan:f.plan,proof:result.governanceProof,slot:50,signature:'execution'}))
+})
+
+test('version 1 transactions are scanned like the others and may not load addresses',async()=>{
+  const f=observedFixture(), unrelated=f.entry('unrelated-v1',[PublicKey.default.toBase58()])
+  unrelated.version=1
+  f.blocks.get(52).transactions.push(unrelated)
+  assert.equal((await custody.collectCustodyGovernance({...f,signature:'execution'})).tx.slot,50)
+  for(const kind of ['touches','loads']) {
+    const g=observedFixture(), changed=g.entry('v1-change',kind==='touches'?[g.plan.multisig]:[PublicKey.default.toBase58()])
+    changed.version=1
+    if(kind==='loads') changed.meta.loadedAddresses={readonly:[PublicKey.default.toBase58()],writable:[]}
+    g.blocks.get(52).transactions.push(changed)
+    await assert.rejects(custody.collectCustodyGovernance({...g,signature:'execution'}),/Custody/)
+  }
 })
 
 test('stale address history cannot hide later, same-slot or ALT-loaded governance activity',async()=>{

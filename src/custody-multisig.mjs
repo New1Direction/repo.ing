@@ -129,11 +129,13 @@ function validateSnapshotBoundary(plan, proof, signature, executionSlot) {
       start = matches[0] + 1
     }
     for (const t of block.transactions.slice(start)) {
-      custodyAssert(t.meta && Object.hasOwn(t.meta, 'err') && ['legacy', 0].includes(t.version))
+      custodyAssert(t.meta && Object.hasOwn(t.meta, 'err') && ['legacy', 0, 1].includes(t.version))
       const message = t.transaction?.message
       const keys = message?.staticAccountKeys ?? message?.accountKeys
       custodyAssert(Array.isArray(keys))
       const loaded = t.meta.loadedAddresses
+      // Version 1 messages have no lookup tables, so every account they reference is in accountKeys.
+      if (t.version === 1) custodyAssert(!message.addressTableLookups?.length && !loaded?.writable?.length && !loaded?.readonly?.length)
       custodyAssert(!message.addressTableLookups?.length || (Array.isArray(loaded?.writable) && Array.isArray(loaded?.readonly)))
       const references = [...keys, ...(loaded?.writable ?? []), ...(loaded?.readonly ?? [])].map(addr)
       custodyAssert(t.meta.err !== null || !references.some(k => controls.includes(k)))
@@ -144,11 +146,21 @@ function validateSnapshotBoundary(plan, proof, signature, executionSlot) {
   return execution
 }
 
+// web3.js 1.x rejects whole blocks that contain version 1 transactions, so blocks are read as raw JSON-RPC
+// (through the connection's own transport and headers) and scanned by validateSnapshotBoundary.
+async function rawBlock(connection, slot) {
+  const response = await connection._rpcRequest('getBlock', [slot, { commitment: 'finalized', encoding: 'json',
+    transactionDetails: 'full', maxSupportedTransactionVersion: 1, rewards: false }])
+  custodyAssert(!response.error)
+  return response.result
+}
+
 // Read-only trusted-RPC collector. Address-history indexes may lag finalized state;
 // only complete finalized blocks establish absence of intervening control activity.
 // Conservative: even an unrelated successful read of a control account needs review.
 // The target execute must still pass the exact claim/payout transcript validator.
-export async function collectCustodyGovernance({ connection, plan, signature, maxBlocks = 128 }) {
+// blockDelayMs paces block reads for rate-limited public RPCs.
+export async function collectCustodyGovernance({ connection, plan, signature, maxBlocks = 128, blockDelayMs = 0 }) {
   custodyAssert(typeof signature === 'string' && signature.length > 0 && Number.isSafeInteger(maxBlocks) && maxBlocks > 0)
   const { value: statuses } = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })
   const status = statuses?.[0]
@@ -166,8 +178,8 @@ export async function collectCustodyGovernance({ connection, plan, signature, ma
   const blocks = []
   let slot = limits.context.slot
   while (slot >= status.slot && blocks.length < maxBlocks) {
-    const block = await connection.getBlock(slot, { commitment: 'finalized', transactionDetails: 'full',
-      maxSupportedTransactionVersion: 0, rewards: false })
+    if (blocks.length && blockDelayMs) await new Promise(resolve => setTimeout(resolve, blockDelayMs))
+    const block = await rawBlock(connection, slot)
     custodyAssert(block && Number.isSafeInteger(block.parentSlot) && block.parentSlot < slot)
     blocks.push({ slot, block })
     if (slot === status.slot) break

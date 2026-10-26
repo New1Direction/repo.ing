@@ -66,8 +66,8 @@ export function createKit({entries,passphrase,expected=EXPECTED,createdAt=new Da
  return {...kit,nonce:nonce.toString('base64'),ciphertext:ciphertext.toString('base64'),tag:cipher.getAuthTag().toString('base64')}
 }
 
-// Returns only public results: [{role,address,matchesHeader,matchesExpected}]
-export function verifyKit({kit,passphrase,expected=EXPECTED}){
+// Decrypts the kit in memory: [{role,keypair}]. The caller must zero every keypair when done.
+export function openKit({kit,passphrase}){
  if(kit?.schema!==KIT_SCHEMA||kit.kdf?.name!=='scrypt')fail('Not a Hook Lab recovery kit')
  const {N,r,p}=kit.kdf,key=scryptSync(passphrase.normalize('NFKC'),Buffer.from(kit.kdf.salt,'base64'),32,{N,r,p,maxmem:SCRYPT.maxmem})
  let plaintext
@@ -78,11 +78,16 @@ export function verifyKit({kit,passphrase,expected=EXPECTED}){
  try{
   const secret=JSON.parse(plaintext)
   if(secret.length!==kit.entries.length)fail('Kit entry count differs from its header')
-  return secret.map(({role,keypair},i)=>{
-   const address=addressFromSeed(keypair.slice(0,32));keypair.fill(0)
-   return {role,address,matchesHeader:kit.entries[i].role===role&&kit.entries[i].address===address,matchesExpected:expected[role]===address}
-  })
+  return secret
  }finally{plaintext.fill(0)}
+}
+
+// Returns only public results: [{role,address,matchesHeader,matchesExpected}]
+export function verifyKit({kit,passphrase,expected=EXPECTED}){
+ return openKit({kit,passphrase}).map(({role,keypair},i)=>{
+  const address=addressFromSeed(keypair.slice(0,32));keypair.fill(0)
+  return {role,address,matchesHeader:kit.entries[i].role===role&&kit.entries[i].address===address,matchesExpected:expected[role]===address}
+ })
 }
 
 async function hiddenPrompt(question){
