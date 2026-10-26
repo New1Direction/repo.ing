@@ -20,33 +20,26 @@ async function fixture(bundledManifest = manifest) {
   assert(existsSync(workerUrl), 'deployable review worker must exist')
   const storage = new Map()
   const runtime = { env: { DATABASE_URL: 'old-reader' }, starts: 1, calls: [], failDestroy: false, failStorage: false, hold: null, html: false }
-  // One Durable Object and container per name: each has its own storage, queue and process state.
-  const durableObject = (runtime, storage) => {
-    let queue = Promise.resolve()
-    return { runtime, storage: {
-      get: async key => storage.get(key),
-      delete: async key => storage.delete(key),
-      put: async (key, value) => {
-        if (runtime.failStorage) throw Error('storage failed')
-        storage.set(key, value)
-      },
-    }, blockConcurrencyWhile(fn) {
-      const result = queue.then(fn)
-      queue = result.catch(() => {})
-      return result
-    } }
-  }
-  const ctx = durableObject(runtime, storage)
-  const runtimeB = { env: null, starts: 0, calls: [], failDestroy: false, failStorage: false, hold: null, html: false }
+  let queue = Promise.resolve()
+  const ctx = { storage: {
+    get: async key => storage.get(key),
+    delete: async key => storage.delete(key),
+    put: async (key, value) => {
+      if (runtime.failStorage) throw Error('storage failed')
+      storage.set(key, value)
+    },
+  }, blockConcurrencyWhile(fn) {
+    const result = queue.then(fn)
+    queue = result.catch(() => {})
+    return result
+  } }
   class Container {
     constructor(ctx) { this.ctx = ctx }
     async destroy() {
-      const runtime = this.ctx.runtime
       if (runtime.failDestroy) throw Error('restart failed')
       runtime.env = null; runtime.stale = false; runtime.destroys = (runtime.destroys ?? 0) + 1
     }
     async fetch(request) {
-      const runtime = this.ctx.runtime
       if (runtime.hold && (!runtime.holdPath || new URL(request.url).pathname === runtime.holdPath)) await runtime.hold
       if (runtime.stale) return new Response('Error proxying request to container: The container is not running, consider calling start()', { status: 500 })
       if (!runtime.env) { runtime.env = { ...this.envVars }; runtime.starts++ }
@@ -78,17 +71,13 @@ async function fixture(bundledManifest = manifest) {
     ...Object.fromEntries(hookFlags.map(key => [key, 'true'])),
   }
   const instance = new module.PublicSite(ctx, { PUBLIC_DATABASE_URL: 'stale-constructor' })
-  const instanceB = new module.PublicSite(durableObject(runtimeB, new Map()), {})
-  // Requests go to public-readonly first unless a test changes the pick.
-  new Script('Math.random = () => 0').runInContext(context)
-  const pick = value => new Script(`Math.random = () => ${value}`).runInContext(context)
-  env.PUBLIC_SITE = { getByName(name) { return { 'public-readonly': instance, 'public-readonly-b': instanceB }[name] ?? assert.fail(name) } }
+  env.PUBLIC_SITE = { getByName(name) { assert.equal(name, 'public-readonly'); return instance } }
   const fetch = request => module.worker.fetch(request, env)
   const request = (path = '/stats', options = {}) => fetch(new Request('https://repo.ing' + path, options))
   const trade = (action = 'quote', headers = {}) => request('/api/trade', {
     method: 'POST', headers: { origin: 'https://repo.ing', 'content-type': 'application/json', ...headers }, body: JSON.stringify({ action }),
   })
-  return { env, runtime, runtimeB, storage, request, trade, fetch, instance, pick }
+  return { env, runtime, storage, request, trade, fetch, instance }
 }
 
 test('only the five explicit review actions and two balance routes reach the container', async () => {
@@ -348,14 +337,13 @@ test('restart/storage failure and an old DO implementation return retryable unav
     const f = await fixture()
     await f.request()
     f.env.TRADING_DATABASE_URL = 'rotated-trader'
-    // Both containers fail (the other one alone would answer with fresh bindings).
-    f.runtime[failure] = f.runtimeB[failure] = true
+    f.runtime[failure] = true
     const response = await f.request()
     assert.equal(response.status, 503)
     assert.equal(response.headers.get('retry-after'), '5')
-    assert.equal(f.runtime.calls.length + f.runtimeB.calls.length, 1)
+    assert.equal(f.runtime.calls.length, 1)
     assert(!JSON.stringify([...f.storage]).includes('rotated-trader'))
-    f.runtime[failure] = f.runtimeB[failure] = false
+    f.runtime[failure] = false
     assert.equal((await (await f.request()).json()).TRADING_DATABASE_URL, 'rotated-trader')
   }
   const f = await fixture()
@@ -402,7 +390,7 @@ test('only successful public static assets can be browser-cached; dynamic and fi
     assert.equal((await f.request(path)).headers.get('cache-control'), 'no-store')
   }
   assert.equal((await f.trade()).headers.get('cache-control'), 'no-store')
-  f.runtime.failDestroy = f.runtimeB.failDestroy = true
+  f.runtime.failDestroy = true
   f.env.TRADING_DATABASE_URL = 'changed'
   assert.equal((await f.request('/_next/static/chunks/contenthash.js')).headers.get('cache-control'), 'no-store')
 })
@@ -536,10 +524,9 @@ test('a container replaced under the Durable Object is restarted once and reads 
   const starts = f.runtime.starts, destroys = f.runtime.destroys ?? 0
   f.runtime.stale = true
   const [a, b] = await Promise.all([f.request('/api/health'), f.request('/explore')])
-  assert.deepEqual([a.status, b.status], [200, 200], 'concurrent reads recover in the same request (the other container answers)')
+  assert.deepEqual([a.status, b.status], [200, 200], 'concurrent reads recover in the same request')
   assert.equal(f.runtime.destroys - destroys, 1, 'one shared restart')
-  assert.equal((await f.request('/api/health')).status, 200)
-  assert.equal(f.runtime.starts, starts + 1, 'the restarted container serves again')
+  assert.equal(f.runtime.starts, starts + 1)
   const calls = f.runtime.calls.length
   f.runtime.stale = true
   const write = await f.trade('quote')
@@ -587,32 +574,4 @@ test('claim routes carry cookies only with valid claims bindings; every other ro
   // A claims binding for any other role fails closed for the whole site.
   f.env.CLAIMS_DATABASE_URL = 'postgres://repoing_owner:x@db.example/repoing_operational?sslmode=verify-full'
   assert.equal((await send('GET', '/claim/1278009399')).status, 503)
-})
-
-test('two containers: a read that meets a restarting one is answered by the other at once; writes stay on one', async () => {
-  const f = await fixture()
-  f.env.EXISTING_MARKET_TRADING_STAGE = 'live'
-  await f.request()
-  f.pick(0.9)
-  assert.equal((await f.request('/explore')).status, 200)
-  assert.equal(f.runtimeB.calls.length, 1, 'requests are spread over both, so both stay warm')
-  f.pick(0)
-  const destroys = f.runtime.destroys ?? 0, bCalls = f.runtimeB.calls.length
-  f.runtime.stale = true
-  f.runtime.hold = new Promise(() => {}); f.runtime.holdPath = '/never'
-  const read = await f.request('/explore')
-  assert.equal(read.status, 200)
-  assert.equal(read.headers.get('x-repoing-restarting'), null, 'the internal marker never reaches the browser')
-  assert.equal(f.runtimeB.calls.length, bCalls + 1, 'the other container answered')
-  await Promise.resolve(); await new Promise(resolve => setTimeout(resolve, 0))
-  assert.equal(f.runtime.destroys - destroys, 1, 'the stale one is still restarting in the background')
-  f.runtime.hold = null
-  // Both restarting: the second try waits for its container, as with one.
-  f.runtime.stale = true; f.runtimeB.stale = true
-  assert.equal((await f.request('/explore')).status, 200)
-  // A write is sent to one container only and never replayed on the other.
-  const calls = f.runtime.calls.length + f.runtimeB.calls.length
-  f.runtime.stale = true
-  assert.equal((await f.trade('quote')).status, 503)
-  assert.equal(f.runtime.calls.length + f.runtimeB.calls.length, calls)
 })

@@ -192,9 +192,6 @@ async function claimRequest(request, url) {
 }
 
 const STALE_CONTAINER = /^(Error proxying request to container|Container suddenly disconnected)/
-// Two interchangeable containers (max_instances 2, rollout steps [50, 100]): a deploy replaces one at a time.
-const SITE_NAMES = ['public-readonly', 'public-readonly-b']
-const RESTARTING = 'X-Repoing-Restarting'
 
 export class PublicSite extends Container {
   defaultPort = 3000
@@ -211,8 +208,7 @@ export class PublicSite extends Container {
   }
 
   // Binding-only RPC; no public route, header, query or body selects env values.
-  // failFast: the caller can send this read to the other container, so a restart here is reported, not waited for.
-  async fetchWithReviewBindings(request, suppliedBindings, { failFast = false } = {}) {
+  async fetchWithReviewBindings(request, suppliedBindings) {
     const bindings = snapshotBindings(suppliedBindings)
     const appOrigin = 'https://repo.ing'
     // Start dispatch under the binding gate, but do not serialize unrelated
@@ -279,7 +275,6 @@ export class PublicSite extends Container {
           this.generation++
         }).finally(() => { this.healing = null })
       }
-      if (failFast && ['GET', 'HEAD'].includes(request.method)) return new Response(null, { status: 503, headers: { [RESTARTING]: '1' } })
       await this.healing
       if (!['GET', 'HEAD'].includes(request.method)) {
         return Response.json({ error: 'TRADING_REVIEW_UNAVAILABLE', reason: 'restarting' }, { status: 503, headers: { 'Retry-After': '5' } })
@@ -290,18 +285,6 @@ export class PublicSite extends Container {
     response.headers.set('X-Repoing-Runtime-Policy', 'discovery-origin-v1')
     return response
   }
-}
-
-// Requests are spread over both containers so both stay warm. A read that meets a restarting container goes to the
-// other at once; the second try waits for its container as before. A write goes to one container and is never replayed.
-async function dispatchSite(env, request, bindings) {
-  const [first, second] = Math.random() < 0.5 ? SITE_NAMES : [...SITE_NAMES].reverse()
-  if (!['GET', 'HEAD'].includes(request.method)) return env.PUBLIC_SITE.getByName(first).fetchWithReviewBindings(request, bindings)
-  try {
-    const response = await env.PUBLIC_SITE.getByName(first).fetchWithReviewBindings(request, bindings, { failFast: true })
-    if (!response.headers.has(RESTARTING)) return response
-  } catch { /* The other container answers; its own failure is reported as before. */ }
-  return env.PUBLIC_SITE.getByName(second).fetchWithReviewBindings(request, bindings)
 }
 
 export default {
@@ -354,7 +337,7 @@ export default {
     try {
       await validateBindings(bindings)
       failureStage = 'dispatch'
-      response = await dispatchSite(env, upstream, bindings)
+      response = await env.PUBLIC_SITE.getByName('public-readonly').fetchWithReviewBindings(upstream, bindings)
     } catch (error) {
       // Includes missing RPC during propagation, invalid bindings and failed
       // restart/storage/boot. Never fall back to raw fetch or the old DB-only RPC.
