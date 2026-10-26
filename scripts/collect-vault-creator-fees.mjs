@@ -12,7 +12,8 @@
 // collect also needs PAYER_KEY and ADMIN_KEY (key pipe paths) and MEMBER_KIT (the second approver's recovery kit, whose
 // passphrase is typed in a hidden dialog). Secrets are never printed.
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import pg from 'pg'
 import BN from 'bn.js'
@@ -200,10 +201,12 @@ async function makePlan(db) {
 
 // ---- collect ----
 
-function memberFromKit(path) {
-  const passphrase = execFileSync('osascript', ['-e', 'text returned of (display dialog "Passphrase for the multisig member kit ' +
+// The dialog runs without blocking the event loop; a blocked loop leaves dead keep-alive sockets for the next RPC call.
+async function memberFromKit(path) {
+  const { stdout } = await promisify(execFile)('osascript', ['-e', 'text returned of (display dialog "Passphrase for the multisig member kit ' +
     '(repo.ing creator fee collection)" default answer "" with hidden answer with title "repo.ing custody")'],
-  { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).replace(/\n$/, '')
+  { encoding: 'utf8' })
+  const passphrase = stdout.replace(/\n$/, '')
   let entries
   try { entries = openKit({ kit: JSON.parse(readFileSync(path, 'utf8')), passphrase }) }
   catch (error) { throw Error(`${error.message} (typed ${[...passphrase.normalize('NFKC')].length} characters)`) }
@@ -327,7 +330,7 @@ async function openSession(journalPath, ceiling) {
   const [payer, admin] = loadSigners(parseKeyArgs([`payer=${process.env.PAYER_KEY}`, `admin=${process.env.ADMIN_KEY}`]),
     { payer: PAYER, admin: ADMIN }, [PAYER, ADMIN])
   const keys = new Map([[PAYER, payer], [ADMIN, admin]])
-  try { keys.set(APPROVER, memberFromKit(process.env.MEMBER_KIT)) } catch (error) { wipe([...keys.values()]); throw error }
+  try { keys.set(APPROVER, await memberFromKit(process.env.MEMBER_KIT)) } catch (error) { wipe([...keys.values()]); throw error }
   return { journal, spent, keys }
 }
 
