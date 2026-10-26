@@ -19,7 +19,7 @@ const CLAIMS_PER_HOUR = 20
 function claimErrorCode(error) {
   const message = error?.message ?? ''
   if (message === 'Payout signer needs SOL for network costs') return 'payout-unavailable'
-  if (/48-hour hold/.test(message)) return 'payout-address-pending'
+  if (/24-hour hold/.test(message)) return 'payout-address-pending'
   if (/owner changed since this payout wallet was set/.test(message)) return 'owner-changed'
   if (error instanceof HfAuthorityError && error.code === 'HF_MODEL_MOVED') return 'model-moved'
   if (/review|amount changed/i.test(message)) return 'review-changed'

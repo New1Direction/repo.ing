@@ -148,7 +148,7 @@ test('builder_earnings: verified figures with USD estimates, the claim page and 
   assert.deepEqual({ ...market, howToClaim: undefined }, { source: 'github', project: 'acme/widget', ticker: '$WIDGET', mint: REPO.mint, marketUrl: `${ORIGIN}/token/${REPO.mint}`,
     claimUrl: `${ORIGIN}/claim/123456`, verified: true, status: 'verified', payoutWalletSet: false, howToClaim: undefined,
     earnedLamports: '2000000000', paidLamports: '500000000', claimableLamports: '1500000000', usdPerSol: 150 })
-  assert.match(market.howToClaim, /current admin of the repository .* verifies with GitHub .* 48-hour hold/)
+  assert.match(market.howToClaim, /current admin of the repository .* verifies with GitHub .* 24-hour hold/)
   for (const line of ['Builder earnings for acme/widget ($WIDGET), verified against on-chain fees:', 'Earned: 2 SOL (≈ $300.00)', 'Paid out: 0.5 SOL',
     'Claimable now: 1.5 SOL (≈ $225.00)', 'Payout wallet: not set yet', `Claim page (for the repository’s GitHub admins): ${ORIGIN}/claim/123456`]) {
     assert.ok(text.split('\n').includes(line), line)

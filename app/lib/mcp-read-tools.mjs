@@ -141,11 +141,11 @@ const claimant = market => isModelMarket(market) ? 'the model’s owner on Huggi
 const HOW_TO_CLAIM = {
   github: 'A current admin of the repository opens the claim page and verifies with GitHub (repo.ing asks for read-only metadata access '
     + 'and cannot change code), sets a Solana payout wallet (by signing a message, or by pasting an address, which starts receiving '
-    + 'payouts after a 48-hour hold), then reviews and claims. Fees are paid in SOL to that wallet, and admin access is checked again '
+    + 'payouts after a 24-hour hold), then reviews and claims. Fees are paid in SOL to that wallet, and admin access is checked again '
     + 'before every payout. Launching a market never gives the launcher these fees.',
   huggingface: 'The model’s current owner on Hugging Face (the user, or an admin of the organization that owns it) opens the claim page, '
     + 'signs in with Hugging Face, sets a Solana payout wallet (by signing a message, or by pasting an address, which starts receiving '
-    + 'payouts after a 48-hour hold), then reviews and claims. Fees are paid in SOL to that wallet. Launching a market never gives the '
+    + 'payouts after a 24-hour hold), then reviews and claims. Fees are paid in SOL to that wallet. Launching a market never gives the '
     + 'launcher these fees.',
 }
 

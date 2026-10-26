@@ -21,7 +21,7 @@ const ALLOCATION_STEP = 'Allocation'
 const BIND_ENDPOINT = '/api/hf/bind'
 const ERRORS = {
   'payout-unavailable': 'Payouts are paused while the network-cost wallet is replenished. Your fees remain in the pool.',
-  'payout-address-pending': 'Your pasted payout address is still in its 48-hour hold. Claims open when it becomes active.',
+  'payout-address-pending': 'Your pasted payout address is still in its 24-hour hold. Claims open when it becomes active.',
   'review-changed': 'The amount or payout details changed. Review the updated fees below, then claim again.',
   'claim-failed': 'The payout could not be confirmed. Check the receipt and available balance before trying again.',
   'verification-failed': 'Hugging Face ownership could not be confirmed. Sign in again to continue.',
@@ -193,7 +193,7 @@ export function ModelClaimSteps({ summary, repoId, signedIn, authority, benefici
     <div className={`claim-step ${current === 2 ? 'current' : ''}`}>
       <div className={`step-number ${destinationReady ? 'done' : ''}`}>{destinationReady ? <Check size={18}/> : 2}</div>
       <div className="step-content"><div className="claim-step-heading"><div><h2>Set payout wallet</h2></div></div>
-        <p>Choose the Solana wallet that receives the model’s SOL. You sign a message to prove it’s yours; it does not spend SOL. No wallet extension? Paste the address instead; a pasted address starts receiving payouts after a 48-hour hold.</p>
+        <p>Choose the Solana wallet that receives the model’s SOL. You sign a message to prove it’s yours; it does not spend SOL. No wallet extension? Paste the address instead; a pasted address starts receiving payouts after a 24-hour hold.</p>
         {staleBinding && <p className="claim-wallet-warning" role="alert">This payout wallet was set when the model had a different owner. It will not be paid; set a payout wallet as the current owner.</p>}
         {!bound && !pendingAddress && <WalletExplainer/>}
         <PayoutDestination repoId={repoId} active={bound ? { wallet: bound, method: boundMethod, boundAt: beneficiaryBoundAt } : null} pending={pendingAddress}

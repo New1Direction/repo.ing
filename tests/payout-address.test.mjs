@@ -79,22 +79,23 @@ test('one finalized account read: missing or plain System wallets pass; token ac
   await assert.rejects(checkPayoutAccount(connection(undefined), key), error => error.code === 'ACCOUNT_UNAVAILABLE')
 })
 
-test('the hold is 48 hours, matches the database floor, and counts down', () => {
-  assert.equal(PASTED_ADDRESS_HOLD_MS, 48 * 60 * 60 * 1000)
-  assert.equal(PASTED_ADDRESS_HOLD_HOURS, 48)
-  const migration = readFileSync(new URL('../drizzle/0048_pasted_payout_address.sql', import.meta.url), 'utf8')
-  assert.match(migration, /"active_at" >= "requested_at" \+ interval '48 hours'/)
+test('the hold is 24 hours, matches the database floor, and counts down', () => {
+  assert.equal(PASTED_ADDRESS_HOLD_MS, 24 * 60 * 60 * 1000)
+  assert.equal(PASTED_ADDRESS_HOLD_HOURS, 24)
+  const migration = readFileSync(new URL('../drizzle/0087_builder_payouts.sql', import.meta.url), 'utf8')
+  assert.match(migration, /CHECK \(active_at >= requested_at \+ interval '24 hours'\)/)
+  assert.match(migration, /"requested_at" \+ interval '24 hours'/)
   const now = Date.parse('2026-10-02T12:00:00Z'), activeAt = new Date(now + PASTED_ADDRESS_HOLD_MS).toISOString()
   assert.equal(holdRemainingMs(activeAt, now), PASTED_ADDRESS_HOLD_MS)
   assert.equal(holdRemainingMs(activeAt, now + PASTED_ADDRESS_HOLD_MS + 1), 0)
   assert.equal(holdRemainingMs('not a date', now), 0)
-  assert.equal(formatHoldRemaining(PASTED_ADDRESS_HOLD_MS), '48 h')
+  assert.equal(formatHoldRemaining(PASTED_ADDRESS_HOLD_MS), '24 h')
   assert.equal(formatHoldRemaining(47 * 3_600_000 + 5 * 60_000), '47 h 5 min')
   assert.equal(formatHoldRemaining(12 * 60_000), '12 min')
   assert.equal(formatHoldRemaining(30_000), 'under a minute')
   assert.equal(formatHoldRemaining(0), 'now')
-  assert.equal(formatUtcDateTime(activeAt), 'Oct 4, 12:00 UTC')
-  assert.equal(pendingHoldMessage(activeAt), `This repository's pasted payout address is in its 48-hour hold until ${activeAt}. Claims open then.`)
+  assert.equal(formatUtcDateTime(activeAt), 'Oct 3, 12:00 UTC')
+  assert.equal(pendingHoldMessage(activeAt), `This repository's pasted payout address is in its 24-hour hold until ${activeAt}. Claims open then.`)
   assert.equal(PAYOUT_ADDRESS_WARNING, 'Use a Solana wallet you control. Exchange deposit addresses may not credit program payouts.')
 })
 
@@ -137,7 +138,7 @@ test('the claim recipient is only ever the active binding; a pasted address in i
   const waiting = { wallet: wallet(), activeAt: new Date(Date.now() + PASTED_ADDRESS_HOLD_MS) }
 
   let client = fakeClient({ pending: waiting })
-  await assert.rejects(resolvePayoutRecipient(client, '42'), new RegExp(`48-hour hold until ${waiting.activeAt.toISOString()}`))
+  await assert.rejects(resolvePayoutRecipient(client, '42'), new RegExp(`24-hour hold until ${waiting.activeAt.toISOString()}`))
   assert.equal(client.state.binding, null, 'nothing was bound')
 
   client = fakeClient({ binding: active, pending: waiting })

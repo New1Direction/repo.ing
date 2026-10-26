@@ -39,7 +39,7 @@ export function payoutAddressNotice({ origin, repos, wallet, activeAt, requested
   const text = ['repo.ing payout address change requested', '',
     `GitHub user ${requestedByLogin} pasted a new Solana payout address for ${one ? repos[0].fullName : 'these repositories'}:`,
     ...(one ? [] : repos.map(repo => `- ${repo.fullName}`)), '', wallet, '',
-    `It can receive builder payouts from ${new Date(activeAt).toISOString()}, after a 48-hour hold.`,
+    `It can receive builder payouts from ${new Date(activeAt).toISOString()}, after a 24-hour hold.`,
     previousWallet ? `Until then, payouts keep going to the current payout address ${previousWallet}.` : 'Until then, claims stay closed.', '',
     'If you did not expect this, any current admin of the repository can cancel it before then:',
     ...repos.map(repo => `${origin}/claim/${repo.repoId}`), '',

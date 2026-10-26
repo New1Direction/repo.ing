@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic'
 // rate limit, and a fresh check of the model's current owner (src/hf-verification.mjs) before every change.
 //   challenge { wallet }                    → the model binding message to sign (its own domain, never GitHub's)
 //   bind { wallet, nonce, signature }       → binds at once; replaces a waiting pasted address
-//   paste { address, confirm }              → a pasted address, active after the 48-hour hold (src/payout-address.mjs)
+//   paste { address, confirm }              → a pasted address, active after the 24-hour hold (src/payout-address.mjs)
 //   cancel { requestId }                    → cancels a waiting pasted address
 //   repoint { url }                         → "Model moved?": the registry follows the model only to a URL with the same _id
 // marketId (or repoId, as the shared payout-address form sends it) must be the session's market.

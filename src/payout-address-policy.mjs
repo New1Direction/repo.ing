@@ -2,8 +2,8 @@
 // Dependency-free so client components can import it. The server re-checks everything; nothing here authorizes anything.
 
 // A pasted address waits this long before it can receive payouts. The database enforces it as a floor
-// (drizzle/0048_pasted_payout_address.sql, payout_address_requests_hold_check).
-export const PASTED_ADDRESS_HOLD_MS = 48 * 60 * 60 * 1000
+// (drizzle/0087_builder_payouts.sql, payout_address_requests_hold_check).
+export const PASTED_ADDRESS_HOLD_MS = 24 * 60 * 60 * 1000
 export const PASTED_ADDRESS_HOLD_HOURS = PASTED_ADDRESS_HOLD_MS / 3_600_000
 
 export const PAYOUT_ADDRESS_WARNING = 'Use a Solana wallet you control. Exchange deposit addresses may not credit program payouts.'

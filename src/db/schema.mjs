@@ -722,7 +722,7 @@ export const payoutAddressRequests = pgTable('payout_address_requests', {
   check('payout_address_requests_status_check', sql`${table.status} in ('pending', 'activated', 'cancelled', 'superseded')`),
   check('payout_address_requests_wallet_check', sql`${table.wallet} ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$'`),
   check('payout_address_requests_user_check', sql`${table.requestedByGithubUserId} > 0`),
-  check('payout_address_requests_hold_check', sql`${table.activeAt} >= ${table.requestedAt} + interval '48 hours'`),
+  check('payout_address_requests_hold_check', sql`${table.activeAt} >= ${table.requestedAt} + interval '24 hours'`),
   check('payout_address_requests_resolution_check', sql`(${table.status} = 'pending') = (${table.resolvedAt} is null)`),
   check('payout_address_requests_reason_check', sql`${table.status} not in ('cancelled', 'superseded') or ${table.resolutionReason} is not null`),
 ])

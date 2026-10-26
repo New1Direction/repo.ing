@@ -112,7 +112,7 @@ export async function checkPayoutAccount(connection, key) {
 }
 
 export const pendingHoldMessage = activeAt =>
-  `This repository's pasted payout address is in its 48-hour hold until ${new Date(activeAt).toISOString()}. Claims open then.`
+  `This repository's pasted payout address is in its 24-hour hold until ${new Date(activeAt).toISOString()}. Claims open then.`
 
 const repoIdOf = value => {
   const id = String(value ?? '')
@@ -321,7 +321,7 @@ async function inRepoLocks(pool, repoIds, work, lockTimeoutMs) {
   } finally { client.release() }
 }
 
-// The database stamps requested_at, raises active_at to at least 48 hours after it and records the binding the request
+// The database stamps requested_at, raises active_at to at least 24 hours after it and records the binding the request
 // would replace (trigger start_payout_address_request); a longer PASTED_ADDRESS_HOLD_MS is kept as given.
 async function insertRequest(client, { repoId, wallet, actor, previousWallet }) {
   const { rows: [created] } = await client.query(`insert into payout_address_requests(github_repo_id, wallet, requested_by_github_user_id,

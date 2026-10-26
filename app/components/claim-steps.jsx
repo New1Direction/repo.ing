@@ -32,7 +32,7 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
   const [expired, setExpired] = useState(false)
   const [awaitingReview, setAwaitingReview] = useState(false)
   const [error, setError] = useState(errorCode === 'payout-unavailable' ? 'Payouts are paused while the network-cost wallet is replenished. Your fees remain in the pool.' :
-    errorCode === 'payout-address-pending' ? 'Your pasted payout address is still in its 48-hour hold. Claims open when it becomes active.' :
+    errorCode === 'payout-address-pending' ? 'Your pasted payout address is still in its 24-hour hold. Claims open when it becomes active.' :
     errorCode === 'review-changed' ? 'The amount or payout details changed. Review the updated fees below, then claim again.' :
     errorCode === 'claim-failed' ? 'The payout could not be confirmed. Check the receipt and available balance before trying again.' :
     VERIFICATION_ERRORS.includes(errorCode) ? '' :
@@ -165,7 +165,7 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
       <div className={`step-number ${destinationReady ? 'done' : ''}`}>{destinationReady ? <Check size={18}/> : 2}</div>
       <div className="step-content">{stepHeading(2, 'Set payout wallet', destinationReady, walletMatches ? `Wallet set · ${short(bound)}` : pastedActive ? `Pasted address · ${short(bound)}` :
         pendingAddress ? `Pasted address waiting · active from ${formatUtcDateTime(pendingAddress.activeAt)}` : 'Connect a wallet after verifying GitHub.')}
-        <div id="claim-step-2" hidden={!open(2)}><p>Choose the Solana wallet that receives your SOL. You sign a message to prove it’s yours; it does not spend SOL or grant access to your funds. No wallet extension? Paste your wallet’s address instead; a pasted address starts receiving payouts after a 48-hour hold.</p>
+        <div id="claim-step-2" hidden={!open(2)}><p>Choose the Solana wallet that receives your SOL. You sign a message to prove it’s yours; it does not spend SOL or grant access to your funds. No wallet extension? Paste your wallet’s address instead; a pasted address starts receiving payouts after a 24-hour hold.</p>
           {!bound && !pendingAddress && <WalletExplainer/>}
           <PayoutDestination repoId={repoId} active={bound ? { wallet: bound, method: boundMethod, boundAt: beneficiaryBoundAt } : null} pending={pendingAddress}
             canManage={githubReady} onChanged={destinationChanged}/>

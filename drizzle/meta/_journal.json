@@ -589,6 +589,13 @@
       "when": 1793000000000,
       "tag": "0086_trading_controls",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1793100000000,
+      "tag": "0087_builder_payouts",
+      "breakpoints": true
     }
   ]
 }

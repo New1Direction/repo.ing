@@ -52,7 +52,7 @@ export async function POST(request) {
       if (credits) back.searchParams.set('credits', '1')
     } catch (error) {
       back.searchParams.set('error', error.message === 'Payout signer needs SOL for network costs' ? 'payout-unavailable' :
-        /48-hour hold/.test(error.message) ? 'payout-address-pending' :
+        /24-hour hold/.test(error.message) ? 'payout-address-pending' :
         /review|amount changed/i.test(error.message) ? 'review-changed' :
           /GitHub|permission/.test(error.message) ? 'verification-failed' : 'claim-failed')
     }
