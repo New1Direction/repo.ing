@@ -21,6 +21,12 @@ test('selected fees use the live ceiling while gates retain their discrete menu'
  for(const creatorFeeBps of [0,99,137])assert.equal(isOpenCreatorFeeChoice({creatorFeeBps},chain),false)
  for(const creatorFeeBps of chain.creatorFeeBps)assert.ok(isOpenCreatorFeeChoice({creatorFeeBps},chain))
 })
+test('a continuous fee (no fee menu on chain) is any whole bps from 0 to the ceiling; an empty filtered menu is not',()=>{
+ const chain={creatorFeeBps:[],continuousCreatorFee:true,maxCreatorFeeBps:500}
+ for(const creatorFeeBps of [0,1,137,500])assert.ok(isOpenCreatorFeeChoice({creatorFeeBps},chain))
+ for(const creatorFeeBps of ['',null,-1,1.5,501,NaN])assert.equal(isOpenCreatorFeeChoice({creatorFeeBps},chain),false)
+ assert.equal(isOpenCreatorFeeChoice({creatorFeeBps:100},{creatorFeeBps:[],maxCreatorFeeBps:500}),false)
+})
 function withMenus(f,{creatorFeeBps,capBps,ceiling}={}){
  const profile=JSON.parse(f.profile.json);profile.capability={...profile.capability,...menus,creatorFeeBps:DEFAULT_CREATOR_FEE_BPS}
  const json=JSON.stringify(profile);f.profile={...f.profile,json,expectedSha256:createHash('sha256').update(json).digest('hex')}

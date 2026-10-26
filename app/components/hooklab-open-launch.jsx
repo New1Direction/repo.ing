@@ -15,7 +15,7 @@ import { percent, isOpenCreatorFeeChoice } from '../../src/hooklab-launch-menus.
 import { coinImageUrl, telegramHandle, websiteUrl, xHandle } from '../../src/hooklab-coin-profile.mjs'
 import { launchHookInput, reservationInput } from '../lib/hooklab-native-launch-form.mjs'
 import { signReviewedLaunch } from '../lib/hooklab-launch-wallet.mjs'
-import { OPEN_LAUNCH_NOTE, OPEN_LAUNCH_STEPS, TWO_APPROVALS, THREE_APPROVALS, defaultOpenChoices, menuChoice, nextOpenLaunchAction, openCreationProblem, openLaunchCosts,
+import { OPEN_LAUNCH_NOTE, OPEN_LAUNCH_STEPS, TWO_APPROVALS, THREE_APPROVALS, continuousFeeChoice, defaultOpenChoices, menuChoice, nextOpenLaunchAction, openCreationProblem, openLaunchCosts,
   openLaunchPrice, openLaunchStatus, openMenus, solOrWallet, sameLaunchHook, SELECTED_HOOK_NOTE } from '../lib/hooklab-open-launch.mjs'
 
 const REQUESTS = '/api/hook-lab/launch-requests', LAUNCH = '/api/hook-lab/native-launch'
@@ -181,7 +181,8 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   const refresh = useCallback(async () => {
     try {
       const value = await available(); setAvailability(value)
-      setCoin(current => step !== 'coin' ? current : ({ ...current, creatorFeeBps: current.selectedHook || current.hookKind === 'selected' ? current.creatorFeeBps : menuChoice(value.openCreation?.creatorFeeBps, current.creatorFeeBps, current.creatorFeeBps),
+      setCoin(current => step !== 'coin' ? current : ({ ...current, creatorFeeBps: current.selectedHook || current.hookKind === 'selected' ? current.creatorFeeBps
+          : value.openCreation?.continuousCreatorFee ? continuousFeeChoice(value.openCreation, current.creatorFeeBps) : menuChoice(value.openCreation?.creatorFeeBps, current.creatorFeeBps, current.creatorFeeBps),
         capBps: current.selectedHook || current.hookKind === 'selected' ? 0 : menuChoice(value.openCreation?.capBps, current.capBps, current.capBps) }))
       if (!session.signedIn) return
       const mine = await post(REQUESTS, { action: 'get' }); setRequest(mine.request ?? null)

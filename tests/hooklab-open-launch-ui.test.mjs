@@ -248,3 +248,21 @@ test('a self-serve creator\'s operation responses carry what the guided step nee
   assert.deepEqual(shown.review.requiredSigners, [creator, mint]); assert.equal(shown.status, 'submitted'); assert.equal(shown.settlement.executionStatus, 'finalized-executed')
   assert.equal(nextOpenLaunchAction(shown, { wallet: creator, now: 1 }), 'reconcile', 'the guided step still knows its next move')
 })
+
+// The independent stack retired the fee menu (owner 2026-10-26): the chain then offers any whole fee from 0 to its ceiling.
+const continuous = { ...openCreation, creatorFeeBps: [], continuousCreatorFee: true, maxCreatorFeeBps: 500 }
+test('with no fee menu on chain the creator types a fee from 0% to the ceiling, not presets', async () => {
+  const { openCreationProblem, defaultOpenChoices } = await import('../app/lib/hooklab-open-launch.mjs')
+  assert.equal(openCreationProblem(continuous, coin), '')
+  assert.equal(defaultOpenChoices(continuous).creatorFeeBps, 100)
+  assert.equal(defaultOpenChoices({ ...continuous, maxCreatorFeeBps: 50 }).creatorFeeBps, 50, 'the default never exceeds the ceiling')
+  const markup = html(h(HookOpenLaunch, { genesisHash, initial: { availability: { ...availability, openCreation: continuous }, coin: { ...coin, creatorFeeBps: 137 } } }), { wallet: true })
+  assert.match(markup, /id="creator-fee-percent"/)
+  assert.match(markup, /min="0" max="5" step="0.01"/)
+  assert.match(markup, /value="1.37"/)
+  assert.match(text(markup), /from 0% to 5%/)
+})
+test('the launch-requests API sends whether the creator fee is continuous', async () => {
+  const { publicOpenCreation } = await import('../app/lib/hooklab-launch-requests.mjs')
+  assert.equal(publicOpenCreation(continuous).continuousCreatorFee, true)
+})

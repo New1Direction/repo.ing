@@ -357,8 +357,9 @@ function compileLaunch(input, fixture, canary = false, open = false) {
     const menus = parseLaunchConfigReserved(Buffer.from(c.reserved))
     check(native, 'Native launches are off on chain; an open launch is native SOL only')
     check(menus.open, 'Open creation is off on chain')
-    // Selected fees need not be menu entries; both paths retain the lower of the two chain ceilings.
-    check((selectedBranch || menus.creatorFeeBps.includes(r.creatorFeeBps)) && r.creatorFeeBps <= Math.min(c.max_creator_fee_bps, c.rule_bounds.max_rules_fee_bps),
+    // Selected fees need not be menu entries, nor any fee when the chain has no fee menu (the independent stack retired it);
+    // every path retains the lower of the two chain ceilings.
+    check((selectedBranch || !menus.creatorFeeBps.length || menus.creatorFeeBps.includes(r.creatorFeeBps)) && r.creatorFeeBps <= Math.min(c.max_creator_fee_bps, c.rule_bounds.max_rules_fee_bps),
       selectedBranch ? 'The creator fee exceeds the current chain ceiling' : 'The creator fee is not on the on-chain menu under the current ceiling')
     check(selectedBranch || menus.capBps.includes(r.capBps), 'The wallet cap is not on the on-chain menu')
     check(r.feePayer === r.creator, 'An open launch is signed and paid by its creator: the creator pays')

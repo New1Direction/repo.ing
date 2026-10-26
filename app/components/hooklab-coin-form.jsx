@@ -195,6 +195,12 @@ export function HookBlocks({ form, set, disabled, menus = null, allowSelectedHoo
           disabled={disabled || !Number.isInteger(menus?.maxCreatorFeeBps)} aria-describedby="selected-creator-fee-limit"
           onChange={e => set({ creatorFeeBps: e.target.value === '' ? '' : Number(e.target.value) })}/>
         <p id="selected-creator-fee-limit">{Number.isInteger(menus?.maxCreatorFeeBps) ? `Choose an integer from 0 to ${menus.maxCreatorFeeBps} bps (100 bps = 1%). Current chain ceiling.` : 'Waiting for the current chain fee ceiling.'}</p>
+      </> : menus?.continuousCreatorFee ? <>
+        <label className="field-label" htmlFor="creator-fee-percent">Creator fee (%)</label>
+        <input id="creator-fee-percent" className="field-input" type="number" min={0} max={menus.maxCreatorFeeBps / 100} step={0.01} required
+          value={form.creatorFeeBps === '' ? '' : form.creatorFeeBps / 100} disabled={disabled} aria-describedby="creator-fee-limit"
+          onChange={e => set({ creatorFeeBps: e.target.value === '' ? '' : Math.round(Number(e.target.value) * 100) })}/>
+        <p id="creator-fee-limit">Choose any fee from 0% to {percent(menus.maxCreatorFeeBps)}, in steps of 0.01%.</p>
       </> : <Presets label="Creator fee" choices={fees} value={form.creatorFeeBps} onChange={creatorFeeBps => set({ creatorFeeBps })} disabled={disabled} format={percent}/>}
       <p className="launch-buy-hint">{selected ? 'The settled creator fee is the gross fee: repo.ing receives floor(gross / 4); the creator receives the remainder, then any configured author share is deducted. Custom SOL cuts join the same quote fee budget, not an additional SOL charge. The token tax split is unchanged. Amounts are checked before each approval.' : `Every buy and sell pays ${percent(form.creatorFeeBps)}. You earn ${creatorCut(form.creatorFeeBps)} of each trade in SOL; repo.ing keeps ${platformCut(form.creatorFeeBps)}.`}</p>
     </article>

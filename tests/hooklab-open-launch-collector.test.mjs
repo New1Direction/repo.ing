@@ -52,3 +52,9 @@ test('settlement expects OpenLaunchCreated before LaunchCreated, then NativeLaun
   assert.ok(!expected.accounts.some(a => a.address === plan.addresses.authorization), 'an open launch has no creator grant to consume')
   assert.equal(expected.native, true)
 }))
+
+test('the collector takes any fee under the ceiling when the chain has no fee menu (continuous fee)', { skip }, () => withLocalAcceptance(async () => {
+  const continuous = { native: true, open: true, creatorFeeBps: [], capBps: [100, 200, 300, 500] }
+  assert.equal((await collect(openState({ reserved: continuous }))).plan.creatorFeeBps, 100)
+  await assert.rejects(collect(openState({ reserved: continuous, ceiling: 50 })), { code: 'HOOKLAB_USER_REFUSAL', message: openLaunchErrorText(6121) })
+}))

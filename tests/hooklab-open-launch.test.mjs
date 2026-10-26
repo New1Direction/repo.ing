@@ -75,3 +75,17 @@ test('the fee menu on offer is the on-chain menu under the current ceiling: a fe
   assert.deepEqual([...capped.creatorFeeBps], [50]); assert.equal(capped.maxCreatorFeeBps, 50)
   assert.throws(() => compileOpenLaunchReview(openInput(rules)), /under the current ceiling/)
 }))
+
+// The independent stack retired the fee menu (owner 2026-10-26): with no fee menu on chain, any whole fee from 0 to the
+// ceiling launches. A menu that the ceiling filtered down to nothing is still a menu: that is not a continuous fee.
+test('an empty on-chain fee menu means a continuous creator fee from 0 to the ceiling', { skip }, () => withLocalAcceptance(async () => {
+  const continuous = { native: true, open: true, creatorFeeBps: [], capBps: OWNER_MENUS.capBps }
+  const world = openState({ reserved: continuous })
+  const chain = await readOpenCreation(openConnections(world), world.programs)
+  assert.deepEqual({ fees: [...chain.creatorFeeBps], continuous: chain.continuousCreatorFee }, { fees: [], continuous: true })
+  assert.equal(compileOpenLaunchReview(openInput(world)).creatorFeeBps, 100, 'this coin chose 100, on no menu')
+  assert.throws(() => compileOpenLaunchReview(openInput(openState({ reserved: continuous, ceiling: 50 }))), /exceeds the current chain ceiling|under the current ceiling/)
+  const filtered = openState({ ceiling: 40 }), old = await readOpenCreation(openConnections(filtered), filtered.programs)
+  assert.deepEqual({ fees: [...old.creatorFeeBps], continuous: old.continuousCreatorFee }, { fees: [], continuous: false })
+  assert.throws(() => compileOpenLaunchReview(openInput(filtered)), /not on the on-chain menu/)
+}))

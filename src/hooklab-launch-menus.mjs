@@ -9,10 +9,11 @@ export const CREATOR_FEE_CEILING_BPS=Math.max(...CREATOR_FEE_BPS_CHOICES)
 
 export const percent=bps=>`${bps/100}%`
 
-// The open-creation projection exposes the lower of the creator and rules ceilings.
+// The open-creation projection exposes the lower of the creator and rules ceilings. Selected hooks, and every launch on a
+// chain with no fee menu (continuousCreatorFee: the independent stack retired it), take any whole fee up to that ceiling.
 export function isOpenCreatorFeeChoice({creatorFeeBps,selectedHook,policyKind},menus){
  return Number.isInteger(creatorFeeBps)&&creatorFeeBps>=0&&
-  (selectedHook||policyKind==='selected-hook'?Number.isInteger(menus.maxCreatorFeeBps)&&creatorFeeBps<=menus.maxCreatorFeeBps:menus.creatorFeeBps.includes(creatorFeeBps))
+  (selectedHook||policyKind==='selected-hook'||menus.continuousCreatorFee===true?Number.isInteger(menus.maxCreatorFeeBps)&&creatorFeeBps<=menus.maxCreatorFeeBps:menus.creatorFeeBps.includes(creatorFeeBps))
 }
 
 // A profile without menus keeps its single reviewed fee and any cap the program accepts.

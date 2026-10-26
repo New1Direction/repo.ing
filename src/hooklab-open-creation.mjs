@@ -56,10 +56,11 @@ export async function readOpenCreation(connections, programs) {
   const rent = await openLaunchRent(size => connections[0].connection.getMinimumBalanceForRentExemption(size, 'finalized'))
   // The creator fees on offer: the on-chain menu under the current ceiling, the lower of max_creator_fee_bps and
   // rule_bounds.max_rules_fee_bps (the program does not re-check its menu when the owner lowers either). The site offers
-  // and accepts only these.
+  // and accepts only these. With no fee menu on chain (the independent stack retired it), any whole fee up to the ceiling.
   const ceiling = openCreatorFeeCeiling(c)
   return Object.freeze({ native: reserved.native, open: reserved.open, paused: c.paused || g.state.gates.creation,
     creatorFeeBps: Object.freeze(reserved.creatorFeeBps.filter(bps => bps <= ceiling)), capBps: Object.freeze([...reserved.capBps]), maxCreatorFeeBps: ceiling,
+    continuousCreatorFee: reserved.creatorFeeBps.length === 0,
     launchFeeLamports: c.launch_fee_lamports.toString(), minVirtualQuote: c.min_virtual_quote.toString(), maxVirtualQuote: c.max_virtual_quote.toString(),
     ...(swapConfig ? { poolCreationFeeLamports: coders.swap.accounts.decode('Config', swapConfig).pool_creation_fee_lamports.toString() } : {}),
     // rentLamports: what the creator locks (preparation and launch); guardRentLamports: the launch's signed rent bound.

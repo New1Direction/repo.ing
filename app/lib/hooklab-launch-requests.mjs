@@ -34,7 +34,7 @@ const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Contro
 const enabled=env=>siteLaunchesEnabled(env)&&env.HOOK_WALLET_IDENTITY_ENABLED==='true'
 // The chain's open-creation state (menus, fee, pause) through the installed launch runtime's two providers. Only these
 // fields reach the browser: nothing about the stack's programs or quote marker is ever sent to customers.
-const PUBLIC_OPEN_CREATION=['native','open','paused','creatorFeeBps','capBps','maxCreatorFeeBps','launchFeeLamports','poolCreationFeeLamports','rentLamports','preparationRentLamports','launchRentLamports','guardRentLamports','minVirtualQuote','maxVirtualQuote','selectedHooksEnabled']
+const PUBLIC_OPEN_CREATION=['native','open','paused','creatorFeeBps','continuousCreatorFee','capBps','maxCreatorFeeBps','launchFeeLamports','poolCreationFeeLamports','rentLamports','preparationRentLamports','launchRentLamports','guardRentLamports','minVirtualQuote','maxVirtualQuote','selectedHooksEnabled']
 export const publicOpenCreation=chain=>chain?Object.fromEntries(PUBLIC_OPEN_CREATION.filter(key=>chain[key]!==undefined).map(key=>[key,chain[key]])):null
 const chainOpenCreation=async()=>{const service=nativeLaunchRuntime();if(!service?.openLaunches)return null;return service.openCreation()}
 export function createLaunchRequestsHandler({env=process.env,configuration=walletIdentityConfiguration,database=createHookLabDatabasePool,
@@ -68,7 +68,7 @@ export function createLaunchRequestsHandler({env=process.env,configuration=walle
    let launchRequest
    if(input.action==='create'&&open&&!(chain?.native&&chain.open&&!chain.paused))return reply({error:'Launches are paused right now. Try again later.'},409)
    if(input.action==='create')launchRequest=await approvals.createRequest(owner.wallet,{id:input.requestId,name:input.name,symbol:input.symbol,uri:(input.selectedHook?selectedCoinMetadataUri:coinMetadataUri)(config.origin,input.requestId),creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,...(input.selectedHook?{selectedHook:input.selectedHook,hookPublication:input.hookPublication,...Object.fromEntries(['quoteCut','authorShareBps','rules'].filter(k=>input[k]!==undefined).map(k=>[k,input[k]]))}:{})},profile,
-    open?{source:'open',menus:{creatorFeeBps:chain.creatorFeeBps,maxCreatorFeeBps:chain.maxCreatorFeeBps,capBps:chain.capBps}}:{})
+    open?{source:'open',menus:{creatorFeeBps:chain.creatorFeeBps,continuousCreatorFee:chain.continuousCreatorFee,maxCreatorFeeBps:chain.maxCreatorFeeBps,capBps:chain.capBps}}:{})
    else if(input.action==='cancel')launchRequest=await approvals.cancelRequest(owner.wallet,input.requestId)
    else launchRequest=await approvals.requestFor(owner.wallet)
    return reply({status:'available',request:launchRequest,...(open?{open:true,openCreation:publicOpenCreation(chain)}:await approvals.availability())})
