@@ -20,7 +20,6 @@ import { connection } from 'next/server'
 export function recoveryNotice(ordinaryLaunches) {
   return [
     ordinaryLaunches ? null : 'New launches are paused.',
-    'Builder fee claims open soon.',
     'Hooks and bundles are not live yet.',
     'Partner fees on markets from older launch configs can still be claimed by a retired key.',
   ].filter(Boolean).join(' ')
