@@ -1,9 +1,9 @@
 import { createGitHubAppVerifier } from '../../src/github-verification.mjs'
-import { database } from './server.mjs'
+import { claimsDatabase } from './server.mjs'
 import { publicOrigin } from './origin.mjs'
 
 export function sessionVerifier(session, requestUrl, { dashboard = false } = {}) {
-  const verifier = createGitHubAppVerifier({ pool: database(), clientId: process.env.GITHUB_APP_CLIENT_ID,
+  const verifier = createGitHubAppVerifier({ pool: claimsDatabase(), clientId: process.env.GITHUB_APP_CLIENT_ID,
     clientSecret: process.env.GITHUB_APP_CLIENT_SECRET, redirectUri: `${publicOrigin(requestUrl)}/api/github/callback` })
   return { async verifyCurrentAuthority({ githubRepoId }) {
     if (!session || (!dashboard && String(githubRepoId) !== session.repoId) || session.expiresAt <= Date.now()) throw new Error('GitHub session expired. Verify again.')

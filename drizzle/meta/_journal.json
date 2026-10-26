@@ -596,6 +596,13 @@
       "when": 1793100000000,
       "tag": "0087_builder_payouts",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1793200000000,
+      "tag": "0088_claims_open_for_all",
+      "breakpoints": true
     }
   ]
 }

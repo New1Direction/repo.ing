@@ -31,6 +31,17 @@ export function database() {
   return globalThis.__gitfunPool
 }
 
+// The builder-claim pool: only the dedicated repoing_builder_claims role (claim tables only, no trading or ledger tables),
+// over verified TLS. Claim, binding and GitHub-verification writes use it; anything else answers null and they fail closed.
+export function claimsDatabase() {
+  let url
+  try { url = new URL(process.env.CLAIMS_DATABASE_URL) } catch { return null }
+  if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.username !== 'repoing_builder_claims' ||
+      url.searchParams.get('sslmode') !== 'verify-full') return null
+  if (!globalThis.__repoingClaimsPool) globalThis.__repoingClaimsPool = createDatabasePool({ connectionString: url.toString(), max: 5, idleTimeoutMillis: 60_000 })
+  return globalThis.__repoingClaimsPool
+}
+
 // One RPC meter per web process: a {"rpcUsage":…} line per minute while pages read the chain, and a provider
 // answering HTTP 429 (rate limit or exhausted credits) is backed off instead of retried by every request.
 function rpcFetchFor(url) {

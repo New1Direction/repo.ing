@@ -24,6 +24,9 @@ export const PAYOUT_WALLET_CAP_LAMPORTS = 2_000_000_000n
 export const UNCLAIMED_AFTER_MONTHS = 12
 // Never opened and never swept (owner, 2026-10-25). repo_claim_windows refuses them too.
 export const NEVER_SWEPT_REPOS = Object.freeze(['1250276806', '1332056763'])
+// Closed even when claims are open for all (owner, 2026-10-26): the never-swept repositories and those whose owed fees the
+// vault does not cover yet. claim_closed_repos holds the same list; either one keeps a repository closed.
+export const CLOSED_CLAIM_REPOS = Object.freeze([...NEVER_SWEPT_REPOS, '1388219884', '1391948723'])
 // Below this a claim waits for more fees: the payout wallet pays the network fee, so dust payouts only drain it.
 export const MIN_PAYOUT_LAMPORTS = 1_000_000n
 // At most this many unused, unexpired challenges per repository.
@@ -75,9 +78,15 @@ export async function payoutControls(db) {
   } catch { return { enabled: false } }
 }
 
+// Open when the repository has its own window, or when claims are open for all (claim_controls.opened_for_all_at); never for a
+// closed repository. The opening date starts the 12-month unclaimed window.
 export async function claimWindow(db, repoId) {
-  const { rows: [row] } = await db.query('select opened_at as "openedAt" from repo_claim_windows where github_repo_id = $1', [repoIdOf(repoId)])
-  return row ? { openedAt: row.openedAt, unclaimedAfter: unclaimedSweepDate(row.openedAt) } : null
+  const id = repoIdOf(repoId)
+  if (CLOSED_CLAIM_REPOS.includes(id)) return null
+  const { rows: [row] } = await db.query(`select coalesce(w.opened_at, c.opened_for_all_at) as "openedAt"
+      from claim_controls c left join repo_claim_windows w on w.github_repo_id = $1
+      where c.key = 'builder_payouts' and not exists (select 1 from claim_closed_repos x where x.github_repo_id = $1)`, [id])
+  return row?.openedAt ? { openedAt: row.openedAt, unclaimedAfter: unclaimedSweepDate(row.openedAt) } : null
 }
 
 // What the ledger still owes: SOL credits minus every settled payout (pool, payout wallet and vault payouts all settle a

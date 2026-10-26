@@ -2,7 +2,7 @@ import { BindingReplacementHeld, createWalletBinding } from '../../../src/wallet
 import { createPayoutAddresses } from '../../../src/payout-address.mjs'
 import { backerLabels } from '../../lib/backers.mjs'
 import { notifyPayoutAddressChange } from '../../lib/payout-notice.mjs'
-import { chain, database } from '../../lib/server.mjs'
+import { chain, claimsDatabase } from '../../lib/server.mjs'
 import { githubSessionCookie, readGithubSession, assertSameOrigin } from '../../lib/auth.mjs'
 import { sessionVerifier } from '../../lib/github-session.mjs'
 import { publicOrigin } from '../../lib/origin.mjs'
@@ -17,7 +17,7 @@ export async function POST(request) {
     const body = await request.json()
     if (String(body.githubRepoId) !== session.repoId) throw new Error('Repository verification mismatch')
     await sessionVerifier(session, request.url).verifyCurrentAuthority({ githubRepoId: session.repoId })
-    const binder = createWalletBinding({ pool: database() })
+    const binder = createWalletBinding({ pool: claimsDatabase() })
     if (body.action === 'challenge') {
       const challenge = await binder.requestChallenge({ githubRepoId: session.repoId, githubUserId: session.githubUserId, wallet: body.wallet })
       return Response.json({ nonce: challenge.nonce, message: challenge.message, expiresAt: challenge.expiresAt })
@@ -31,7 +31,7 @@ export async function POST(request) {
         if (!(error instanceof BindingReplacementHeld)) throw error
         // The signed wallet replaces a different one: it waits the 24-hour hold, the maintainer is emailed, an admin may cancel.
         const verifier = sessionVerifier(session, request.url)
-        const result = await createPayoutAddresses({ pool: database(), connection: chain(), reserved: [...backerLabels().keys()] })
+        const result = await createPayoutAddresses({ pool: claimsDatabase(), connection: chain(), reserved: [...backerLabels().keys()] })
           .request({ githubRepoId: session.repoId, address: error.wallet, confirm: error.wallet.slice(-4),
             verifyAuthority: input => verifier.verifyCurrentAuthority(input) })
         notifyPayoutAddressChange(request, { githubUserIds: result.notify, key: result.id, repoIds: [result.repoId], wallet: result.wallet,

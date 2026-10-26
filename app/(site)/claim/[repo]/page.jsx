@@ -13,7 +13,7 @@ import { PackSharesClaim } from '../../../components/pack-shares-claim'
 import { ClaimPageDecision } from '../../../components/maintainer-declined'
 import { ClaimBuilderTools } from '../../../components/builder-tools'
 import { githubAppConfigurationUrl, githubInstallationForRepository } from '../../../../src/github-app-auth.mjs'
-import { marketByRepo, feeStatus, database, chain, creatorSigner } from '../../../lib/server.mjs'
+import { marketByRepo, feeStatus, database, claimsDatabase, chain, creatorSigner } from '../../../lib/server.mjs'
 import { claimWindow, owedLamports, payoutControls } from '../../../../src/builder-payouts.mjs'
 import { displayRepository } from '../../../lib/repository-display.mjs'
 import { formatUnits, formatSolDisplay, formatUsdEstimate } from '../../../lib/format.mjs'
@@ -126,8 +126,10 @@ async function ClaimContent({ market, repo, query }) {
     {BigInt(market.platformCollected ?? '0') > 0n && <p>Platform collections: <strong title={`${formatUnits(market.platformCollected)} SOL`}>{formatSolDisplay(market.platformCollected)} SOL</strong>, not paid to the owner. <Link href="/how-it-works#builder-collections">Collection policy</Link></p>}
   </div>
   // Builder payouts from the capped payout wallet (src/builder-payouts.mjs): the ledger's owed amount, the claim window and the switch.
-  // Fail closed: anything unreadable (a role without the claim tables, a database error) shows payouts paused.
-  const payoutClaim = await Promise.all([owedLamports(pool, repoId), claimWindow(pool, repoId), payoutControls(pool)])
+  // Fail closed: anything unreadable (no claims pool, a database error) shows payouts paused. The claim tables are read through
+  // the claims role only; the page's display reads stay on the read-only pool.
+  const claims = claimsDatabase()
+  const payoutClaim = await Promise.all([owedLamports(claims, repoId), claimWindow(claims, repoId), payoutControls(claims)])
     .then(([owed, windowRow, controls]) => ({ owedLamports: owed.toString(), paused: !controls.enabled,
       claimWindow: windowRow && { openedAt: new Date(windowRow.openedAt).toISOString(), unclaimedAfter: windowRow.unclaimedAfter.toISOString() } }))
     .catch(() => ({ owedLamports: '0', paused: true, claimWindow: null }))

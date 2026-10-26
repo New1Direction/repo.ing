@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createGitHubAppVerifier } from '../../../../src/github-verification.mjs'
-import { database } from '../../../lib/server.mjs'
+import { claimsDatabase, database } from '../../../lib/server.mjs'
 import { IDENTITY_SIGN_IN_PAGES, githubSessionCookie, unseal, cookieOptions, encryptGithubSession, newGithubSession, GITHUB_SESSION_SECONDS } from '../../../lib/auth.mjs'
 import { publicOrigin } from '../../../lib/origin.mjs'
 import { contributorWalletAvailable } from '../../../lib/contributor-wallet.mjs'
@@ -32,7 +32,7 @@ export async function GET(request) {
   // GitHub sends ?error=access_denied (and no code) when the person presses Cancel: nothing to exchange.
   if (!githubError) {
     try {
-      const verifier = createGitHubAppVerifier({ pool: database(), clientId: process.env.GITHUB_APP_CLIENT_ID,
+      const verifier = createGitHubAppVerifier({ pool: claimsDatabase(), clientId: process.env.GITHUB_APP_CLIENT_ID,
         clientSecret: process.env.GITHUB_APP_CLIENT_SECRET, redirectUri: `${origin}/api/github/callback` })
       const callback = { githubRepoId: stateSession.repoId, expectedGithubRepoId: stateSession.repoId,
         code: request.nextUrl.searchParams.get('code'), state: request.nextUrl.searchParams.get('state'),

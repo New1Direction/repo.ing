@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createGitHubAppVerifier } from '../../../../src/github-verification.mjs'
 import { githubInstallationForRepository } from '../../../../src/github-app-auth.mjs'
-import { database, marketByRepo, repositoryById } from '../../../lib/server.mjs'
+import { claimsDatabase, database, marketByRepo, repositoryById } from '../../../lib/server.mjs'
 import { IDENTITY_SIGN_IN_PAGES, seal, cookieOptions } from '../../../lib/auth.mjs'
 import { publicOrigin } from '../../../lib/origin.mjs'
 import { contributorWalletAvailable } from '../../../lib/contributor-wallet.mjs'
@@ -27,7 +27,7 @@ export async function GET(request) {
   if (mode === 'credits' && !creditPacksAvailable()) return NextResponse.redirect(new URL('/explore', origin))
   if (Object.hasOwn(IDENTITY_SIGN_IN_PAGES, mode)) {
     try {
-      const verifier = createGitHubAppVerifier({ pool: database(), clientId: process.env.GITHUB_APP_CLIENT_ID,
+      const verifier = createGitHubAppVerifier({ pool: claimsDatabase(), clientId: process.env.GITHUB_APP_CLIENT_ID,
         clientSecret: process.env.GITHUB_APP_CLIENT_SECRET, redirectUri: `${origin}/api/github/callback` })
       const authorization = verifier.authorizationUrl()
       const response = NextResponse.redirect(authorization.url)
@@ -50,7 +50,7 @@ export async function GET(request) {
     }
   } catch { return NextResponse.redirect(new URL(withFunnelSource(`/claim/${repoId}?error=github-unavailable`, src), origin)) }
   const redirectUri = `${origin}/api/github/callback`
-  const verifier = createGitHubAppVerifier({ pool: database(), clientId,
+  const verifier = createGitHubAppVerifier({ pool: claimsDatabase(), clientId,
     clientSecret: process.env.GITHUB_APP_CLIENT_SECRET, redirectUri })
   const authorization = verifier.authorizationUrl({ githubRepoId: repoId })
   const response = NextResponse.redirect(authorization.url)

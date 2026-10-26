@@ -31,6 +31,15 @@ const testBindingNames = ['EXISTING_MARKET_TEST_PLAN', 'EXISTING_MARKET_TEST_SUB
 const launchBindingNames = ['ORDINARY_LAUNCH_RECOVERY_ENABLED', 'ORDINARY_LAUNCH_DATABASE_URL', 'ORDINARY_LAUNCH_CONFIG', 'ORDINARY_LAUNCH_BOOTSTRAP_SECRET_KEY',
   'GITHUB_APP_PRIVATE_KEY_BASE64', 'GITHUB_APP_CLIENT_ID', 'GITHUB_APP_INSTALLATION_ID']
 const accountingBindingNames = ['ACCOUNTING_RECOVERY_ENABLED', 'ACCOUNTING_DATABASE_URL', 'ACCOUNTING_CUSTODY_SHA256']
+// Builder claims (owner-approved, 2026-10-26): the claims-only database role, the GitHub OAuth client secret and the capped
+// payout wallet. Present together or not at all; the claim routes below open only with them.
+const claimBindingNames = ['CLAIMS_RECOVERY_ENABLED', 'CLAIMS_DATABASE_URL', 'GITHUB_APP_CLIENT_SECRET', 'BUILDER_PAYOUT_SECRET_KEY']
+const claimsEnabled = bindings => bindings.EXISTING_MARKET_TRADING_STAGE === 'live' && bindings.CLAIMS_RECOVERY_ENABLED === 'true'
+// The only routes that carry cookies, in and out (owner-approved list). Every other route keeps stripping both.
+const claimPage = /^\/claim\/[1-9]\d{0,15}$/
+const claimRoute = (url, method) => ['GET', 'HEAD'].includes(method)
+  ? claimPage.test(url.pathname) || ['/api/github/start', '/api/github/callback'].includes(url.pathname)
+  : method === 'POST' && ['/api/bind', '/api/claim/payout'].includes(url.pathname)
 const ordinaryLaunchEnabled = bindings => bindings.EXISTING_MARKET_TRADING_STAGE === 'live' && bindings.ORDINARY_LAUNCH_RECOVERY_ENABLED === 'true'
 const ordinaryRepoPath = path => {
   const id = /^\/(?:launch|api\/repo-images)\/([1-9]\d{0,15})$/.exec(path)?.[1]
@@ -43,7 +52,7 @@ async function sha256(value) {
 }
 
 function snapshotBindings(env) {
-  return Object.fromEntries([...bindingNames, ...testBindingNames, ...launchBindingNames, ...accountingBindingNames, 'SOLANA_RPC_URL'].map(name => [name, env[name]]))
+  return Object.fromEntries([...bindingNames, ...testBindingNames, ...launchBindingNames, ...accountingBindingNames, ...claimBindingNames, 'SOLANA_RPC_URL'].map(name => [name, env[name]]))
 }
 
 async function validateBindings(bindings) {
@@ -72,6 +81,20 @@ async function validateBindings(bindings) {
         url.pathname !== '/repoing_operational' || url.searchParams.get('sslmode') !== 'verify-full' ||
         !/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(bindings.ORDINARY_LAUNCH_BOOTSTRAP_SECRET_KEY ?? '')) {
       throw Error('Ordinary launch bindings missing or mismatched')
+    }
+  }
+  if (bindings.CLAIMS_RECOVERY_ENABLED === 'true') {
+    let url
+    try { url = new URL(bindings.CLAIMS_DATABASE_URL) } catch { /* Refuse without logging credentials. */ }
+    let payout = null
+    try { payout = bindings.BUILDER_PAYOUT_SECRET_KEY?.trim().startsWith('[') ? JSON.parse(bindings.BUILDER_PAYOUT_SECRET_KEY) : null } catch { /* refused below */ }
+    if (claimBindingNames.some(name => typeof bindings[name] !== 'string' || !bindings[name].trim()) || !claimsEnabled(bindings) ||
+        !url || !['postgres:', 'postgresql:'].includes(url.protocol) || url.username !== 'repoing_builder_claims' ||
+        url.pathname !== '/repoing_operational' || url.searchParams.get('sslmode') !== 'verify-full' ||
+        typeof bindings.GITHUB_APP_CLIENT_ID !== 'string' || !bindings.GITHUB_APP_CLIENT_ID.trim() ||
+        !(Array.isArray(payout) ? payout.length === 64 && payout.every(b => Number.isInteger(b) && b >= 0 && b < 256)
+          : /^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(bindings.BUILDER_PAYOUT_SECRET_KEY))) {
+      throw Error('Claims bindings missing or mismatched')
     }
   }
   if (bindings.EXISTING_MARKET_TRADING_STAGE === 'test' &&
@@ -154,6 +177,20 @@ async function tradeBoundary(request, bindings) {
   return new Request(request.url, { method: request.method, headers, body, redirect: 'manual' })
 }
 
+// A claim route request: the session cookie in, same-origin JSON bodies of at most 16 KB for the two POSTs. null refuses it.
+async function claimRequest(request, url) {
+  const headers = new Headers()
+  for (const name of ['accept', 'accept-language', 'cookie', 'content-type', 'origin', 'rsc', 'next-router-state-tree',
+    'next-router-prefetch', 'next-url', 'cf-connecting-ip']) {
+    if (request.headers.has(name)) headers.set(name, request.headers.get(name))
+  }
+  if (request.method !== 'POST') return new Request(request.url, { method: request.method, headers, redirect: 'manual' })
+  if (request.headers.get('origin') !== url.origin || request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') return null
+  const body = await request.arrayBuffer().catch(() => null)
+  if (!body || body.byteLength > 16384) return null
+  return new Request(request.url, { method: 'POST', headers, body, redirect: 'manual' })
+}
+
 const STALE_CONTAINER = /^(Error proxying request to container|Container suddenly disconnected)/
 
 export class PublicSite extends Container {
@@ -207,6 +244,8 @@ export class PublicSite extends Container {
         ...ordinaryLaunchEnabled(bindings) ? Object.fromEntries(launchBindingNames.slice(1).map(name => [name, bindings[name]])) : {},
         ACCOUNTING_RECOVERY_ENABLED: bindings.ACCOUNTING_RECOVERY_ENABLED === 'true' ? 'true' : 'false',
         ...bindings.ACCOUNTING_RECOVERY_ENABLED === 'true' ? Object.fromEntries(accountingBindingNames.slice(1).map(name => [name, bindings[name]])) : {},
+        ...claimsEnabled(bindings) ? { ...Object.fromEntries(claimBindingNames.slice(1).map(name => [name, bindings[name]])),
+          GITHUB_APP_CLIENT_ID: bindings.GITHUB_APP_CLIENT_ID } : {},
         SOLANA_RPC_URL: bindings.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com',
         GRADUATION_VERIFICATION_RPC_URL: verificationRpc(bindings.SOLANA_RPC_URL),
         HOOK_PRODUCTION_BOOTSTRAP: 'false',
@@ -265,7 +304,9 @@ export default {
     }
     if (url.hostname.endsWith('.workers.dev')) headers['X-Robots-Tag'] = 'noindex, nofollow, noarchive'
     const bindings = snapshotBindings({ ...env, TRADING_CUSTODY_RECOVERY_JSON: custodyManifest })
-    const boundary = await tradeBoundary(request, bindings)
+    const claim = claimsEnabled(bindings) && claimRoute(url, request.method) && !request.headers.has('upgrade')
+    const boundary = claim ? (await claimRequest(request, url) ?? Response.json({ error: 'CLAIM_REQUEST_REFUSED' }, { status: 403 }))
+      : await tradeBoundary(request, bindings)
     if (boundary instanceof Response) {
       for (const [key, value] of Object.entries(headers)) boundary.headers.set(key, value)
       return boundary
@@ -305,7 +346,7 @@ export default {
       return Response.json({ error: 'TRADING_REVIEW_UNAVAILABLE', reason }, { status: 503, headers: { ...headers, 'Retry-After': '5' } })
     }
     const safe = new Response(response.body, response)
-    safe.headers.delete('set-cookie')
+    if (!claim) safe.headers.delete('set-cookie') // Only the claim routes may set the GitHub session cookies.
     for (const [key, value] of Object.entries(headers)) safe.headers.set(key, value)
     // Only build assets and explicit public illustrations are cacheable. Pages,
     // APIs (including token images), errors and financial responses stay no-store.

@@ -537,3 +537,41 @@ test('a container replaced under the Durable Object is restarted once and reads 
   // An application error is passed through untouched.
   f.runtime.stale = false
 })
+
+test('claim routes carry cookies only with valid claims bindings; every other route still strips them', async () => {
+  const f = await fixture()
+  f.env.EXISTING_MARKET_TRADING_STAGE = 'live'
+  Object.assign(f.env, { ORDINARY_LAUNCH_RECOVERY_ENABLED: 'false', GITHUB_APP_CLIENT_ID: 'Iv1.claims-test' })
+  const claimPaths = [['GET', '/claim/1278009399'], ['GET', '/api/github/start'], ['GET', '/api/github/callback'], ['POST', '/api/bind'], ['POST', '/api/claim/payout']]
+  const send = (method, path, extra = {}) => f.request(path, { method, headers: { cookie: 'repoing_github=session', origin: 'https://repo.ing',
+    'content-type': 'application/json', ...extra }, ...(method === 'POST' ? { body: '{"action":"challenge"}' } : {}) })
+  // Claims off: the claim routes stay closed.
+  for (const [method, path] of claimPaths) assert.equal((await send(method, path)).status, 403, `${method} ${path} closed without claims`)
+  Object.assign(f.env, { CLAIMS_RECOVERY_ENABLED: 'true', GITHUB_APP_CLIENT_SECRET: 'client-secret',
+    CLAIMS_DATABASE_URL: 'postgres://repoing_builder_claims:x@db.example/repoing_operational?sslmode=verify-full',
+    BUILDER_PAYOUT_SECRET_KEY: JSON.stringify(Array.from({ length: 64 }, (_, i) => i)) })
+  for (const [method, path] of claimPaths) {
+    const response = await send(method, path)
+    assert.equal(response.status, 200, `${method} ${path}`)
+    assert.equal(response.headers.get('set-cookie'), 'unsafe=session', `${path} may set the session cookie`)
+    const call = f.runtime.calls.at(-1)
+    assert.equal(call.request.headers.get('cookie'), 'repoing_github=session', `${path} receives the session cookie`)
+    if (method === 'POST') assert.equal(call.body, '{"action":"challenge"}')
+    assert.equal(call.env.CLAIMS_DATABASE_URL, f.env.CLAIMS_DATABASE_URL)
+    assert.equal(call.env.GITHUB_APP_CLIENT_SECRET, 'client-secret')
+    assert.ok(call.env.BUILDER_PAYOUT_SECRET_KEY)
+  }
+  // Same-origin JSON only, and nothing beyond the approved list.
+  assert.equal((await send('POST', '/api/claim/payout', { origin: 'https://evil.example' })).status, 403)
+  assert.equal((await send('POST', '/api/bind', { 'content-type': 'text/plain' })).status, 403)
+  for (const [method, path] of [['POST', '/api/claim'], ['POST', '/api/builders/claim'], ['POST', '/api/payout-address'], ['GET', '/claim/1/x']]) {
+    assert.equal((await send(method, path)).status, 403, `${method} ${path} stays closed`)
+  }
+  // Other routes: no cookie in, no Set-Cookie out.
+  const page = await send('GET', '/explore')
+  assert.equal(page.headers.get('set-cookie'), null)
+  assert.equal(f.runtime.calls.at(-1).request.headers.has('cookie'), false)
+  // A claims binding for any other role fails closed for the whole site.
+  f.env.CLAIMS_DATABASE_URL = 'postgres://repoing_owner:x@db.example/repoing_operational?sslmode=verify-full'
+  assert.equal((await send('GET', '/claim/1278009399')).status, 503)
+})

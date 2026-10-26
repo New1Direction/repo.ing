@@ -4,7 +4,7 @@ import { createPrivateKey, sign } from 'node:crypto'
 import pg from 'pg'
 import bs58 from 'bs58'
 import { Keypair, Transaction } from '@solana/web3.js'
-import { PAYOUT_WALLET_CAP_LAMPORTS, PayoutRefused, checkPayoutReceipt, claimMessage, createBuilderPayouts, createPayoutRecovery,
+import { PAYOUT_WALLET_CAP_LAMPORTS, PayoutRefused, checkPayoutReceipt, claimMessage, claimWindow, createBuilderPayouts, createPayoutRecovery,
   owedLamports, unclaimedSweepDate } from '../src/builder-payouts.mjs'
 
 // Real PostgreSQL with every committed migration (0087_builder_payouts): the switch and caps, claim windows, one-use
@@ -201,6 +201,24 @@ test('builder payouts on real PostgreSQL', { skip: !url && 'BUILDER_PAYOUT_TEST_
       await pool.query("delete from claim_payout_challenges where consumed_at is null")
       for (let i = 0; i < 5; i++) await payouts.requestChallenge({ githubRepoId: REPO })
       await assert.rejects(payouts.requestChallenge({ githubRepoId: REPO }), refused('too-many-challenges'))
+    })
+    await t.test('open for all: a repository without its own window opens at that date; closed repositories never open', async () => {
+      await pool.query('delete from repo_claim_windows where github_repo_id = $1', [String(OTHER)])
+      assert.equal(await claimWindow(pool, OTHER), null, 'per-repository opening: no window, no claim')
+      const all = new Date('2026-10-26T18:00:00Z')
+      await pool.query("update claim_controls set opened_for_all_at = $1 where key = 'builder_payouts'", [all])
+      const opened = await claimWindow(pool, OTHER)
+      assert.equal(opened.openedAt.toISOString(), all.toISOString())
+      assert.equal(opened.unclaimedAfter.toISOString(), '2027-10-26T18:00:00.000Z', 'the 12-month clock starts at the opening')
+      assert.notEqual((await claimWindow(pool, REPO)).openedAt.toISOString(), all.toISOString(), 'an own window keeps its date')
+      for (const closed of [1250276806n, 1332056763n, 1388219884n, 1391948723n]) assert.equal(await claimWindow(pool, closed), null, `${closed} closed`)
+      await pool.query('delete from claim_closed_repos where github_repo_id = 1388219884')
+      assert.equal(await claimWindow(pool, 1388219884n), null, 'the code list keeps it closed without its row')
+      await pool.query("insert into claim_closed_repos (github_repo_id, reason) values ($1, 'test')", [String(OTHER)])
+      assert.equal(await claimWindow(pool, OTHER), null, 'a row alone closes a repository')
+      await pool.query('delete from claim_closed_repos where github_repo_id = $1', [String(OTHER)])
+      await pool.query("insert into claim_closed_repos (github_repo_id, reason) values (1388219884, 'restored by test')")
+      await pool.query("update claim_controls set opened_for_all_at = null where key = 'builder_payouts'")
     })
   } finally { await pool.end() }
 })
