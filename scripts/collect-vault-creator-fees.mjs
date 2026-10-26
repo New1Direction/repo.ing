@@ -6,6 +6,8 @@
 //                      then per batch of two pools: vault transaction, proposal with two approvals, execute. Each batch is
 //                      proven (governance + finalized receipt) and recorded in the custody ledger before the next starts.
 //                      Stops on the first failure; a rerun resumes from chain state and never repeats a landed step.
+//   sweep JOURNAL_FILE one approved move of SWEEP_LAMPORTS of vault WSOL to SWEEP_RECIPIENT's WSOL account, payer spend
+//                      capped by SWEEP_CAP_LAMPORTS. Same signers and resume rules as collect.
 // Env: CUSTODY_RECORDER_DATABASE_URL (restricted recorder role), SOLANA_RPC_URL, GRADUATION_VERIFICATION_RPC_URL;
 // collect also needs PAYER_KEY and ADMIN_KEY (key pipe paths) and MEMBER_KIT (the second approver's recovery kit, whose
 // passphrase is typed in a hidden dialog). Secrets are never printed.
@@ -47,9 +49,10 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
 const writeAtomic = (path, text) => { writeFileSync(`${path}.tmp`, text, { mode: 0o600 }); renameSync(`${path}.tmp`, path) }
 
 const [mode, file] = process.argv.slice(2)
-check(['plan', 'collect'].includes(mode) && file, 'Usage: collect-vault-creator-fees.mjs plan|collect PLAN_FILE')
+check(['plan', 'collect', 'sweep'].includes(mode) && file, 'Usage: collect-vault-creator-fees.mjs plan|collect PLAN_FILE | sweep JOURNAL_FILE')
 for (const name of ['CUSTODY_RECORDER_DATABASE_URL', 'SOLANA_RPC_URL', 'GRADUATION_VERIFICATION_RPC_URL',
-  ...(mode === 'collect' ? ['APPROVED_PLAN_SHA256', 'PAYER_KEY', 'ADMIN_KEY', 'MEMBER_KIT'] : [])]) check(process.env[name], `${name} required`)
+  ...(mode !== 'plan' ? ['PAYER_KEY', 'ADMIN_KEY', 'MEMBER_KIT'] : []), ...(mode === 'collect' ? ['APPROVED_PLAN_SHA256'] : []),
+  ...(mode === 'sweep' ? ['SWEEP_RECIPIENT', 'SWEEP_LAMPORTS', 'SWEEP_CAP_LAMPORTS'] : [])]) check(process.env[name], `${name} required`)
 const rpc = url => new Connection(url, { commitment: 'finalized', httpHeaders: { 'user-agent': 'repoing-custody-collector/1' } })
 const primary = rpc(process.env.SOLANA_RPC_URL), verification = rpc(process.env.GRADUATION_VERIFICATION_RPC_URL)
 check(new URL(primary.rpcEndpoint).hostname !== new URL(verification.rpcEndpoint).hostname, 'Two independently operated RPC providers are required')
@@ -309,27 +312,79 @@ async function collectBatch(k, planned, plan0, keys, journal, db, spent) {
   return journal.batches[k]
 }
 
+// Journal, payer spend guard and the three signers. The caller must wipe keys when done.
+// Each stage may carry `reserve`: the rent it creates; without one the collect plan's flat margin applies.
+async function openSession(journalPath, ceiling) {
+  const journal = existsSync(journalPath) ? JSON.parse(readFileSync(journalPath, 'utf8')) : { steps: {}, batches: {} }
+  journal.save = entry => { Object.assign(journal.steps, entry); writeAtomic(journalPath, json({ steps: journal.steps, batches: journal.batches, start: journal.start })) }
+  journal.saveBatch = (k, entry) => { journal.batches[k] = { ...journal.batches[k], ...entry }; journal.save({}) }
+  journal.start ??= String(await primary.getBalance(pk(PAYER), 'finalized')); journal.save({})
+  const spent = async stage => {
+    const used = BigInt(journal.start) - BigInt(await primary.getBalance(pk(PAYER), 'finalized'))
+    check(used + BigInt(stage.signers.length * FEE_PER_SIGNATURE) + (stage.reserve ?? CEILING_MARGIN_LAMPORTS) <= ceiling,
+      `payer spend ${used} would pass the approved ceiling ${ceiling}`)
+  }
+  const [payer, admin] = loadSigners(parseKeyArgs([`payer=${process.env.PAYER_KEY}`, `admin=${process.env.ADMIN_KEY}`]),
+    { payer: PAYER, admin: ADMIN }, [PAYER, ADMIN])
+  const keys = new Map([[PAYER, payer], [ADMIN, admin]])
+  try { keys.set(APPROVER, memberFromKit(process.env.MEMBER_KIT)) } catch (error) { wipe([...keys.values()]); throw error }
+  return { journal, spent, keys }
+}
+
+async function sweep() {
+  const recipient = new PublicKey(process.env.SWEEP_RECIPIENT).toBase58(), amount = BigInt(process.env.SWEEP_LAMPORTS)
+  const cap = BigInt(process.env.SWEEP_CAP_LAMPORTS)
+  check(amount > 0n && cap > 0n && recipient !== MULTISIG_VAULT && PublicKey.isOnCurve(pk(recipient).toBytes()), 'invalid sweep amount, cap or recipient')
+  const target = getAssociatedTokenAddressSync(NATIVE_MINT, pk(recipient))
+  const balances = async () => Promise.all([primary, verification].flatMap(c => [DESTINATION, target].map(a =>
+    c.getTokenAccountBalance(a, 'finalized').then(r => BigInt(r.value.amount), () => null))))
+  const [vaultA, targetA, vaultB, targetB] = await balances()
+  const { journal, spent, keys } = await openSession(file, cap)
+  try {
+    const rent = async bytes => BigInt(await primary.getMinimumBalanceForRentExemption(bytes, 'finalized'))
+    if (!journal.batches.sweep) {
+      check(vaultA === vaultB && targetA === targetB && vaultA >= amount, 'providers disagree or the vault holds less than the approved amount')
+      journal.saveBatch('sweep', { index: String(await multisigIndex() + 1n), vaultBefore: String(vaultA), targetBefore: String(targetA ?? 0n) })
+    }
+    const s = journal.batches.sweep, index = BigInt(s.index)
+    const info = await primary.getAccountInfo(target, 'finalized')
+    if (!info) {
+      const stage = { instructions: [createAssociatedTokenAccountIdempotentInstruction(pk(PAYER), target, pk(recipient), NATIVE_MINT)],
+        signers: [PAYER], reserve: await rent(165) }
+      await spent(stage); await send(stage, keys, journal, 'sweep-recipient-account')
+    } else check(info.owner.equals(TOKEN_PROGRAM_ID), 'recipient WSOL account is not a token account')
+    const plan = squadsPlan([createTransferCheckedInstruction(DESTINATION, NATIVE_MINT, target, pk(MULTISIG_VAULT), amount, 9)], index)
+    const [create, propose, execute] = stages(plan)
+    create.reserve = await rent(vaultTransactionBytes(plan)); propose.reserve = await rent(PROPOSAL_BYTES); execute.reserve = 0n
+    let status = await proposalStatus(plan)
+    if (!status.created) {
+      check(await multisigIndex() === index - 1n, 'multisig index moved; another proposal exists')
+      await spent(create); await send(create, keys, journal, 'sweep-create'); status = await proposalStatus(plan)
+    }
+    if (!status.status) { await spent(propose); await send(propose, keys, journal, 'sweep-propose'); status = await proposalStatus(plan) }
+    if (status.status === 'approved') {
+      await spent(execute)
+      journal.saveBatch('sweep', { executeSignature: await send(execute, keys, journal, 'sweep-execute') }); status = await proposalStatus(plan)
+    }
+    check(status.status === 'executed' && journal.batches.sweep.executeSignature, `sweep proposal is ${status.status}`)
+    const [vaultC, targetC, vaultD, targetD] = await balances()
+    check(vaultC === vaultD && targetC === targetD && BigInt(s.vaultBefore) - vaultC === amount && targetC - BigInt(s.targetBefore) === amount,
+      'balances after the sweep do not show exactly the approved amount moving')
+    const used = BigInt(journal.start) - BigInt(await primary.getBalance(pk(PAYER), 'finalized'))
+    journal.saveBatch('sweep', { done: true, payerSpent: String(used) })
+    return { movedLamports: amount, from: DESTINATION.toBase58(), to: target.toBase58(), recipient, signature: journal.batches.sweep.executeSignature,
+      vaultWsolLamports: vaultC, recipientWsolLamports: targetC, payerSpentLamports: used }
+  } finally { wipe([...keys.values()]) }
+}
+
 async function collect(db) {
   const bytes = readFileSync(file)
   check(sha256(bytes) === process.env.APPROVED_PLAN_SHA256, 'plan file is not the approved plan')
   const plan0 = JSON.parse(bytes)
   for (const p of plan0.pools) p.fee = BigInt(p.fee)
   check(Date.now() - Date.parse(plan0.createdAt) < PLAN_MAX_AGE_MS && plan0.vault === MULTISIG_VAULT && plan0.approver === APPROVER, 'plan is stale or for other signers')
-  const journalPath = `${file}.journal.json`
-  const journal = existsSync(journalPath) ? JSON.parse(readFileSync(journalPath, 'utf8')) : { steps: {}, batches: {} }
-  journal.save = entry => { Object.assign(journal.steps, entry); writeAtomic(journalPath, json({ steps: journal.steps, batches: journal.batches, start: journal.start })) }
-  journal.saveBatch = (k, entry) => { journal.batches[k] = { ...journal.batches[k], ...entry }; journal.save({}) }
-  journal.start ??= String(await primary.getBalance(pk(PAYER), 'finalized')); journal.save({})
-  const ceiling = BigInt(plan0.totals.ceilingLamports)
-  const spent = async stage => {
-    const used = BigInt(journal.start) - BigInt(await primary.getBalance(pk(PAYER), 'finalized'))
-    check(used + BigInt(stage.signers.length * FEE_PER_SIGNATURE) + 10_000_000n <= ceiling, `payer spend ${used} would pass the approved ceiling ${ceiling}`)
-  }
-  const [payer, admin] = loadSigners(parseKeyArgs([`payer=${process.env.PAYER_KEY}`, `admin=${process.env.ADMIN_KEY}`]),
-    { payer: PAYER, admin: ADMIN }, [PAYER, ADMIN])
-  const keys = new Map([[PAYER, payer], [ADMIN, admin]])
+  const { journal, spent, keys } = await openSession(`${file}.journal.json`, BigInt(plan0.totals.ceilingLamports))
   try {
-    keys.set(APPROVER, memberFromKit(process.env.MEMBER_KIT))
     const info = await primary.getMultipleAccountsInfo(plan0.pools.map(p => pk(p.baseAccount)), 'finalized')
     const missing = plan0.pools.filter((_, i) => !info[i])
     for (let i = 0; i < missing.length; i += ATAS_PER_TX) {
@@ -357,5 +412,5 @@ try {
     const text = json(plan); writeFileSync(file, text, { flag: 'wx', mode: 0o600 })
     console.log(json({ planSha256: sha256(Buffer.from(text)), ...plan.totals, missingBaseAccounts: plan.missingBaseAccounts.length,
       pools: plan.pools.map(p => ({ repoId: p.repoId, sol: Number(p.fee) / 1e9 })) }))
-  } else console.log(json(await collect(db)))
+  } else console.log(json(mode === 'collect' ? await collect(db) : await sweep()))
 } finally { await db.end() }
