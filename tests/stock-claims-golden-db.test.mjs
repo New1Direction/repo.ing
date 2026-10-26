@@ -192,6 +192,8 @@ async function solOutputs() {
 
 test('SOL claim and fee-status outputs are unchanged with a stock-paired market present', { timeout: 120_000 }, async () => {
   await seedSol()
+  // The SOL path runs end to end only with the builder payouts switch on (0087 creates it off).
+  await pool.query("update claim_controls set enabled = true, updated_by = 'test' where key = 'builder_payouts'")
   const before = await solOutputs()
   // The baseline is the SOL path working end to end, up to the refused preflight.
   assert.equal(before.fees.status, 'MATCH')

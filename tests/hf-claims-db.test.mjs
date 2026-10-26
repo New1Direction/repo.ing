@@ -582,6 +582,12 @@ test('real PostgreSQL routes: sign-in start and callback, and the claim form', {
 
   // The claim form: same origin, this market's session, and a review sealed for that session and market.
   const claimJar = { [auth.hfSessionCookie]: sessionCookie.value }
+  // The builder payouts switch answers first: while it is off, a claim goes back with payouts-off before anything is read.
+  response = await claim(request('/api/hf/claim', { jar: claimJar, form: { repoId: marketId, review: 'forged' } }))
+  assert.deepEqual([response.status, location(response).searchParams.get('error')], [303, 'payouts-off'])
+  response = await claim(request('/api/hf/claim', { form: { repoId: marketId } }))
+  assert.equal(response.status, 503, 'no session: a plain paused answer')
+  await pool.query("update claim_controls set enabled = true, updated_by = 'test' where key = 'builder_payouts'")
   response = await claim(request('/api/hf/claim', { jar: claimJar, origin: 'https://evil.example', form: { repoId: marketId } }))
   assert.equal(response.status, 403)
   response = await claim(request('/api/hf/claim', { form: { repoId: marketId, review: 'x' } }))
@@ -597,6 +603,7 @@ test('real PostgreSQL routes: sign-in start and callback, and the claim form', {
   const page = await response.text()
   assert.ok(page.includes('Checking Hugging Face ownership and the current claim state'))
   assert.ok(page.includes(`location.replace("https://repo.ing/claim/${marketId}?error=payout-unavailable")`), 'it reaches the claim (no payout signer here)')
+  await pool.query("update claim_controls set enabled = false, updated_by = 'test' where key = 'builder_payouts'")
 })
 
 // The tables 0050/0051 change, with the columns they had before; rows are compared on exactly those columns.

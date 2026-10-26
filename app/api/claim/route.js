@@ -21,10 +21,19 @@ async function stockPairRefusal(request, origin) {
   } catch { return null }
 }
 
+// The builder payouts switch (claim_controls) stops every claim path, this one included, before any review is read.
+function payoutsOff(request, origin) {
+  let session = null
+  try { session = readGithubSession(request.cookies.get(githubSessionCookie)?.value) } catch {}
+  if (session?.repoId) return NextResponse.redirect(new URL(`/claim/${session.repoId}?error=payouts-off`, origin), 303)
+  return new Response('Builder payouts are paused. Your fees keep accruing and wait for you.', { status: 503, headers: { 'Cache-Control': 'no-store' } })
+}
+
 export async function POST(request) {
   const origin = publicOrigin(request.url)
   const refusal = await stockPairRefusal(request, origin)
   if (refusal) return refusal
+  if (!(await payoutControls(database())).enabled) return payoutsOff(request, origin)
   let session, review, repoId, reinvest = false, credits = false
   try {
     assertSameOrigin(request, origin)
@@ -41,11 +50,6 @@ export async function POST(request) {
       { status: 403, headers: { 'Cache-Control': 'no-store' } })
   }
   const back = new URL(`/claim/${session.repoId}`, origin)
-  // The builder payouts switch (claim_controls) stops every claim path, this one included.
-  if (!(await payoutControls(database())).enabled) {
-    back.searchParams.set('error', 'payouts-off')
-    return NextResponse.redirect(back, 303)
-  }
   const stream = claimProgressStream(async report => {
     try {
       const creator = creatorSigner(), config = configAddress()

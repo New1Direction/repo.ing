@@ -1,5 +1,5 @@
 import bs58 from 'bs58'
-import { PayoutRefused, createBuilderPayouts, solanaPayoutChain } from '../../../../src/builder-payouts.mjs'
+import { PayoutRefused, createBuilderPayouts, payoutControls, solanaPayoutChain } from '../../../../src/builder-payouts.mjs'
 import { chain, database, payoutSigner, verificationChain } from '../../../lib/server.mjs'
 import { assertSameOrigin, githubSessionCookie, readGithubSession } from '../../../lib/auth.mjs'
 import { sessionVerifier } from '../../../lib/github-session.mjs'
@@ -13,6 +13,7 @@ export const runtime = 'nodejs'
 export async function POST(request) {
   try {
     assertSameOrigin(request, publicOrigin(request.url))
+    if (!(await payoutControls(database())).enabled) throw new PayoutRefused('payouts-off', 'Builder payouts are switched off')
     const session = readGithubSession(request.cookies.get(githubSessionCookie)?.value)
     if (!session || session.permission !== 'admin') throw new PayoutRefused('github-admin-required', 'GitHub admin session required')
     const body = await request.json()

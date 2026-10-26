@@ -1,4 +1,5 @@
 import { createClaim } from '../../../../src/claim.mjs'
+import { payoutControls } from '../../../../src/builder-payouts.mjs'
 import { claimProgressStream } from '../../../../src/claim-progress.mjs'
 import { HfAuthorityError } from '../../../../src/hf-verification.mjs'
 import { hfMarketsEnabled } from '../../../../src/hf-launch.mjs'
@@ -30,6 +31,13 @@ function claimErrorCode(error) {
 export async function POST(request) {
   if (!hfMarketsEnabled()) return new Response('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } })
   const origin = publicOrigin(request.url)
+  // The builder payouts switch (claim_controls) stops model claims too, before any review is read.
+  if (!(await payoutControls(database())).enabled) {
+    let session = null
+    try { session = readHfSession(readHfCookie(request, hfSessionCookie)) } catch {}
+    if (session?.marketId) return hfRedirect(new URL(`/claim/${session.marketId}?error=payouts-off`, origin), { status: 303 })
+    return new Response('Builder payouts are paused. Your fees keep accruing and wait for you.', { status: 503, headers: { 'Cache-Control': 'no-store' } })
+  }
   let session, review, repoId
   try {
     assertSameOrigin(request, origin)

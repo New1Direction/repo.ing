@@ -22,8 +22,10 @@ const marketRow = (repoId, stamp) => ({ repoId, mint: `Mint${repoId}`, pool: `Po
   claimed: '0', platformCollected: '0', volume24hLamports: '0', wasVerified: false, lastSqrtPrice: null, graduationStatus: null, observation: null, graduationError: null, migrationEvidenceHash: null })
 const MARKETS = { [SOL_ID]: marketRow(SOL_ID, null), [STOCK_ID]: marketRow(STOCK_ID, STAMP) }
 const queries = []
+let payoutsOn = false
 const pool = { async query(sql, params = []) {
   queries.push(sql)
+  if (/from claim_controls/.test(sql)) return { rows: payoutsOn ? [{ enabled: true, maxClaim: '1000', daily: '1000' }] : [] }
   if (/select quote_asset_id as "quoteAssetId", quote_mint as "quoteMint" from markets/.test(sql)) {
     const row = MARKETS[params[0]]; return { rows: row ? [{ quoteAssetId: row.quoteAssetId, quoteMint: row.quoteMint }] : [] }
   }
@@ -90,8 +92,13 @@ test('POST /api/claim: a stock pair goes back to its claim page with the code, b
   assert.equal(refused.status, 303)
   assert.equal(refused.headers.get('location'), `https://repo.ing/claim/${STOCK_ID}?error=${STOCK_PAIR_NO_OWNER_CLAIM}`)
   assert.equal(queries.length, 1, 'one stamp read, and nothing of the claim path')
-  // A SOL market's claim runs the claim path: with no payout signer configured it ends where it always did.
+  // While the builder payouts switch is off, a SOL claim goes back paused before its review is read.
   const solSession = sessionFor({ repoId: SOL_ID, permission: 'admin' })
+  const paused = await claimRoute.POST(request('/api/claim', { session: solSession, form: { repoId: SOL_ID, review: 'never read' } }))
+  assert.equal(paused.headers.get('location'), `https://repo.ing/claim/${SOL_ID}?error=payouts-off`)
+  assert.equal((await claimRoute.POST(request('/api/claim', { form: { repoId: SOL_ID } }))).status, 503, 'no session: a plain paused answer')
+  payoutsOn = true
+  // A SOL market's claim runs the claim path: with no payout signer configured it ends where it always did.
   const sol = await claimRoute.POST(request('/api/claim', { session: solSession, form: { repoId: SOL_ID, review: review(solSession, SOL_ID, 'creator-claim-review') } }))
   assert.equal(sol.status, 200)
   assert.equal(await streamed(sol), `https://repo.ing/claim/${SOL_ID}?error=payout-unavailable`)
@@ -99,16 +106,21 @@ test('POST /api/claim: a stock pair goes back to its claim page with the code, b
   const expired = await claimRoute.POST(request('/api/claim', { form: { repoId: SOL_ID } }))
   assert.equal(expired.status, 303)
   assert.equal(expired.headers.get('location'), `https://repo.ing/claim/${SOL_ID}?error=verification-failed`)
+  payoutsOn = false
 })
 
 test('POST /api/builders/claim: a review that names a stock pair is refused with the code; a SOL review reaches the claim', async () => {
   const builders = sessionFor({ scope: 'builders', repoId: null, permission: 'identity' })
+  const paused = await builderClaimRoute.POST(request('/api/builders/claim', { session: builders, body: { review: 'never read' } }))
+  assert.deepEqual([paused.status, (await paused.json()).code], [409, 'payouts-off'], 'the switch answers before the review is read')
+  payoutsOn = true
   const refused = await builderClaimRoute.POST(request('/api/builders/claim', { session: builders, body: { review: review(builders, STOCK_ID, 'builder-claim-review') } }))
   assert.equal(refused.status, 409)
   assert.deepEqual(await refused.json(), { status: 'failed', code: STOCK_PAIR_NO_OWNER_CLAIM, error: noOwnerClaimMessage(STAMP) })
   const sol = await builderClaimRoute.POST(request('/api/builders/claim', { session: builders, body: { review: review(builders, SOL_ID, 'builder-claim-review') } }))
   assert.equal(sol.status, 409)
   assert.deepEqual(await sol.json(), { status: 'failed', error: 'Payouts are paused while network funds are replenished.' })
+  payoutsOn = false
 })
 
 test('GET /api/claim/<repo>/preview: nothing is ever available to an owner of a stock pair; SOL reads its fee status as before', async () => {

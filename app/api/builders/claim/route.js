@@ -9,6 +9,10 @@ export const runtime = 'nodejs'
 
 export async function POST(request) {
   const headers = { 'Cache-Control': 'private, no-store' }
+  // The builder payouts switch (claim_controls) stops every claim path, this one included, before any review is read.
+  if (!(await payoutControls(database())).enabled) {
+    return Response.json({ status: 'failed', code: 'payouts-off', error: 'Builder payouts are paused. Your fees keep accruing and wait for you.' }, { status: 409, headers })
+  }
   let session, review
   try {
     assertSameOrigin(request, publicOrigin(request.url))
@@ -19,10 +23,6 @@ export async function POST(request) {
   // anyway is refused before any payout code runs. An unreadable stamp falls through to createClaim, which refuses stock pairs.
   const stockPair = await stockPairOf(database(), review.repoId).catch(() => null)
   if (stockPair) return Response.json({ status: 'failed', code: STOCK_PAIR_NO_OWNER_CLAIM, error: noOwnerClaimMessage(stockPair) }, { status: 409, headers })
-  // The builder payouts switch (claim_controls) stops every claim path, this one included.
-  if (!(await payoutControls(database())).enabled) {
-    return Response.json({ status: 'failed', code: 'payouts-off', error: 'Builder payouts are paused. Your fees keep accruing and wait for you.' }, { status: 409, headers })
-  }
   try {
     const creator = creatorSigner(), config = configAddress()
     if (!creator || !config) throw new Error('Payout signer needs SOL for network costs')
