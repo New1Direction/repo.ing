@@ -41,14 +41,23 @@ export async function GET(request) {
   if (!/^\d+$/.test(repoId || '') || !['verify', 'claim'].includes(mode)) return NextResponse.redirect(new URL('/explore', origin))
   const { market } = await marketByRepo(repoId)
   const clientId = process.env.GITHUB_APP_CLIENT_ID || (process.env.NODE_ENV === 'production' ? null : 'Iv23li0LF9CWsTgcIyQ0')
-  if (!market || !database() || !clientId || !process.env.GITHUB_APP_CLIENT_SECRET) return NextResponse.redirect(new URL(withFunnelSource(`/claim/${repoId}?error=github-unavailable`, src), origin))
+  if (!market || !database() || !clientId || !process.env.GITHUB_APP_CLIENT_SECRET) {
+    // Which precondition failed, never a value.
+    console.error('github start unavailable', { market: Boolean(market), database: Boolean(database()), clientId: Boolean(clientId),
+      clientSecret: Boolean(process.env.GITHUB_APP_CLIENT_SECRET) })
+    return NextResponse.redirect(new URL(withFunnelSource(`/claim/${repoId}?error=github-unavailable`, src), origin))
+  }
   try {
     const repo = await repositoryById(repoId)
     if (!repo || !await githubInstallationForRepository({ owner: repo.owner, name: repo.name })) {
       await recordFunnelEvent(database(), { event: 'app_access_required', source: src, repoId })
       return NextResponse.redirect(new URL(withFunnelSource(`/claim/${repoId}?error=app-access-required`, src), origin))
     }
-  } catch { return NextResponse.redirect(new URL(withFunnelSource(`/claim/${repoId}?error=github-unavailable`, src), origin)) }
+  } catch (error) {
+    // GitHub's answer to the installation check (an HTTP status, a timeout); never a credential.
+    console.error('github start installation check failed', { message: String(error?.message ?? error).slice(0, 160) })
+    return NextResponse.redirect(new URL(withFunnelSource(`/claim/${repoId}?error=github-unavailable`, src), origin))
+  }
   const redirectUri = `${origin}/api/github/callback`
   const verifier = createGitHubAppVerifier({ pool: claimsDatabase(), clientId,
     clientSecret: process.env.GITHUB_APP_CLIENT_SECRET, redirectUri })
