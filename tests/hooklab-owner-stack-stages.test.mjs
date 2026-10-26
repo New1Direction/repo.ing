@@ -141,6 +141,10 @@ test('decisions: the creation fee defaults to the owner-confirmed 0.02 SOL; menu
     stackCustodyDigest: { value: 'ab'.repeat(32), approved: true } } })
   assert.doesNotThrow(() => assertExecutable(menus, 'open-creation')); assert.doesNotThrow(() => assertExecutable(menus, 'swap-governance-init'))
   assert.throws(() => write('d.json', { ...template, decisions: { ...template.decisions, openCreationMenus: { value: { creatorFeeBps: [100, 50], capBps: [100] }, approved: true } } }), /ascending/)
+  // This stack retired the fee menu (continuous creator fee, owner 2026-10-26): an empty fee menu is valid; the cap menu is still required.
+  const retired = write('e.json', { ...template, decisions: { ...template.decisions, openCreationMenus: { value: { creatorFeeBps: [], capBps: [100, 200, 300, 500] }, approved: true } } })
+  assert.doesNotThrow(() => assertExecutable(retired, 'open-creation'))
+  assert.throws(() => write('f.json', { ...template, decisions: { ...template.decisions, openCreationMenus: { value: { creatorFeeBps: [], capBps: [] }, approved: true } } }), /too_small|at least|>=1/i)
   assert.deepEqual(STAGE_DECISIONS['launch-config-init'], ['computeUnitPriceMicroLamports'])
   // The init stages start exactly where the legacy stack started on deploy day.
   assert.deepEqual({ fee: LAUNCH_CONFIG_START.launch_fee_lamports, ceiling: LAUNCH_CONFIG_START.max_creator_fee_bps, paused: LAUNCH_CONFIG_START.paused, bounds: [LAUNCH_CONFIG_START.min_virtual_quote, LAUNCH_CONFIG_START.max_virtual_quote] },

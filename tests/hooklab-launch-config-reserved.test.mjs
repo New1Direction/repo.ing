@@ -22,7 +22,7 @@ test('byte 186 (native) and byte 187 (open creation) may be 0 or 1; the menus ar
   assert.equal(launchConfigReservedValid(Buffer.from(menus(1, 1, [50, 100, 200], [100, 200, 300, 500]))), true, 'raw bytes too')
   for (const bad of [reserved(2), reserved(255), reserved(0, { 1: 2 }), reserved(1, { 63: 9 }), reserved(1, { 18: 1 }),
     menus(1, 1, [0, 100], [100]), menus(1, 1, [50, 50], [100]), menus(1, 1, [10000], [100]), menus(1, 1, [50], [100, 0, 300]), menus(1, 1, [50], [200, 200]),
-    menus(1, 1, [200, 100], [100]), menus(1, 1, [50], [500, 100]), reserved(0, { 1: 1 }), menus(1, 1, [50], []), menus(1, 1, [], [100]),
+    menus(1, 1, [200, 100], [100]), menus(1, 1, [50], [500, 100]), reserved(0, { 1: 1 }), menus(1, 1, [50], []), menus(1, 1, [], []),
     reserved(0).slice(1), [...reserved(0), 0], null, undefined])
     assert.equal(launchConfigReservedValid(bad), false, JSON.stringify(bad))
 })
@@ -34,7 +34,12 @@ test('the parsed state names both switches and both menus; encode is its exact i
   assert.deepEqual([...encodeOpenCreationReserved({ native: true, open: true, creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500] })], on)
   assert.equal(parseLaunchConfigReserved(reserved(0, { 1: 2 })), null)
   assert.throws(() => encodeOpenCreationReserved({ native: true, open: true, creatorFeeBps: [1, 2, 3, 4, 5], capBps: [100] }), /at most 4/)
-  assert.throws(() => encodeOpenCreationReserved({ native: true, open: true, creatorFeeBps: [], capBps: [100] }), /both non-empty to open creation/)
+  assert.throws(() => encodeOpenCreationReserved({ native: true, open: true, creatorFeeBps: [50], capBps: [] }), /wallet-cap menu non-empty to open creation/)
+  // The independent stack retired the fee menu (continuous creator fee, hook-lab independent.rs check_retired_fee_menu):
+  // open creation with an empty fee menu is a state it writes.
+  const retired = menus(1, 1, [], [100, 200, 300, 500])
+  assert.deepEqual(parseLaunchConfigReserved(retired), { native: true, open: true, creatorFeeBps: [], capBps: [100, 200, 300, 500] })
+  assert.deepEqual([...encodeOpenCreationReserved({ native: true, open: true, creatorFeeBps: [], capBps: [100, 200, 300, 500] })], retired)
 })
 
 // Review PoC F1a, kept as a regression test, now with open creation on as well.

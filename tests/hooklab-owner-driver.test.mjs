@@ -56,6 +56,11 @@ test('approval refusals: per-decision approval and the explicit approval-flag st
     assert.throws(() => assertExecutable(loadConfig(write(dir, 'burn-unapproved.json', raw)), 'launch-config'), /maxBurnBps/)
     raw.decisions.maxBurnBps.approved = true
     assert.doesNotThrow(() => assertExecutable(loadConfig(write(dir, 'burn-approved.json', raw)), 'launch-config'))
+    // The holder-fee bound (owner, 2026-10-26: 5%) needs its own approval, like the burn bound.
+    raw.decisions.maxHolderFeeBps = { value: 500, approved: false }
+    assert.throws(() => assertExecutable(loadConfig(write(dir, 'holder-unapproved.json', raw)), 'launch-config'), /maxHolderFeeBps/)
+    raw.decisions.maxHolderFeeBps.approved = true
+    assert.doesNotThrow(() => assertExecutable(loadConfig(write(dir, 'holder-approved.json', raw)), 'launch-config'))
     assert.deepEqual([...APPROVAL_FLAG_STAGES].sort(), ['canary-buy', 'canary-gates-open-creation', 'canary-sell', 'collect-native', 'fund', 'gate-finalize', 'launch-config-init', 'launch-fee',
       'launch-governance-init', 'launch-table', 'launch-usd-bounds', 'native-launches', 'open-creation', 'open-launches', 'open-trading', 'swap-config-init', 'swap-governance-init', 'trade-table'])
     raw.roles = { admin: MAINNET_ROLES.guardian }
@@ -218,4 +223,14 @@ test('one-send is keyed on the reviewed plan: a refreshed attempt blocks any sec
     assert.throws(() => ctx.journal.lock('grant'), /refusing concurrent sends/)
     release(); ctx.journal.lock('grant')()
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('launch-config sets the approved holder and burn bounds and leaves the other rule bounds as observed', async () => {
+  const { wanted } = await import('../src/hooklab-owner-driver/stages/admin.mjs')
+  const decisions = { maxCreatorFeeBps: { value: 500 }, maxRulesFeeBps: { value: 1000 }, maxBurnBps: { value: 500 }, maxHolderFeeBps: { value: 500 } }
+  const current = { max_creator_fee_bps: 0, rule_bounds: { max_holder_fee_bps: 0, max_burn_bps: 0, max_rules_fee_bps: 0, min_max_wallet_bps: 1 } }
+  assert.deepEqual(wanted({ config: { decisions } }, 'launch', current), { max_creator_fee_bps: 500,
+    rule_bounds: { max_holder_fee_bps: 500, max_burn_bps: 500, max_rules_fee_bps: 1000, min_max_wallet_bps: 1 } })
+  const { maxHolderFeeBps, ...withoutHolder } = decisions
+  assert.equal(wanted({ config: { decisions: withoutHolder } }, 'launch', current).rule_bounds.max_holder_fee_bps, 0, 'omitted: the observed bound stays')
 })

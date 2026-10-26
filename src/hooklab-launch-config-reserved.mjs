@@ -4,7 +4,8 @@
 //   [2..10)   creator-fee menu (bytes 188..196): 4 u16 LE bps slots, values in use first and strictly ascending, then 0
 //   [10..18)  wallet-cap menu (bytes 196..204): the same shape, 1..9999
 //   [18..64)  bytes 204..250, zero
-// Open creation on requires both menus non-empty (governed_set_open_creation refuses otherwise). The fee ceiling
+// Open creation on requires a non-empty wallet-cap menu. The creator-fee menu may be empty: the independent stack retired
+// it (continuous creator fee from 0 to the ceiling; hook-lab independent.rs check_retired_fee_menu). The fee ceiling
 // (Config.max_creator_fee_bps) is checked by the open-launch compiler, which reads the whole Config. One check for every
 // compiler that reads the launch Config (preparation, launch and trade). Pure. Layout: hook-lab feat/open-creation ABI.
 export const LAUNCH_CONFIG_RESERVED_AT = 186
@@ -24,7 +25,7 @@ export function parseLaunchConfigReserved(reserved) {
   if (![0, 1].includes(flag) || ![0, 1].includes(open)) return null
   if (Array.prototype.slice.call(reserved, L.end).some(v => v !== 0)) return null
   const creatorFeeBps = menuAt(reserved, L.feeMenu), capBps = menuAt(reserved, L.capMenu)
-  if (!creatorFeeBps || !capBps || (open === 1 && (!creatorFeeBps.length || !capBps.length))) return null
+  if (!creatorFeeBps || !capBps || (open === 1 && !capBps.length)) return null
   return { native: flag === 1, open: open === 1, creatorFeeBps, capBps }
 }
 export const launchConfigReservedValid = reserved => parseLaunchConfigReserved(reserved) !== null
@@ -36,6 +37,6 @@ export function encodeOpenCreationReserved({ native, open, creatorFeeBps, capBps
     if (!Array.isArray(menu) || menu.length > L.slots) throw Error(`a menu holds at most ${L.slots} choices`)
     menu.forEach((v, i) => out.writeUInt16LE(v, at + 2 * i))
   }
-  if (!launchConfigReservedValid(out)) throw Error('menus must be strictly ascending bps values from 1 to 9999, and both non-empty to open creation')
+  if (!launchConfigReservedValid(out)) throw Error('menus must be strictly ascending bps values from 1 to 9999, and the wallet-cap menu non-empty to open creation')
   return out
 }

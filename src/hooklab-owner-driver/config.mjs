@@ -8,7 +8,7 @@ import { MAINNET_ROLES, ROLE_NAMES } from './pins.mjs'
 const key = z.string().refine(v => { try { return new PublicKey(v).toBase58() === v } catch { return false } }, 'base58 public key')
 const raw = z.string().refine(v => /^(0|[1-9]\d{0,19})$/.test(v) && BigInt(v) <= 0xffffffffffffffffn, 'u64 decimal string')
 const bps = z.number().int().min(0).max(10000)
-const menu = max => z.array(z.number().int().min(1).max(max)).min(1).max(4).refine(values => values.every((v, i) => i === 0 || v > values[i - 1]), 'menu values must be strictly ascending')
+const menu = (max, min = 1) => z.array(z.number().int().min(1).max(max)).min(min).max(4).refine(values => values.every((v, i) => i === 0 || v > values[i - 1]), 'menu values must be strictly ascending')
 const decision = value => z.object({ value, approved: z.boolean(), note: z.string().optional(), allowed: z.array(z.any()).optional() }).strict()
 export const configSchema = z.object({
   schema: z.literal('repoing/hooklab-owner-config/1'),
@@ -19,6 +19,7 @@ export const configSchema = z.object({
     creatorFeeBps: decision(bps), maxCreatorFeeBps: decision(bps), maxRulesFeeBps: decision(bps), launchProtocolShareBps: decision(bps), protocolFeeBps: decision(bps),
     // Omission preserves the observed bound; a change needs its own explicit approval.
     maxBurnBps: decision(bps).optional(),
+    maxHolderFeeBps: decision(bps).optional(),
     // Owner-approved wallet-cap menu: 1%, 2% (default), 3% or 5%.
     capBps: decision(z.union([z.literal(100), z.literal(200), z.literal(300), z.literal(500)]).nullable()),
     grant: decision(z.object({ creator: key, maxLaunches: raw, expirySlots: raw }).strict()),
@@ -37,8 +38,8 @@ export const configSchema = z.object({
     // Bounded priority price: at 1.4M CU this caps the priority fee at 0.07 SOL.
     computeUnitPriceMicroLamports: decision(raw.refine(v => BigInt(v) <= 50000n, 'compute unit price above 50,000 micro-lamports')),
     // Self-serve launches (open-creation stage): the creator-fee and max-per-wallet menus the chain offers, 1 to 4 strictly
-    // ascending bps values each. Never defaulted: the stage refuses without an approved value here.
-    openCreationMenus: decision(z.object({ creatorFeeBps: menu(9999), capBps: menu(9999) }).strict().nullable()).optional(),
+    // ascending bps values each; the creator-fee menu may be empty, as on the independent stack, which retired it (continuous fee). Never defaulted: the stage refuses without an approved value here.
+    openCreationMenus: decision(z.object({ creatorFeeBps: menu(9999, 0), capBps: menu(9999) }).strict().nullable()).optional(),
     // The creation fee every launch pays the treasury (launch-fee stage), in lamports. Owner-confirmed 20,000,000 (0.02 SOL):
     // the default when this decision is absent (DECISION_DEFAULTS).
     launchFeeLamports: decision(raw.nullable()).optional(),
@@ -108,7 +109,9 @@ export function loadConfig(path) {
   return parsed
 }
 export function value(config, name) { return config.decisions[name].value }
-const stageDecisions = (config, stage) => [...(STAGE_DECISIONS[stage] ?? []), ...(stage === 'launch-config' && config.decisions.maxBurnBps ? ['maxBurnBps'] : [])]
+const OPTIONAL_LAUNCH_BOUNDS = ['maxBurnBps', 'maxHolderFeeBps']
+const stageDecisions = (config, stage) => [...(STAGE_DECISIONS[stage] ?? []),
+  ...(stage === 'launch-config' ? OPTIONAL_LAUNCH_BOUNDS.filter(name => config.decisions[name]) : [])]
 export function unapproved(config, stage) {
   return stageDecisions(config, stage).filter(name => !decisionOf(config, name)?.approved)
 }
