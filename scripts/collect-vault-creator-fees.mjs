@@ -20,7 +20,7 @@ import bs58 from 'bs58'
 import { Connection, Keypair, PublicKey, Transaction, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
 import { DynamicBondingCurveClient, DYNAMIC_BONDING_CURVE_PROGRAM_ID as DBC, deriveDbcPoolAuthority, deriveDbcEventAuthority } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync,
-  createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction } from '@solana/spl-token'
+  createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, unpackAccount } from '@solana/spl-token'
 import { CUSTODY_MEMBERS, CUSTODY_MULTISIG, MULTISIG_VAULT, SQUADS_PROGRAM, prepareCustodyMultisig, collectCustodyGovernance } from '../src/custody-multisig.mjs'
 import { recordValidatedDbcCustodyBatchCollection, validateDbcCustodyBatchReceipt } from '../src/custody-settlement.mjs'
 import { agreedFinalizedTransaction } from '../src/graduation-state.mjs'
@@ -336,8 +336,15 @@ async function sweep() {
   const cap = BigInt(process.env.SWEEP_CAP_LAMPORTS)
   check(amount > 0n && cap > 0n && recipient !== MULTISIG_VAULT && PublicKey.isOnCurve(pk(recipient).toBytes()), 'invalid sweep amount, cap or recipient')
   const target = getAssociatedTokenAddressSync(NATIVE_MINT, pk(recipient))
-  const balances = async () => Promise.all([primary, verification].flatMap(c => [DESTINATION, target].map(a =>
-    c.getTokenAccountBalance(a, 'finalized').then(r => BigInt(r.value.amount), () => null))))
+  // Raw account reads: the verification RPC refuses getTokenAccountBalance without a personal token.
+  const amountOf = (address, info, owner) => {
+    if (!info) return null
+    const account = unpackAccount(address, info, TOKEN_PROGRAM_ID)
+    check(account.mint.equals(NATIVE_MINT) && account.owner.toBase58() === owner && !account.delegate && !account.closeAuthority, 'unexpected WSOL account state')
+    return account.amount
+  }
+  const balances = async () => (await Promise.all([primary, verification].map(c => c.getMultipleAccountsInfo([DESTINATION, target], 'finalized'))))
+    .flatMap(([v, t]) => [amountOf(DESTINATION, v, MULTISIG_VAULT), amountOf(target, t, recipient)])
   const [vaultA, targetA, vaultB, targetB] = await balances()
   const { journal, spent, keys } = await openSession(file, cap)
   try {
