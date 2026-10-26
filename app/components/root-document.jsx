@@ -16,15 +16,14 @@ import { WebVitals } from './web-vitals'
 import { ReferralCapture } from './referral-capture'
 import { connection } from 'next/server'
 
-// What is live, in plain words. Update it whenever a part opens or closes.
+// Only what is not working yet, in plain words (owner, 2026-10-26). Remove a line when that part goes live.
 export function recoveryNotice(ordinaryLaunches) {
   return [
-    'Trading is live on all markets.',
-    ordinaryLaunches ? 'New launches are open, with a 2-minute early fee.' : 'New launches are paused.',
-    'Builder fee claims are opening; Hooks and bundles are coming soon.',
-    'Charts update live from finalized chain data.',
+    ordinaryLaunches ? null : 'New launches are paused.',
+    'Builder fee claims open soon.',
+    'Hooks and bundles are not live yet.',
     'Partner fees on markets from older launch configs can still be claimed by a retired key.',
-  ].join(' ')
+  ].filter(Boolean).join(' ')
 }
 
 // /ja has its own root layout (route group) so it can render <html lang="ja">.
