@@ -22,6 +22,7 @@ import { createExpiredLaunchCheck } from '../src/launch-expiry.mjs'
 import { expireLaunchSessions } from '../src/launch-sessions.mjs'
 import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
 import { createClaimRecovery } from '../src/claim-settlement.mjs'
+import { createPayoutRecovery, solanaPayoutChain } from '../src/builder-payouts.mjs'
 import { activateDuePayoutAddresses } from '../src/payout-address.mjs'
 import { createTipExpiry, readTipWallet } from '../src/tips.mjs'
 import { createTipTransferRecovery, createTipWalletMonitor } from '../src/tip-transfers.mjs'
@@ -116,6 +117,10 @@ const liquidity = createLiquidityRecovery({ pool, connection })
 const reinvest = process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL ? createBuilderReinvestRecovery({pool,connection,
   verification:rpcConnection(process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL,'finalized','reinvestVerification')}) : null
 const claims = createClaimRecovery({ pool, connection })
+// Payout-wallet claims (src/builder-payouts.mjs): settle on the exact two-provider receipt or abort after proven expiry.
+// Rebroadcasts only the identical signed transfer; never signs. Needs the independent verification provider.
+const payoutRecovery = verificationUrls[0] ? createPayoutRecovery({ pool, chain: solanaPayoutChain({ connection,
+  verification: rpcConnection(verificationUrls[0], 'finalized', 'payoutVerification') }) }) : null
 const platformFees = createPlatformFeeRecovery({ pool, connection })
 const builderCollections = { runOnce: createBuilderFeeCollections({ pool, connection, config,
   verification: verificationUrls[0] ? rpcConnection(verificationUrls[0], 'finalized', 'verification') : null }).recover }
@@ -462,10 +467,13 @@ try {
     catch (error) { if (error?.code !== '42P01') result.launchSessionError = 'Launch session expiry unavailable' }
     try { result.claims = await claims.runOnce() }
     catch { result.claimError = 'Claim recovery unavailable' }
+    try { if (payoutRecovery) result.payouts = await payoutRecovery.runOnce() }
+    catch { result.payoutError = 'Payout recovery unavailable' }
+    if (result.payoutError || result.payouts?.some(item => item.status === 'review')) process.exitCode = 1
     try { result.builderCollections = await builderCollections.runOnce() }
     catch { result.builderCollectionError = 'Builder collection recovery unavailable' }
     if (result.builderCollectionError || result.builderCollections?.some(item => item.status === 'review')) process.exitCode = 1
-    // Pasted payout addresses whose 48-hour hold has passed become the binding every payout path reads (database only;
+    // Pasted payout addresses whose 24-hour hold has passed become the binding every payout path reads (database only;
     // the claim path also does this under its own lock). Before the migration reaches this database there are none.
     try {
       const activations = (await activateDuePayoutAddresses(pool)).filter(item => item.status !== 'none')

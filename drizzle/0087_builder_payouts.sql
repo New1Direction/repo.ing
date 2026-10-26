@@ -4,8 +4,9 @@ SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS claim_controls (
   key varchar(32) PRIMARY KEY CHECK (key IN ('builder_payouts')),
   enabled boolean NOT NULL DEFAULT false,
-  max_claim_lamports bigint NOT NULL CHECK (max_claim_lamports > 0),
-  daily_lamports bigint NOT NULL CHECK (daily_lamports >= max_claim_lamports),
+  -- A claim can never exceed the payout wallet's 2 SOL cap; a day never exceeds five refills.
+  max_claim_lamports bigint NOT NULL CHECK (max_claim_lamports > 0 AND max_claim_lamports <= 2000000000),
+  daily_lamports bigint NOT NULL CHECK (daily_lamports >= max_claim_lamports AND daily_lamports <= 10000000000),
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text NOT NULL
 );
@@ -39,8 +40,12 @@ ALTER TABLE repo_claims ADD COLUMN IF NOT EXISTS payout_source text NOT NULL DEF
 --> statement-breakpoint
 ALTER TABLE repo_claims ADD COLUMN IF NOT EXISTS payout_nonce varchar(48) UNIQUE REFERENCES claim_payout_challenges(nonce);
 --> statement-breakpoint
-ALTER TABLE repo_claims ADD CONSTRAINT repo_claims_payout_wallet_nonce
-  CHECK ((payout_source = 'payout-wallet') = (payout_nonce IS NOT NULL)) NOT VALID;
+-- A payout-wallet row is a native SOL transfer with its nonce, and keeps its signed transfer while pending.
+ALTER TABLE repo_claims ADD CONSTRAINT repo_claims_payout_wallet_nonce CHECK (
+  (payout_source = 'payout-wallet') = (payout_nonce IS NOT NULL)
+  AND (payout_source <> 'payout-wallet' OR (asset = 'So11111111111111111111111111111111111111112'
+    AND damm_amount_base_units = 0 AND evidence_source = 'signed-intent'
+    AND (status <> 'pending' OR signed_transaction IS NOT NULL)))) NOT VALID;
 --> statement-breakpoint
 ALTER TABLE repo_claims VALIDATE CONSTRAINT repo_claims_payout_wallet_nonce;
 --> statement-breakpoint

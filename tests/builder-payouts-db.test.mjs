@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { createPrivateKey, sign } from 'node:crypto'
 import pg from 'pg'
 import bs58 from 'bs58'
-import { Keypair } from '@solana/web3.js'
-import { PAYOUT_WALLET_CAP_LAMPORTS, PayoutRefused, checkPayoutReceipt, claimMessage, createBuilderPayouts, owedLamports,
-  unclaimedSweepDate } from '../src/builder-payouts.mjs'
+import { Keypair, Transaction } from '@solana/web3.js'
+import { PAYOUT_WALLET_CAP_LAMPORTS, PayoutRefused, checkPayoutReceipt, claimMessage, createBuilderPayouts, createPayoutRecovery,
+  owedLamports, unclaimedSweepDate } from '../src/builder-payouts.mjs'
 
 // Real PostgreSQL with every committed migration (0087_builder_payouts): the switch and caps, claim windows, one-use
 // signed challenges, and the pending-then-settled payout row. The chain is scripted: balances, a simulation, the
@@ -18,26 +18,30 @@ const signText = (keypair, text) => bs58.encode(sign(null, Buffer.from(text, 'ut
   createPrivateKey({ key: Buffer.concat([PKCS8_ED25519, Buffer.from(keypair.secretKey.subarray(0, 32))]), format: 'der', type: 'pkcs8' })))
 const refused = code => error => error instanceof PayoutRefused && error.code === code
 
+// A scripted chain. `script` steers the next payout: onSimulate runs before the simulation answers, finalizeErr makes the
+// transfer fail on chain, tamper changes the receipt, status/expired answer recovery's questions.
 function scriptedChain(balances) {
-  const sent = []
+  const sent = [], script = { onSimulate: null, finalizeErr: null, tamper: false, status: null, expired: false }
+  const receiptOf = bytes => {
+    const tx = Transaction.from(bytes), message = tx.compileMessage(), transfer = tx.instructions[0]
+    const amount = transfer.data.readBigUInt64LE(4) + (script.tamper ? 1n : 0n), keys = message.accountKeys.map(k => k.toBase58())
+    const pre = keys.map(k => Number(balances.get(k) ?? 0n)), fee = 5000
+    const post = keys.map((k, i) => pre[i] + (k === transfer.keys[1].pubkey.toBase58() ? Number(amount) : 0)
+      - (k === transfer.keys[0].pubkey.toBase58() ? Number(amount) + fee : 0))
+    return { transaction: { message }, meta: { err: null, fee, preBalances: pre, postBalances: post } }
+  }
   return {
-    sent,
+    sent, script,
     balance: async address => balances.get(address) ?? 0n,
     rentMinimum: async () => 890_880n,
     latestBlockhash: async () => ({ blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 100 }),
-    simulate: async () => null,
+    simulate: async () => { await script.onSimulate?.(); return null },
     broadcast: async (bytes, landing) => { sent.push({ bytes, ...landing }) },
-    finalize: async () => null,
-    receipt: async () => {
-      const { Transaction } = await import('@solana/web3.js')
-      const tx = Transaction.from(sent.at(-1).bytes), message = tx.compileMessage()
-      const transfer = tx.instructions[0], amount = transfer.data.readBigUInt64LE(4)
-      const keys = message.accountKeys.map(k => k.toBase58())
-      const pre = keys.map(k => Number(balances.get(k) ?? 0n)), fee = 5000
-      const post = keys.map((k, i) => pre[i] + (k === transfer.keys[1].pubkey.toBase58() ? Number(amount) : 0)
-        - (k === transfer.keys[0].pubkey.toBase58() ? Number(amount) + fee : 0))
-      return { transaction: { message }, meta: { err: null, fee, preBalances: pre, postBalances: post } }
-    },
+    finalize: async () => script.finalizeErr,
+    receipt: async signature => receiptOf(sent.find(x => x.signature === signature).bytes),
+    status: async () => script.status,
+    expiredUnlanded: async () => script.expired,
+    rebroadcast: async () => {},
   }
 }
 
@@ -55,13 +59,16 @@ test('builder payouts on real PostgreSQL', { skip: !url && 'BUILDER_PAYOUT_TEST_
   const setControls = (enabled, maxClaim = 500_000_000n, daily = 2_000_000_000n) => pool.query(
     `update claim_controls set enabled = $1, max_claim_lamports = $2, daily_lamports = $3, updated_by = 'test' where key = 'builder_payouts'`,
     [enabled, String(maxClaim), String(daily)])
+  // Refused claims leave their challenge unused (by design); clear them so cases stay within the live-challenge bound.
   const challengeAndSign = async (repo, signer = wallet) => {
+    await pool.query("delete from claim_payout_challenges c where consumed_at is null and not exists (select 1 from repo_claims r where r.payout_nonce = c.nonce)")
     const c = await payouts.requestChallenge({ githubRepoId: repo })
     return { nonce: c.nonce, signature: signText(signer, c.message), challenge: c }
   }
 
   try {
     await pool.query(`truncate repo_claims, claim_payout_challenges, repo_claim_windows, repo_beneficiaries, fee_events, markets, repositories restart identity cascade`)
+    await setControls(false)
     for (const [id, i] of [[REPO, 1], [OTHER, 2], [1250276806n, 3]]) {
       await pool.query(`insert into repositories (github_repo_id, owner, name, full_name, stars, forks, archived, github_updated_at)
         values ($1, 'o', $2, $3, 1, 0, false, now())`, [String(id), `r${i}`, `o/r${i}`])
@@ -125,6 +132,75 @@ test('builder payouts on real PostgreSQL', { skip: !url && 'BUILDER_PAYOUT_TEST_
       balances.set(payoutSigner.publicKey.toBase58(), PAYOUT_WALLET_CAP_LAMPORTS + 1n)
       const { nonce, signature } = await challengeAndSign(REPO)
       await assert.rejects(payouts.claim({ githubRepoId: REPO, nonce, signature }), refused('payout-wallet-over-cap'))
+      balances.set(payoutSigner.publicKey.toBase58(), 1_500_000_000n)
+    })
+
+    const consumed = async nonce => (await pool.query('select consumed_at is not null as used from claim_payout_challenges where nonce = $1', [nonce])).rows[0].used
+
+    await t.test('switching payouts off just before broadcast refuses, and the challenge stays unused', async () => {
+      chain.script.onSimulate = () => setControls(false, 500_000_000n, 5_000_000_000n)
+      const { nonce, signature } = await challengeAndSign(REPO)
+      await assert.rejects(payouts.claim({ githubRepoId: REPO, nonce, signature }), refused('payouts-off'))
+      assert.equal(await consumed(nonce), false)
+      chain.script.onSimulate = null
+      await setControls(true, 500_000_000n, 5_000_000_000n)
+    })
+
+    await t.test('an expired challenge is refused', async () => {
+      const { nonce, signature } = await challengeAndSign(REPO)
+      await pool.query("update claim_payout_challenges set expires_at = now() - interval '1 second' where nonce = $1", [nonce])
+      await assert.rejects(payouts.claim({ githubRepoId: REPO, nonce, signature }), refused('challenge-mismatch'))
+    })
+
+    await t.test('a transfer that fails on chain is aborted and pays nothing', async () => {
+      const before = await owedLamports(pool, REPO)
+      chain.script.finalizeErr = { InstructionError: [0, 'Custom'] }
+      const { nonce, signature } = await challengeAndSign(REPO)
+      await assert.rejects(payouts.claim({ githubRepoId: REPO, nonce, signature }), refused('payout-failed'))
+      chain.script.finalizeErr = null
+      assert.equal(await owedLamports(pool, REPO), before)
+      const { rows: [row] } = await pool.query("select status from repo_claims where payout_nonce = $1", [nonce])
+      assert.equal(row.status, 'aborted')
+    })
+
+    await t.test('a receipt that does not match stays pending, blocks the repository, and recovery settles it on the real receipt', async () => {
+      chain.script.tamper = true
+      const { nonce, signature } = await challengeAndSign(REPO)
+      await assert.rejects(payouts.claim({ githubRepoId: REPO, nonce, signature }), /review required/)
+      const { rows: [row] } = await pool.query("select status, claim_signature as sig from repo_claims where payout_nonce = $1", [nonce])
+      assert.equal(row.status, 'pending')
+      const next = await challengeAndSign(REPO)
+      await assert.rejects(payouts.claim({ githubRepoId: REPO, ...next }), refused('claim-pending'))
+      const recovery = createPayoutRecovery({ pool, chain })
+      assert.equal((await recovery.runOnce())[0].status, 'pending', 'not finalized yet: left alone')
+      chain.script.status = { confirmationStatus: 'finalized', err: null }
+      assert.equal((await recovery.runOnce())[0].status, 'review', 'a wrong receipt is never settled')
+      chain.script.tamper = false
+      assert.equal((await recovery.runOnce())[0].status, 'settled')
+      chain.script.status = null
+    })
+
+    await t.test('recovery aborts only a transfer proven expired and unlanded', async () => {
+      const { nonce, signature } = await challengeAndSign(REPO)
+      chain.script.finalizeErr = null
+      const realFinalize = chain.finalize
+      chain.finalize = async () => { throw Error('RPC down') }
+      await assert.rejects(payouts.claim({ githubRepoId: REPO, nonce, signature }), /RPC down/)
+      chain.finalize = realFinalize
+      const recovery = createPayoutRecovery({ pool, chain })
+      assert.equal((await recovery.runOnce())[0].status, 'pending', 'unseen but not proven expired: rebroadcast, kept')
+      chain.script.expired = true
+      assert.equal((await recovery.runOnce())[0].status, 'aborted')
+      chain.script.expired = false
+    })
+
+    await t.test('a small balance waits for the minimum payout, and open challenges are bounded', async () => {
+      await pool.query(`insert into fee_events (github_repo_id, mint, pool, signature, event_index, amount_base_units, asset, kind, slot)
+        select 7003, mint, pool, 'small', 0, 900000, $1, 'dbc_creator_quote', 1 from markets where github_repo_id = $2`, [SOL, String(OTHER)])
+        .catch(() => {})
+      await pool.query("delete from claim_payout_challenges where consumed_at is null")
+      for (let i = 0; i < 5; i++) await payouts.requestChallenge({ githubRepoId: REPO })
+      await assert.rejects(payouts.requestChallenge({ githubRepoId: REPO }), refused('too-many-challenges'))
     })
   } finally { await pool.end() }
 })

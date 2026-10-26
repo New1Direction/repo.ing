@@ -63,7 +63,8 @@ export async function settleClaim(client, connection, intent) {
 
 export function createClaimRecovery({ pool, connection }) {
   return { runOnce: async () => {
-    const { rows } = await pool.query("select github_repo_id::text as repo from repo_claims where status='pending' and signed_transaction is not null")
+    // Payout-wallet claims have no Meteora receipt: src/builder-payouts.mjs createPayoutRecovery settles them.
+    const { rows } = await pool.query("select github_repo_id::text as repo from repo_claims where status='pending' and signed_transaction is not null and payout_source='meteora-pool'")
     const results = []
     for (const row of rows) {
       const client = await pool.connect()
@@ -74,7 +75,7 @@ export function createClaimRecovery({ pool, connection }) {
           const { rows: [intent] } = await client.query(`select claim_signature as "claimSignature", signed_transaction as "signedTransaction",
             amount_base_units::text as "amountBaseUnits", damm_amount_base_units::text as "dammAmountBaseUnits",
             beneficiary_wallet as "beneficiaryWallet", last_valid_block_height::text as expiry
-            from repo_claims where github_repo_id=$1 and status='pending'`,[row.repo])
+            from repo_claims where github_repo_id=$1 and status='pending' and payout_source='meteora-pool'`,[row.repo])
           if (!intent) continue
           let settled = await settleClaim(client, connection, intent)
           if (!settled) {
