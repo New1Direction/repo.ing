@@ -259,3 +259,17 @@ test('a Solana Action buy inside the launch-fee window says what fee it pays', a
     assert.doesNotMatch((await (await post(launchFee)).json()).message, /Launch fee/)
   }
 })
+
+test('the 20%-extra schedule starts at 21.75%, drops 0.5% every 3 s, and is exactly the standard 1.75% from 120 s', async () => {
+  const { EXTRA_20_SCHEDULE, LAUNCH_FEE_SCHEDULE, launchFeeBaseFee, readFeeSchedule, feeNumeratorAt, isApprovedLaunchFee, STANDARD_FEE_NUMERATOR } = await import('../src/launch-fee.mjs')
+  const { ActivationType } = await import('@meteora-ag/dynamic-bonding-curve-sdk')
+  const config = schedule => ({ poolFees: { baseFee: launchFeeBaseFee(schedule) }, enableFirstSwapWithMinFee: true, activationType: ActivationType.Timestamp })
+  const fresh = readFeeSchedule(config(EXTRA_20_SCHEDULE))
+  assert.equal(fresh.endNumerator, STANDARD_FEE_NUMERATOR)
+  assert.deepEqual([0n, 2n, 3n, 60n, 117n, 119n, 120n, 600n].map(s => feeNumeratorAt(fresh, 0n, s)),
+    [217_500_000n, 217_500_000n, 212_500_000n, 117_500_000n, 22_500_000n, 22_500_000n, 17_500_000n, 17_500_000n])
+  assert.equal(isApprovedLaunchFee(config(EXTRA_20_SCHEDULE)), true)
+  assert.equal(isApprovedLaunchFee(config(LAUNCH_FEE_SCHEDULE)), true, 'markets on the earlier schedule stay approved')
+  assert.equal(isApprovedLaunchFee({ ...config(EXTRA_20_SCHEDULE), enableFirstSwapWithMinFee: false }), false)
+  assert.equal(isApprovedLaunchFee({ ...config(EXTRA_20_SCHEDULE), activationType: ActivationType.Slot }), false)
+})

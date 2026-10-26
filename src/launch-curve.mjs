@@ -16,7 +16,8 @@ export const CURVE_PROFILES = Object.freeze({
   deepest: { label: '340 SOL graduation', migrationQuoteThreshold: 340 },
 })
 
-export function buildLaunchCurve(profile = 'balanced') {
+// schedule: the launch-fee profile's fee schedule (src/launch-fee.mjs); LAUNCH_FEE_SCHEDULE unless given.
+export function buildLaunchCurve(profile = 'balanced', { schedule } = {}) {
   const selected = CURVE_PROFILES[profile]
   if (!selected) throw Error('Unknown launch curve profile')
   const launchFee = profile === 'launch-fee'
@@ -44,7 +45,7 @@ export function buildLaunchCurve(profile = 'balanced') {
     migrationQuoteThreshold: selected.migrationQuoteThreshold })
   // The curve, supply and migration math never read the fee. The exact scheduler cliff (50.44%) is not a whole
   // basis-point value, so it replaces the flat 175 bps base fee after the curve is built.
-  return launchFee ? { ...curve, poolFees: { ...curve.poolFees, baseFee: launchFeeBaseFee() } } : curve
+  return launchFee ? { ...curve, poolFees: { ...curve.poolFees, baseFee: launchFeeBaseFee(schedule) } } : curve
 }
 
 // The contributor early access config's curve (docs/EARLY_ACCESS.md): exactly the builders profile (flat 1.75%, 1% builder

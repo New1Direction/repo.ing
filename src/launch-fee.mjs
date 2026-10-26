@@ -27,6 +27,18 @@ export const LAUNCH_FEE_SCHEDULE = Object.freeze({
   reductionFactor: 185n,
 })
 
+// Owner decision 2026-10-26: 20% EXTRA on top of the standard 1.75%, falling to 0 extra over 120 seconds. Meteora's linear
+// scheduler on timestamp activation: 21.75% at creation, minus 0.5% every 3 seconds (40 steps), exactly 1.75% from 120 s.
+// New ordinary launch configs use it; LAUNCH_FEE_SCHEDULE stays approved for the markets already launched on it.
+export const EXTRA_20_SCHEDULE = Object.freeze({
+  baseFeeMode: BaseFeeMode.FeeSchedulerLinear,
+  cliffFeeNumerator: 217_500_000n,
+  numberOfPeriod: 40,
+  periodFrequency: 3n,
+  reductionFactor: 5_000_000n,
+})
+export const APPROVED_LAUNCH_FEE_SCHEDULES = Object.freeze([LAUNCH_FEE_SCHEDULE, EXTRA_20_SCHEDULE])
+
 const big = value => BigInt(value?.toString?.() ?? value)
 
 // The createConfig poolFees.baseFee for LAUNCH_FEE_SCHEDULE. Throws if the SDK no longer validates it or its
@@ -66,17 +78,16 @@ export function readFeeSchedule(config) {
     durationPoints: BigInt(numberOfPeriod) * periodFrequency, firstSwapMinFee, activationType })
 }
 
-// The launch guard: only the proven flat 1.75% configs or exactly LAUNCH_FEE_SCHEDULE (timestamp activation,
+// The launch guard: only the proven flat 1.75% configs or exactly one of APPROVED_LAUNCH_FEE_SCHEDULES (timestamp activation,
 // launcher's first buy at the minimum fee, 1.75% afterwards) may receive new launches.
 export function isApprovedLaunchFee(config) {
   let schedule
   try { schedule = readFeeSchedule(config) } catch { return false }
   if (schedule.kind === 'flat') return schedule.startNumerator === STANDARD_FEE_NUMERATOR
-  const approved = LAUNCH_FEE_SCHEDULE
-  return schedule.mode === approved.baseFeeMode && schedule.startNumerator === approved.cliffFeeNumerator &&
-    schedule.numberOfPeriod === approved.numberOfPeriod && schedule.periodFrequency === approved.periodFrequency &&
-    schedule.reductionFactor === approved.reductionFactor && schedule.endNumerator === STANDARD_FEE_NUMERATOR &&
-    schedule.firstSwapMinFee && schedule.activationType === ActivationType.Timestamp
+  return APPROVED_LAUNCH_FEE_SCHEDULES.some(approved => schedule.mode === approved.baseFeeMode &&
+    schedule.startNumerator === approved.cliffFeeNumerator && schedule.numberOfPeriod === approved.numberOfPeriod &&
+    schedule.periodFrequency === approved.periodFrequency && schedule.reductionFactor === approved.reductionFactor) &&
+    schedule.endNumerator === STANDARD_FEE_NUMERATOR && schedule.firstSwapMinFee && schedule.activationType === ActivationType.Timestamp
 }
 
 // The DBC program charges no trade before a pool's activation point. A confirmed-commitment clock can trail

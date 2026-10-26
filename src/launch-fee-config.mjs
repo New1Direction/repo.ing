@@ -28,9 +28,9 @@ export function instructionSha256(tx) {
     data: ix.data.toString('base64') }))))
 }
 
-export async function buildLaunchFeeConfigTransaction({ connection, config, partner, leftoverReceiver, payer = partner }) {
+export async function buildLaunchFeeConfigTransaction({ connection, config, partner, leftoverReceiver, payer = partner, schedule }) {
   const dbc = new DynamicBondingCurveClient(connection, 'confirmed')
-  const curve = buildLaunchCurve(LAUNCH_FEE_PROFILE)
+  const curve = buildLaunchCurve(LAUNCH_FEE_PROFILE, { schedule })
   const tx = await dbc.partner.createConfig({ config: new PublicKey(config), feeClaimer: new PublicKey(partner),
     leftoverReceiver: new PublicKey(leftoverReceiver), payer: new PublicKey(payer), quoteMint: NATIVE_MINT, ...curve })
   if (tx.instructions.length !== 1 || !tx.instructions[0].programId.equals(DBC_PROGRAM_ID)) throw Error('Unexpected config transaction shape')

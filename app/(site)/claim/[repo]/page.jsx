@@ -126,9 +126,11 @@ async function ClaimContent({ market, repo, query }) {
     {BigInt(market.platformCollected ?? '0') > 0n && <p>Platform collections: <strong title={`${formatUnits(market.platformCollected)} SOL`}>{formatSolDisplay(market.platformCollected)} SOL</strong>, not paid to the owner. <Link href="/how-it-works#builder-collections">Collection policy</Link></p>}
   </div>
   // Builder payouts from the capped payout wallet (src/builder-payouts.mjs): the ledger's owed amount, the claim window and the switch.
-  const [owed, windowRow, controls] = await Promise.all([owedLamports(pool, repoId), claimWindow(pool, repoId), payoutControls(pool)])
-  const payoutClaim = { owedLamports: owed.toString(), paused: !controls.enabled,
-    claimWindow: windowRow && { openedAt: new Date(windowRow.openedAt).toISOString(), unclaimedAfter: windowRow.unclaimedAfter.toISOString() } }
+  // Fail closed: anything unreadable (a role without the claim tables, a database error) shows payouts paused.
+  const payoutClaim = await Promise.all([owedLamports(pool, repoId), claimWindow(pool, repoId), payoutControls(pool)])
+    .then(([owed, windowRow, controls]) => ({ owedLamports: owed.toString(), paused: !controls.enabled,
+      claimWindow: windowRow && { openedAt: new Date(windowRow.openedAt).toISOString(), unclaimedAfter: windowRow.unclaimedAfter.toISOString() } }))
+    .catch(() => ({ owedLamports: '0', paused: true, claimWindow: null }))
   return <ClaimSteps payoutClaim={payoutClaim} summary={summary} repoId={repoId} mint={market.mint} repoName={repo.fullName} appAccess={access} appSettingsUrl={appSettingsUrl}
     verifiedUser={verifiedUser} beneficiaryWallet={beneficiary?.wallet ?? null} beneficiaryMethod={beneficiary?.method ?? 'signature'}
     beneficiaryBoundAt={beneficiary?.boundAt ?? null} pendingAddress={pendingAddress || null} claimable={claimable} usdEstimate={usdEstimate}
