@@ -11,7 +11,7 @@ const manifest = readFileSync(new URL('../config/existing-market-custody.json', 
 const configs = [...new Set(JSON.parse(manifest).poolCreators.map(row => row.config))]
 const inputs = { configs, custody: { sha256: '2c31354ba8009acb0da1319b068f479216b0615120328510cba50665f0ecd888' },
   proposedEnvironment: { EXISTING_MARKET_TRADING_ONLY: 'true', EXISTING_MARKET_TRADING_STAGE: 'review',
-    DBC_CONFIG: configs[0], DBC_LEGACY_CONFIGS: configs.slice(1).join(','),
+    DBC_CONFIG: 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7', DBC_LEGACY_CONFIGS: configs.join(','),
     TRADING_CUSTODY_RECOVERY_SHA256: '2c31354ba8009acb0da1319b068f479216b0615120328510cba50665f0ecd888' } }
 const mint = '59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be'
 const hookFlags = ['HOOK_PRODUCTION_BOOTSTRAP', 'HOOK_NATIVE_LAUNCH_ENABLED', 'HOOK_NATIVE_LAUNCHES_ENABLED', 'HOOK_INCLUSIVE_TRADING_ENABLED', 'HOOK_NATIVE_TRADING_ENABLED', 'HOOK_WALLET_FUNDING_ENABLED', 'HOOK_WALLET_IDENTITY_ENABLED', 'HOOK_SELECTED_HOOKS_ENABLED']
@@ -37,10 +37,11 @@ async function fixture(bundledManifest = manifest) {
     constructor(ctx) { this.ctx = ctx }
     async destroy() {
       if (runtime.failDestroy) throw Error('restart failed')
-      runtime.env = null
+      runtime.env = null; runtime.stale = false; runtime.destroys = (runtime.destroys ?? 0) + 1
     }
     async fetch(request) {
       if (runtime.hold && (!runtime.holdPath || new URL(request.url).pathname === runtime.holdPath)) await runtime.hold
+      if (runtime.stale) return new Response('Error proxying request to container: The container is not running, consider calling start()', { status: 500 })
       if (!runtime.env) { runtime.env = { ...this.envVars }; runtime.starts++ }
       runtime.calls.push({ request, env: { ...runtime.env }, body: request.body ? await request.text() : null })
       return runtime.html
@@ -94,7 +95,7 @@ test('only the five explicit review actions and two balance routes reach the con
 
 test('policy fallback serves public discovery and wallet reads but rejects private/mutation routes', async () => {
   const f = await fixture()
-  const allowed = ['/', '/launch', '/explore', '/find-repos', '/discoverers', '/referrals', '/agents', '/wallet', '/api/repo-search', '/api/wallet/overview', '/builders', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks', `/token/${mint}`, ...['trades', 'metrics', 'curve', 'traders', 'activity', 'pulse'].map(s => `/api/market/${mint}/${s}`), `/api/token-image/${mint}`, '/api/repo-logo/123', '/api/growth', '/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png', ...['art', 'badges', 'launch-icons', 'hook-icons', 'credits'].map(s => `/${s}/test-image.webp`), '/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4', '/_next/static/chunks/test.js']
+  const allowed = ['/', '/launch', '/explore', '/find-repos', '/discoverers', '/referrals', '/agents', '/wallet', '/api/repo-search', '/api/wallet/overview', '/builders', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks', `/token/${mint}`, ...['trades', 'metrics', 'curve', 'traders', 'activity', 'pulse', 'events'].map(s => `/api/market/${mint}/${s}`), `/api/token-image/${mint}`, '/api/repo-logo/123', '/api/growth', '/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png', ...['art', 'badges', 'launch-icons', 'hook-icons', 'credits'].map(s => `/${s}/test-image.webp`), '/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4', '/_next/static/chunks/test.js']
   for (const path of allowed) for (const method of ['GET', 'HEAD']) assert.equal((await f.request(path, { method })).status, 200, `${method} ${path}`)
   const before = f.runtime.calls.length
   for (const path of ['/api/trade', '/api/trade/', '/api/auth/session', '/api/launch', '/api/hook-lab/native-launch', '/api/hook-lab/inclusive-trade', '/api/builders/claim', '/api/bundles', '/api/replay', '/api/actions/trade', '/api/mcp/', '/builders?owner=x', '/admin/restart', '/api/market/not-a-mint/balance', `/api/market/${mint}/balance/`, '/stats/', '/art/image.svg']) {
@@ -113,7 +114,6 @@ test('health is a public read, never a mutation route', async () => {
 test('finalized launch metadata is readable without opening launch execution or forwarding credentials', async () => {
   const f = await fixture()
   f.env.EXISTING_MARKET_TRADING_STAGE = 'live'
-  f.env.DBC_LEGACY_CONFIGS += ',Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7'
   for (const path of ['/m/1278009399', `/api/token-metadata/${mint}`]) {
     for (const method of ['GET', 'HEAD']) {
       assert.equal((await f.request(path, { method, headers: { cookie: 'private', authorization: 'Bearer private' } })).status, 200)
@@ -307,7 +307,7 @@ test('live stage exposes only existing-market trades while launches, hooks, clai
 test('both DB bindings and raw config changes restart warm instances; rollback restarts too', async () => {
   const f = await fixture()
   await f.request()
-  for (const [key, value] of [['PUBLIC_DATABASE_URL', 'rotated-reader'], ['TRADING_DATABASE_URL', 'rotated-trader'], ['DBC_LEGACY_CONFIGS', inputs.configs.slice(1).reverse().join(',')], ['TRADING_DATABASE_URL', 'trade-only']]) {
+  for (const [key, value] of [['PUBLIC_DATABASE_URL', 'rotated-reader'], ['TRADING_DATABASE_URL', 'rotated-trader'], ['DBC_LEGACY_CONFIGS', [...inputs.configs].reverse().join(',')], ['TRADING_DATABASE_URL', 'trade-only']]) {
     const starts = f.runtime.starts
     f.env[key] = value
     const body = await (await f.request()).json()
@@ -515,4 +515,25 @@ test('accounting recovery binds only the isolated ledger reader and never admits
   f.env.ACCOUNTING_RECOVERY_ENABLED = 'false'
   assert.equal((await f.request('/api/health')).status, 200)
   assert.equal(f.runtime.env.ACCOUNTING_DATABASE_URL, undefined)
+})
+
+test('a container replaced under the Durable Object is restarted once and reads retried; writes are never replayed', async () => {
+  const f = await fixture()
+  f.env.EXISTING_MARKET_TRADING_STAGE = 'live'
+  await f.request()
+  const starts = f.runtime.starts, destroys = f.runtime.destroys ?? 0
+  f.runtime.stale = true
+  const [a, b] = await Promise.all([f.request('/api/health'), f.request('/explore')])
+  assert.deepEqual([a.status, b.status], [200, 200], 'concurrent reads recover in the same request')
+  assert.equal(f.runtime.destroys - destroys, 1, 'one shared restart')
+  assert.equal(f.runtime.starts, starts + 1)
+  const calls = f.runtime.calls.length
+  f.runtime.stale = true
+  const write = await f.trade('quote')
+  assert.equal(write.status, 503)
+  assert.equal(write.headers.get('retry-after'), '5')
+  assert.equal(f.runtime.calls.length, calls, 'the write was not replayed')
+  assert.equal((await f.request('/api/health')).status, 200)
+  // An application error is passed through untouched.
+  f.runtime.stale = false
 })

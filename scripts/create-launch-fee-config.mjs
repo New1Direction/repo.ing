@@ -35,6 +35,14 @@ const liveInfo = await connection.getAccountInfo(new PublicKey(live), 'confirmed
 const liveDifferences = configDifferences(review.decoded, new DynamicBondingCurveClient(connection, 'confirmed').state.getProgram().coder.accounts.decode('poolConfig', liveInfo.data))
 assert(liveDifferences.every(path => LAUNCH_FEE_FIELDS.includes(path)), `Differs from ${live} beyond the fee: ${liveDifferences.join(', ')}`)
 const schedule = readFeeSchedule(review.decoded)
+// Who receives each trade's fee, at launch and after the window: Meteora's protocol share first (20%), then the rest split
+// between the pool creator (creatorTradingFeePercentage) and the fee claimer (this config's partner: the vault).
+const creatorShare = Number(review.decoded.creatorTradingFeePercentage)
+const split = numerator => {
+  const total = Number(numerator) / 1e7, protocol = total * 0.2, rest = total - protocol
+  const pct = value => `${value.toFixed(4)}%`
+  return { total: pct(total), meteoraProtocol: pct(protocol), poolCreator: pct(rest * creatorShare / 100), feeClaimerVault: pct(rest * (100 - creatorShare) / 100) }
+}
 console.log(JSON.stringify({ network: 'mainnet', config, payer, feeClaimer: MULTISIG_VAULT,
   leftoverReceiver: MULTISIG_VAULT, referenceConfig: reference, differsFromReferenceOnlyIn: review.differences, liveConfig: live, differsFromLiveOnlyIn: liveDifferences,
   launchFee: { mode: extra20 ? 'linear fee scheduler, timestamp activation' : 'exponential fee scheduler, timestamp activation',
@@ -43,6 +51,9 @@ console.log(JSON.stringify({ network: 'mainnet', config, payer, feeClaimer: MULT
     endFeeNumerator: schedule.endNumerator.toString(), launcherFirstBuyFee: feePercentLabel(schedule.endNumerator),
     feeAtSeconds: Object.fromEntries([0,3,30,60,90,117,120,180].map(seconds => [seconds,
       feePercentLabel(feeNumeratorAt(schedule,0n,BigInt(seconds)))])) },
+  feeRecipients: { creatorTradingFeePercentage: creatorShare, atLaunch: split(schedule.startNumerator), afterWindow: split(schedule.endNumerator) },
+  signers: (message => message.accountKeys.slice(0, message.header.numRequiredSignatures).map(key => key.toBase58()))(tx.compileMessage()), recentBlockhash: tx.recentBlockhash,
+  unsignedTransactionBase64: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
   instructionSha256, accountDataSha256: review.accountDataSha256, accountBytes: review.accountBytes,
   rentLamports: review.rentLamports, networkFeeLamports: review.networkFeeLamports,
   totalDebitLamports: review.totalDebitLamports, payerBalanceLamports: review.payerBalanceLamports,

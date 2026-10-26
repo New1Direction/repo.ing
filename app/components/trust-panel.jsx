@@ -132,7 +132,7 @@ async function HoldersRows({ market }) {
 // Only for markets whose on-chain config has the launch fee (launchFee: launchFeeTerms of the market's config).
 function LaunchFeeRow({ terms }) {
   return <Row id="trust-launch-fee" icon={Timer} title={`Launch fee: first ${terms.durationLabel}`}
-    lines={[`${terms.startPercent} at launch, falling every second to ${terms.endPercent}`, 'Split like the regular fee']}
+    lines={[`${terms.startPercent} at launch, falling ${terms.stepLabel ?? 'over the window'} to ${terms.endPercent}`, 'Split like the regular fee']}
     tip={[launchFeeSentence(terms), LAUNCH_FEE_SPLIT, launcherBuySentence(terms),
       'It makes buying in the first seconds and selling to later buyers costly.'].filter(Boolean).join(' ')}/>
 }

@@ -47,9 +47,11 @@ export function tradingMarketLoader(pool, config, manifest, newMarkets = {}) {
   if (process.env.EXISTING_MARKET_TRADING_ONLY !== 'true') return undefined
   const rows = manifest.poolCreators
   const expected = [...new Set(rows.map(row => row.config))].sort()
-  // Public pages may resolve the safe new config, but that does not add a trading identity.
+  // The current config is the safe launch config (or, before it was, a manifest config); it adds no trading identity. The
+  // reviewed manifest's configs must be exactly the other approved configs.
   const configured = approvedConfigs(config).map(key => key.toBase58()).filter(key => key !== RECOVERED_LAUNCH_CONFIG).sort()
-  if (!rows.length || !expected.includes(String(config)) || JSON.stringify(expected) !== JSON.stringify(configured)) throw Error('Trading reviewed config allowlist changed')
+  if (!rows.length || !(String(config) === RECOVERED_LAUNCH_CONFIG || expected.includes(String(config))) ||
+    JSON.stringify(expected) !== JSON.stringify(configured)) throw Error('Trading reviewed config allowlist changed')
   const allowed = new Map(rows.map(row => [row.repoId, Object.freeze({ ...row })]))
   if (allowed.size !== rows.length) throw Error('Trading reviewed existing-market allowlist is ambiguous')
   const resolveConfig = createMarketConfigResolver(config, expected, null)

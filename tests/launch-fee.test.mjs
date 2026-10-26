@@ -9,7 +9,7 @@ import {
 } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { buildLaunchCurve } from '../src/launch-curve.mjs'
 import {
-  feeNumeratorAt, isApprovedLaunchFee, LAUNCH_FEE_SCHEDULE, launchFeeBaseFee, launchFeeJson, launchFeeTerms, launchFeeWindow,
+  EXTRA_20_SCHEDULE, feeNumeratorAt, isApprovedLaunchFee, LAUNCH_FEE_SCHEDULE, launchFeeBaseFee, launchFeeJson, launchFeeTerms, launchFeeWindow,
   poolFeeFacts, quotePoint, readFeeSchedule, STANDARD_FEE_NUMERATOR,
 } from '../src/launch-fee.mjs'
 import {
@@ -218,12 +218,15 @@ test('launch-fee window, terms and copy are factual and only exist for scheduled
   const json = launchFeeJson(window)
   assert.deepEqual(json, { active: true, feeNumerator: '288066303', endFeeNumerator: '17500000', startFeeNumerator: '504409597', endsAt: 1180, remainingSeconds: 150 })
   const terms = launchFeeTerms(schedule)
-  assert.deepEqual({ ...terms }, { startPercent: '50.44%', endPercent: '1.75%', durationSeconds: 180, durationLabel: '3 minutes', launcherBuyPercent: '1.75%' })
+  assert.deepEqual(JSON.parse(JSON.stringify(terms)), { startPercent: '50.44%', endPercent: '1.75%', durationSeconds: 180, durationLabel: '3 minutes',
+    endLabel: '180 s', stepLabel: 'every second', launcherBuyPercent: '1.75%',
+    milestones: [{ at: 45, label: '45 s', percent: '21.77%' }, { at: 90, label: '90 s', percent: '9.40%' }, { at: 135, label: '135 s', percent: '4.05%' }] })
   assert.equal(launchFeeTerms(readFeeSchedule(buildersCurve)), null)
-  assert.equal(launchFeeSentence(terms), 'Trades in the first 3 minutes after launch pay a higher fee that starts at 50.44% and falls every second to 1.75%.')
+  assert.equal(launchFeeSentence(terms), 'Buys and sells in the first 3 minutes after launch pay a higher fee: 50.44% at launch, 21.77% at 45 s, ' +
+    '9.40% at 90 s, 4.05% at 135 s, then 1.75% from 180 s on. It steps down every second.')
   assert.equal(launcherBuySentence(terms), 'The launcher’s initial buy is part of the launch transaction and pays 1.75%.')
   assert.match(LAUNCH_FEE_SPLIT, /builders and repo\.ing.*Meteora’s 20% protocol share/)
-  assert.equal(launchFeeNotice(json), 'Launch fee: 28.81% at quote time, falling every second to 1.75% within 150 s. It is split like the regular fee.')
+  assert.equal(launchFeeNotice(json), 'Launch fee: 28.81% at quote time, falling to 1.75% within 150 s. It is split like the regular fee.')
   assert.match(launchFeeTradeNote(json), /^This market is in its launch-fee window: trades pay 28\.81% at this quote\. .*1\.75% within 150 s/)
   for (const inactive of [null, undefined, { ...json, active: false }, { ...json, feeNumerator: 'x' }]) {
     assert.equal(launchFeeNotice(inactive), null)
@@ -254,7 +257,7 @@ test('a Solana Action buy inside the launch-fee window says what fee it pays', a
   const post = launchFee => handleBuyPost(new Request(`https://repo.ing/api/actions/buy/${MINT}?amount=0.1`,
     { method: 'POST', body: JSON.stringify({ account: wallet.toBase58() }) }), MINT, { loadMarket, prepareBuy: prepareBuy(launchFee) })
   const active = await (await post(launchFeeJson(launchFeeWindow(schedule, 0n, 30n)))).json()
-  assert.match(active.message, /at least 1 \$NEW \(1% max slippage\)\. Launch fee: 28\.81% at quote time, falling every second to 1\.75% within 150 s\./)
+  assert.match(active.message, /at least 1 \$NEW \(1% max slippage\)\. Launch fee: 28\.81% at quote time, falling to 1\.75% within 150 s\./)
   for (const launchFee of [null, launchFeeJson(launchFeeWindow(schedule, 0n, 400n))]) {
     assert.doesNotMatch((await (await post(launchFee)).json()).message, /Launch fee/)
   }
@@ -272,4 +275,13 @@ test('the 20%-extra schedule starts at 21.75%, drops 0.5% every 3 s, and is exac
   assert.equal(isApprovedLaunchFee(config(LAUNCH_FEE_SCHEDULE)), true, 'markets on the earlier schedule stay approved')
   assert.equal(isApprovedLaunchFee({ ...config(EXTRA_20_SCHEDULE), enableFirstSwapWithMinFee: false }), false)
   assert.equal(isApprovedLaunchFee({ ...config(EXTRA_20_SCHEDULE), activationType: ActivationType.Slot }), false)
+})
+
+test('the 20%-extra schedule reads as its own steps: 21.75% at launch, down 0.5% every 3 seconds to 1.75% at 120 s', () => {
+  const s = EXTRA_20_SCHEDULE
+  const schedule = { kind: 'scheduled', mode: s.baseFeeMode, startNumerator: s.cliffFeeNumerator, endNumerator: 17_500_000n,
+    numberOfPeriod: s.numberOfPeriod, periodFrequency: s.periodFrequency, reductionFactor: s.reductionFactor,
+    durationPoints: BigInt(s.numberOfPeriod) * s.periodFrequency, firstSwapMinFee: true, activationType: ActivationType.Timestamp }
+  assert.equal(launchFeeSentence(launchFeeTerms(schedule)), 'Buys and sells in the first 2 minutes after launch pay a higher fee: 21.75% at launch, ' +
+    '16.75% at 30 s, 11.75% at 60 s, 6.75% at 90 s, then 1.75% from 120 s on. It steps down every 3 seconds.')
 })

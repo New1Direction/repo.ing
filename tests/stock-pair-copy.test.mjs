@@ -176,7 +176,7 @@ test('the launch form states the pair it launches: a chosen stock pair\'s fee in
   // A launch-fee window: SOL keeps its sentences; a stock pair (no initial buy) says every share scales alike.
   assert.ok(card({ launchFee }).includes('It is split like the regular fee: shares to the repo’s builders and repo.ing, and Meteora’s 20% protocol share. The launcher’s initial buy'))
   const window = card({ stock: { symbol: 'METAx' }, launchFee })
-  assert.ok(window.includes('falls every second to 1.75%. A launch-fee window scales every share alike. Measured on'))
+  assert.ok(window.includes('then 1.75% from 10 minutes on. It steps down over the window. A launch-fee window scales every share alike. Measured on'))
   assert.doesNotMatch(window, /repo’s builders|initial buy/)
   // The subtitle: who every trade pays.
   assert.equal(launchSubtitle({}), 'Create a market for this repository. Every trade pays the builders.')

@@ -51,7 +51,13 @@ export function chain() {
   return new Connection(url, { commitment: 'confirmed', disableRetryOnRateLimit: true, fetch: rpcFetchFor(url) })
 }
 
-export function configAddress() { return process.env.DBC_CONFIG || null }
+// The config new launches use. With the recovered launch runtime on (production), it must be that runtime's custody-safe
+// config: any other value answers unconfigured, so every path that needs it fails closed.
+export function configAddress() {
+  const config = process.env.DBC_CONFIG || null
+  if (config && process.env.ORDINARY_LAUNCH_RECOVERY_ENABLED === 'true' && config !== RECOVERED_LAUNCH_CONFIG) return null
+  return config
+}
 
 export function creatorSigner() {
   const value = process.env.PLATFORM_CREATOR_SECRET_KEY

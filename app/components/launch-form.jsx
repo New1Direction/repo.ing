@@ -334,7 +334,7 @@ export function LaunchFeeBreakdown({ model = false, stock = null, launchFee = nu
       <div className="fee-line"><span>repo.ing share</span><strong>0.406%</strong></div>
     </>}
     <div className="fee-line"><span>Meteora protocol</span><strong>0.35%</strong></div>
-    {launchFee && <div className="fee-line launch-fee-line"><span>Launch fee<small>First {launchFee.durationLabel} after launch, falling every second</small></span><strong>{launchFee.startPercent} → {launchFee.endPercent}</strong></div>}
+    {launchFee && <div className="fee-line launch-fee-line"><span>Launch fee<small>First {launchFee.durationLabel} after launch, buys and sells, falling {launchFee.stepLabel ?? 'over the window'}</small></span><strong>{launchFee.startPercent} → {launchFee.endPercent}</strong></div>}
     <div className="fee-note"><Info size={18}/><span>{windowNote}Measured on the fixed Meteora bonding curve. Fee amounts round to whole token units per trade. After graduation, trades pay the Meteora DAMM v2 pool’s 1% base fee in {unit} (Meteora’s dynamic fee can add more when trading is volatile); {graduated}</span></div>
   </div>
 }

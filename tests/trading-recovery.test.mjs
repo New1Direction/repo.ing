@@ -86,7 +86,13 @@ test('trading-only router admits only the reviewed market identity and exact con
     await assert.rejects(withRecoveredReads('1278009399'), /independent verification RPC/)
     assert.equal(reads, 2, 'read-only config support alone does not admit newly launched markets to trading')
     assert.throws(() => tradingMarketLoader(pool, process.env.DBC_LEGACY_CONFIGS, manifest), /reviewed config allowlist/)
+    // The safe launch config as the current config, with every manifest config legacy, trades the reviewed markets as before.
+    process.env.DBC_LEGACY_CONFIGS = binding.config
+    const safeCurrent = tradingMarketLoader(pool, 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7', manifest)
+    assert.equal((await safeCurrent(binding.repoId)).mint, binding.mint)
     process.env.DBC_LEGACY_CONFIGS = ''
+    assert.throws(() => tradingMarketLoader(pool, 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7', manifest), /reviewed config allowlist/,
+      'a manifest config missing from the legacy list fails closed')
     for (const patch of [null, { mint: binding.owner }, { pool: binding.owner }, { creatorWallet: binding.owner },
       { status: 'pending' }, { launchFinality: 'confirmed' }, { indexedAt: null }, { quoteMint: binding.owner },
       { transferHookProgram: binding.owner }, { bundleId: '1' }]) {

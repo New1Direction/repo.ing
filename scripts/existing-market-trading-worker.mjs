@@ -7,16 +7,18 @@ import custodyManifest from '../config/existing-market-custody.json'
 const pages = new Set(['/', '/launch', '/explore', '/find-repos', '/discoverers', '/referrals', '/agents', '/wallet', '/builders', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks'])
 const mint = '[1-9A-HJ-NP-Za-km-z]{32,44}'
 const tokenPage = new RegExp(`^/token/${mint}$`)
-const publicMarketApi = new RegExp(`^/api/market/${mint}/(trades|metrics|curve|traders|activity|pulse)$`)
+// events: the read-only live hint stream (app/api/market/[mint]/events) that tells an open chart a trade was indexed.
+const publicMarketApi = new RegExp(`^/api/market/${mint}/(trades|metrics|curve|traders|activity|pulse|events)$`)
 const tokenImage = new RegExp(`^/api/token-image/${mint}$`)
 const tokenMetadata = new RegExp(`^/api/token-metadata/${mint}$`)
 const marketBalance = new RegExp(`^/api/market/${mint}/balance$`)
 const custodyDigest = '2c31354ba8009acb0da1319b068f479216b0615120328510cba50665f0ecd888'
-// Public config identities from the reviewed inputs.json; never caller-selected.
-const primaryConfig = '2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M'
-const legacyConfigs = ['8TXNGgx6g5TcsVCYt7wz3cAxJkynzzBZWXeQtXZaz6A3', '261xpZVAz5k3ZfwfxXdgkgLowiH6NUzFEHtihhD4YMq1', 'D7oz8xQ4seaNaEgiDS4fu3YJfmUvR5iPuznxuqKV4u1c']
-// Optional read support for the finalized custody-safe config; the trading manifest stays unchanged.
-const recoveredReadConfig = 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7'
+// Public config identities; never caller-selected. DBC_CONFIG is the custody-safe config new launches use (fee claimer: the
+// multisig vault). Every config of the reviewed trading manifest is legacy, the retired 2YbBp included: read and traded, never
+// the current config again. Any other pair of values fails closed. The trading manifest itself is unchanged.
+const primaryConfig = 'Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7'
+const legacyConfigs = ['2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M', '8TXNGgx6g5TcsVCYt7wz3cAxJkynzzBZWXeQtXZaz6A3',
+  '261xpZVAz5k3ZfwfxXdgkgLowiH6NUzFEHtihhD4YMq1', 'D7oz8xQ4seaNaEgiDS4fu3YJfmUvR5iPuznxuqKV4u1c']
 // Public, keyless second provider for new-market admission (app/lib/trading-recovery.mjs). Empty when it would not be
 // independent of the primary RPC, which keeps rule-admitted markets refused.
 const PUBLIC_VERIFIER = 'https://api.mainnet-beta.solana.com'
@@ -64,7 +66,7 @@ async function validateBindings(bindings) {
     let url
     try { url = new URL(bindings.ORDINARY_LAUNCH_DATABASE_URL) } catch { /* Refuse without logging credentials. */ }
     if (launchBindingNames.some(name => typeof bindings[name] !== 'string' || !bindings[name].trim()) ||
-        !ordinaryLaunchEnabled(bindings) || bindings.ORDINARY_LAUNCH_CONFIG !== recoveredReadConfig ||
+        !ordinaryLaunchEnabled(bindings) || bindings.ORDINARY_LAUNCH_CONFIG !== primaryConfig ||
         !url || !['postgres:', 'postgresql:'].includes(url.protocol) || url.username !== 'repoing_ordinary_launcher' ||
         url.pathname !== '/repoing_operational' || url.searchParams.get('sslmode') !== 'verify-full' ||
         !/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(bindings.ORDINARY_LAUNCH_BOOTSTRAP_SECRET_KEY ?? '')) {
@@ -80,8 +82,7 @@ async function validateBindings(bindings) {
     || bindings.EXISTING_MARKET_TRADING_ONLY !== 'true'
     || !['review', 'test', 'live'].includes(bindings.EXISTING_MARKET_TRADING_STAGE)
     || bindings.DBC_CONFIG !== primaryConfig
-    || ![legacyConfigs, [...legacyConfigs, recoveredReadConfig]].some(configs =>
-      bindings.DBC_LEGACY_CONFIGS.split(',').sort().join(',') === [...configs].sort().join(','))
+    || bindings.DBC_LEGACY_CONFIGS.split(',').sort().join(',') !== [...legacyConfigs].sort().join(',')
     || bindings.TRADING_CUSTODY_RECOVERY_SHA256 !== custodyDigest
     || await sha256(bindings.TRADING_CUSTODY_RECOVERY_JSON) !== custodyDigest) {
     throw Error('Review bindings missing or mismatched')
@@ -152,11 +153,14 @@ async function tradeBoundary(request, bindings) {
   return new Request(request.url, { method: request.method, headers, body, redirect: 'manual' })
 }
 
+const STALE_CONTAINER = /^(Error proxying request to container|Container suddenly disconnected)/
+
 export class PublicSite extends Container {
   defaultPort = 3000
   sleepAfter = '2m'
   enableInternet = true
   pendingDispatches = new Set()
+  generation = 0
 
   // Do not let accidental raw binding fetches bypass environment validation.
   async fetch() {
@@ -172,7 +176,7 @@ export class PublicSite extends Container {
     // Start dispatch under the binding gate, but do not serialize unrelated
     // requests behind its network response. A changed binding drains those
     // dispatches before destroying their process or replacing its environment.
-    const { dispatched } = await this.ctx.blockConcurrencyWhile(async () => {
+    const { dispatched, generation } = await this.ctx.blockConcurrencyWhile(async () => {
       await validateBindings(bindings)
       const fingerprint = await sha256(JSON.stringify({ ...bindings, APP_ORIGIN: appOrigin }))
       if (await this.ctx.storage.get('review-bindings-sha256') !== fingerprint
@@ -217,9 +221,26 @@ export class PublicSite extends Container {
       this.pendingDispatches.add(dispatched)
       const settled = () => this.pendingDispatches.delete(dispatched)
       dispatched.then(settled, settled)
-      return { dispatched }
+      return { dispatched, generation: this.generation }
     })
-    const upstream = await dispatched
+    let upstream = await dispatched
+    // A container rollout can replace the process under this Durable Object without telling it: every request then
+    // answers "Error proxying request to container" until something restarts it. Restart once (one restart shared by
+    // concurrent requests) and retry reads; a write is never replayed and is asked to retry instead.
+    if (upstream.status === 500 && STALE_CONTAINER.test((await upstream.clone().text()).slice(0, 120))) {
+      // Only a request sent to the container that is still current restarts it; later ones just retry.
+      if (this.generation === generation) {
+        this.healing ??= this.ctx.blockConcurrencyWhile(async () => {
+          try { await this.destroy() } catch { /* Start replaces it. */ }
+          this.generation++
+        }).finally(() => { this.healing = null })
+      }
+      await this.healing
+      if (!['GET', 'HEAD'].includes(request.method)) {
+        return Response.json({ error: 'TRADING_REVIEW_UNAVAILABLE', reason: 'restarting' }, { status: 503, headers: { 'Retry-After': '5' } })
+      }
+      upstream = await super.fetch(request)
+    }
     const response = new Response(upstream.body, upstream)
     response.headers.set('X-Repoing-Runtime-Policy', 'discovery-origin-v1')
     return response

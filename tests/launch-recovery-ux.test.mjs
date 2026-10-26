@@ -50,7 +50,11 @@ test('ordinary recovery uses a separate bootstrap/config/database and refuses br
   assert.equal(runtime.creator.publicKey.toBase58(),bootstrap.publicKey.toBase58())
   assert.equal(runtime.discoveryEnabled,true);assert.equal(runtime.builderAllocationEnabled,true)
   assert.equal(runtime.verificationBonusLamports,null)
-  assert.equal(server.configAddress(),'historical-trading-config');assert.equal(server.creatorSigner(),null)
+  // With the recovered runtime on, only the custody-safe config is current; a historical one fails closed.
+  assert.equal(server.configAddress(),null);assert.equal(server.creatorSigner(),null)
+  process.env.DBC_CONFIG=RECOVERED_LAUNCH_CONFIG
+  assert.equal(server.configAddress(),RECOVERED_LAUNCH_CONFIG)
+  process.env.DBC_CONFIG='historical-trading-config'
   globalThis.__repoingOrdinaryLaunchPool={query:async sql=>{
    assert.match(sql,/^select /)
    return {rows:[{status:'submitted',mint:'hidden',indexed_at:null,launch_finality:'unknown'}]}

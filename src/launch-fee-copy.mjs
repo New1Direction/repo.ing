@@ -14,8 +14,12 @@ export function feePercentLabel(numerator) {
 // The fee taken by a launch-fee config is distributed exactly like the regular fee.
 export const LAUNCH_FEE_SPLIT = 'It is split like the regular fee: shares to the repo’s builders and repo.ing, and Meteora’s 20% protocol share.'
 
+// The live config's schedule: start, each quarter of the window, and the regular fee it ends on, for buys and sells alike.
 export function launchFeeSentence(terms) {
-  return `Trades in the first ${terms.durationLabel} after launch pay a higher fee that starts at ${terms.startPercent} and falls every second to ${terms.endPercent}.`
+  const steps = (terms.milestones ?? []).map(point => `${point.percent} at ${point.label}`)
+  const path = [`${terms.startPercent} at launch`, ...steps].join(', ')
+  return `Buys and sells in the first ${terms.durationLabel} after launch pay a higher fee: ${path}, then ${terms.endPercent} from ` +
+    `${terms.endLabel ?? terms.durationLabel} on. It steps down ${terms.stepLabel ?? 'over the window'}.`
 }
 
 export function launcherBuySentence(terms) {
@@ -29,7 +33,7 @@ const liveWindow = launchFee => launchFee?.active && /^\d+$/.test(String(launchF
 export function launchFeeNotice(launchFee) {
   const seconds = liveWindow(launchFee)
   if (seconds === null) return null
-  return `Launch fee: ${feePercentLabel(launchFee.feeNumerator)} at quote time, falling every second to ` +
+  return `Launch fee: ${feePercentLabel(launchFee.feeNumerator)} at quote time, falling to ` +
     `${feePercentLabel(launchFee.endFeeNumerator)} within ${seconds} s. It is split like the regular fee.`
 }
 
@@ -38,5 +42,5 @@ export function launchFeeTradeNote(launchFee) {
   const seconds = liveWindow(launchFee)
   if (seconds === null) return null
   return `This market is in its launch-fee window: trades pay ${feePercentLabel(launchFee.feeNumerator)} at this quote. ` +
-    `The fee falls every second and reaches the regular ${feePercentLabel(launchFee.endFeeNumerator)} within ${seconds} s. ${LAUNCH_FEE_SPLIT}`
+    `The fee keeps falling and reaches the regular ${feePercentLabel(launchFee.endFeeNumerator)} within ${seconds} s. ${LAUNCH_FEE_SPLIT}`
 }

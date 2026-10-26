@@ -138,8 +138,16 @@ export function launchFeeJson(window) {
 export function launchFeeTerms(schedule) {
   if (schedule?.kind !== 'scheduled') return null
   const points = Number(schedule.durationPoints), seconds = schedule.activationType === ActivationType.Timestamp
+  const unit = seconds ? 's' : 'slots', step = Number(schedule.periodFrequency)
   const durationLabel = !seconds ? `${points} slots` : points % 60 === 0 ? `${points / 60} minute${points === 60 ? '' : 's'}` : `${points} seconds`
+  // The fee the program charges at each quarter of the window, from the config's own integer math.
+  const milestones = SCHEDULE_QUARTERS.map(quarter => {
+    const at = Math.round(points * quarter)
+    return Object.freeze({ at, label: `${at} ${unit}`, percent: feePercentLabel(feeNumeratorAt(schedule, 0n, BigInt(at))) })
+  })
   return Object.freeze({ startPercent: feePercentLabel(schedule.startNumerator), endPercent: feePercentLabel(schedule.endNumerator),
-    durationSeconds: seconds ? points : null, durationLabel,
+    durationSeconds: seconds ? points : null, durationLabel, endLabel: `${points} ${unit}`, milestones: Object.freeze(milestones),
+    stepLabel: !seconds ? `every ${step === 1 ? 'slot' : `${step} slots`}` : step === 1 ? 'every second' : `every ${step} seconds`,
     launcherBuyPercent: schedule.firstSwapMinFee ? feePercentLabel(schedule.endNumerator) : null })
 }
+const SCHEDULE_QUARTERS = Object.freeze([0.25, 0.5, 0.75])
