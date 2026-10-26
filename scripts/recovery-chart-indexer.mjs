@@ -14,6 +14,7 @@ import { publicGraduation } from '../src/graduation-readiness.mjs'
 import { canonicalTradeEvents } from '../src/trade-evidence.mjs'
 import { dammSwapEvents } from '../src/damm-trades.mjs'
 import { createMarketConfigResolver } from '../src/market-config.mjs'
+import { CUSTODY_LAUNCH_CONFIGS } from '../src/launch-custody.mjs'
 import { chartMigration } from '../src/market-chart.mjs'
 import { createChartDiagnostics } from './recovery-chart-diagnostics.mjs'
 export { createChartDiagnostics, validateChartDiagnostic } from './recovery-chart-diagnostics.mjs'
@@ -183,6 +184,12 @@ export async function indexRecoveryMarket({ db, connection, verification, market
   return { repoId: market.repoId, transactions: history.length, inserted }
 }
 
+// The custody launch configs are pinned in code (src/launch-custody.mjs), so a host env edit can never drop them again.
+export function chartLegacyConfigs(legacyConfigs = '') {
+  const listed = legacyConfigs.split(',').map(value => value.trim()).filter(Boolean)
+  return [...new Set([...listed, ...Object.keys(CUSTODY_LAUNCH_CONFIGS)])]
+}
+
 export async function runRecoveryCharts(env = process.env, diagnostics = createChartDiagnostics()) {
   const coordinator = diagnostics.scope()
   const manifestBytes = readFileSync(new URL('../config/existing-market-custody.json', import.meta.url))
@@ -237,7 +244,7 @@ export async function runRecoveryCharts(env = process.env, diagnostics = createC
             const graduation = graduates.find(g => String(g.github_repo_id) === market.repoId)
             const migration = chartMigration(market, graduation)
             const verifier = migration ? archiveVerification : verification
-            Object.assign(result, await indexRecoveryMarket({ db, connection, verification: verifier, market, migration, config: env.DBC_CONFIG, legacyConfigs: env.DBC_LEGACY_CONFIGS, assertSafe: rpc.assertSafe, diagnostics: trace }))
+            Object.assign(result, await indexRecoveryMarket({ db, connection, verification: verifier, market, migration, config: env.DBC_CONFIG, legacyConfigs: chartLegacyConfigs(env.DBC_LEGACY_CONFIGS), assertSafe: rpc.assertSafe, diagnostics: trace }))
             trace.phase('GRADUATION')
             const state = await readGraduationState({ db, connection, verification: verifier, market, config: env.DBC_CONFIG, custodyRecovery,
               curveReads: curveReadsFor(verifier) })

@@ -223,3 +223,16 @@ test('a market with no earlier history is read from its own finalized launch tra
   await assert.rejects(recoveryHistory(rpc('primary', pages), rpc('verifier', pages), pool, null), /CHART_BASELINE_REQUIRED/,
     'without a boundary or a launch origin the market is still refused')
 })
+
+// 2026-10-26: an env edit on the indexer host dropped 3ZESQ from DBC_LEGACY_CONFIGS and its markets stopped charting.
+test('the custody launch configs are always charted, whatever DBC_LEGACY_CONFIGS says', async () => {
+  const { CUSTODY_LAUNCH_CONFIGS } = await import('../src/launch-custody.mjs')
+  const custody = Object.keys(CUSTODY_LAUNCH_CONFIGS)
+  const legacy = 'D7oz8xQ4seaNaEgiDS4fu3YJfmUvR5iPuznxuqKV4u1c'
+  for (const env of ['', legacy, `${legacy}, ${custody[0]}`]) {
+    const configs = charts.chartLegacyConfigs(env)
+    for (const key of custody) assert(configs.includes(key), `${key} missing for ${JSON.stringify(env)}`)
+    assert.equal(new Set(configs).size, configs.length)
+  }
+  assert(charts.chartLegacyConfigs(legacy).includes(legacy))
+})
