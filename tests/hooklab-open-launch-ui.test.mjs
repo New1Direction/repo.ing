@@ -266,3 +266,17 @@ test('the launch-requests API sends whether the creator fee is continuous', asyn
   const { publicOpenCreation } = await import('../app/lib/hooklab-launch-requests.mjs')
   assert.equal(publicOpenCreation(continuous).continuousCreatorFee, true)
 })
+
+// 2026-10-27: a refused "complete" (the review lease ran out before repo.ing finished) leaves the attempt unsent and
+// partial. The page waits out the review, then closes it on chain proof and starts a fresh approval: never stuck.
+test('a refused single pass waits for the review to end only when nothing was sent', async () => {
+  const { refusedPassWaitMs } = await import('../app/lib/hooklab-open-launch.mjs')
+  const now = 1000, op = (status, extra = {}) => ({ status, review: { reviewExpiresAtMs: 31000 }, ...extra })
+  assert.equal(refusedPassWaitMs(op('partial'), now), 32000, 'until the review ends, plus a margin')
+  assert.equal(refusedPassWaitMs(op('signed'), now), 32000)
+  assert.equal(refusedPassWaitMs(op('partial', { review: { reviewExpiresAtMs: 10 } }), now), 2000, 'already ended: just the margin')
+  for (const status of ['signing-claimed', 'signing-unknown', 'submission-claimed', 'submitted', 'outcome-unknown', 'expired'])
+    assert.equal(refusedPassWaitMs(op(status), now), null, status)
+  assert.equal(refusedPassWaitMs(op('partial', { signature: 'x' }), now), null, 'a sent transaction is never replaced')
+  assert.equal(refusedPassWaitMs(null, now), null)
+})

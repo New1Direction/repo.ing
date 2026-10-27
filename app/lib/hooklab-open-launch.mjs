@@ -146,6 +146,13 @@ export function nextOpenLaunchAction(operation, { wallet, now = Date.now() } = {
 // An expired setup review returns the coin's reservation to "reserved" on the server, so its fresh review needs the same
 // reservation renewed first (same mint, same keys); asking for the review alone is refused and the launch stays stuck.
 // A custom-hook setup has its own preparation path and is left as it was.
+// After a refused "complete" or "submit": how long to wait before the attempt can be closed (the review's end plus a
+// margin), or null when it must not be touched (something was claimed or sent: only reconcile or a person may act).
+export const REFUSED_PASS_MARGIN_MS = 2000
+export function refusedPassWaitMs(operation, now = Date.now()) {
+  if (!operation || operation.signature || !['partial', 'signed'].includes(operation.status)) return null
+  return Math.max(0, Number(operation.review?.reviewExpiresAtMs ?? 0) - now) + REFUSED_PASS_MARGIN_MS
+}
 export const freshNeedsReserve = (operation, coin) => operation?.stage === 'preparation' && !coin?.selectedHook
 // What the creator reads while the guided step runs.
 export function openLaunchStatus(operation, action) {

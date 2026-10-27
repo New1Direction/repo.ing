@@ -596,7 +596,7 @@ const hookPosts = [['/api/hook-lab/wallet-identity', 'challenge'], ['/api/hook-l
   ['/api/hook-lab/native-claim', 'claim'], ['/api/hook-lab/inclusive-trade', 'native-quote'],
   // cosign: the server's mint-key signature in every open launch (app/lib/hooklab-native-launch.mjs:99); a claim's signing
   // lifecycle (app/lib/hooklab-native-claim.mjs:19-24).
-  ['/api/hook-lab/native-launch', 'cosign'], ...['wallet-request', 'submit', 'reconcile', 'retain-wallet'].map(action => ['/api/hook-lab/native-claim', action])]
+  ['/api/hook-lab/native-launch', 'cosign'], ['/api/hook-lab/native-launch', 'complete'], ...['wallet-request', 'submit', 'reconcile', 'retain-wallet'].map(action => ['/api/hook-lab/native-claim', action])]
 const HOOK_COOKIE = '__Host-hook-wallet-session=c2Vzc2lvbg; repoing_github=other'
 
 test('Hooks stay closed and every Hook flag false unless HOOKS_RECOVERY_ENABLED is on with valid bindings', async () => {

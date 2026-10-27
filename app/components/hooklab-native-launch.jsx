@@ -189,7 +189,7 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [], approvedIn
   const action = name => run(async () => {
     if (!activeWallet) throw Error('Sign in with the retained operation’s wallet.')
     // Clear authority before I/O. An interrupted send may only be refreshed/reconciled.
-    if (name === 'submit' || name === 'cosign') setUncertain(true)
+    if (name === 'submit' || name === 'cosign' || name === 'complete') setUncertain(true)
     const value = await request({ action: name, signingId: operation.id })
     if (receive(value)) setUncertain(false)
   })
@@ -225,7 +225,7 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [], approvedIn
     {expired && !waiting && operation.status !== 'finalized-success' && <p role="alert">This exact review has expired. The server must resolve the retained operation before new signing or submission.</p>}
     {operation.status === 'reviewed' && expired && !operation.walletRequestIssued && <button className={button(true)} disabled={!activeWallet || busy || uncertain} onClick={() => action('refresh-review')}>{labels.refreshReview}</button>}
     {['reviewed', 'partial'].includes(operation.status) && !operation.signedBy?.includes(wallet) && <><label className={guided ? 'hooks-accept' : undefined}><input type="checkbox" checked={accepted} disabled={!canAct || expired || !quote} onChange={event => setAccepted(event.target.checked)}/> {labels.accept}</label><button className={button(true)} disabled={!canAct || !accepted || expired || !quote} onClick={sign}>{busy ? 'Check your wallet…' : labels.sign(operation.stage)}</button></>}
-    {operation.status === 'partial' && operation.signedBy?.includes(wallet) && <button className={button(true)} disabled={!canAct || expired} onClick={() => action('cosign')}>{labels.cosign}</button>}
+    {operation.status === 'partial' && operation.signedBy?.includes(wallet) && <button className={button(true)} disabled={!canAct || expired} onClick={() => action(guided ? 'complete' : 'cosign')}>{labels.cosign}</button>}
     {operation.status === 'reviewed' && expired && operation.walletRequestIssued && <p role="alert">The original message was issued to your wallet. Preserve this signing ID; a new review is blocked until the original outcome is resolved.</p>}
     {operation.status === 'signed' && <button className={button(true)} disabled={!canAct || expired} onClick={() => action('submit')}>{labels.submit(operation.stage)}</button>}
     {expired && ['reviewed', 'partial', 'signed', 'signing-claimed', 'signing-unknown'].includes(operation.status) && !operation.signature && <><p>This attempt's deadline has passed and it was never sent. Closing it is checked against the chain first, so the old transaction can never land.</p><button className={button(false)} disabled={!activeWallet || busy} onClick={() => action('expire')}>{labels.expire}</button></>}

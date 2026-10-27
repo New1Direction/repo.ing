@@ -68,7 +68,7 @@ const hookReadRoute = new RegExp(`^(/hooks/token/${mint}|/api/hook-lab/market/${
 const hookSessionRoutes = {
   '/api/hook-lab/wallet-identity': { get: true, limit: 2048, actions: ['challenge', 'verify', 'logout'], setsCookie: true },
   '/api/hook-lab/launch-requests': { get: true, limit: 540_000, actions: ['create', 'get', 'cancel'] },
-  '/api/hook-lab/native-launch': { limit: 65_536, actions: ['reserve', 'review', 'get', 'refresh-review', 'wallet-request', 'cosign', 'submit', 'reconcile', 'expire', 'retain-wallet'] },
+  '/api/hook-lab/native-launch': { limit: 65_536, actions: ['reserve', 'review', 'get', 'refresh-review', 'wallet-request', 'cosign', 'complete', 'submit', 'reconcile', 'expire', 'retain-wallet'] },
   '/api/hook-lab/native-claim': { limit: 8192, actions: ['status', 'claim', 'get', 'wallet-request', 'submit', 'reconcile', 'retain-wallet'] },
   '/api/hook-lab/inclusive-trade': { limit: 8192, actions: ['native-quote', 'get', 'refresh-review', 'wallet-request', 'submit', 'reconcile', 'expire', 'retain-wallet'] },
 }

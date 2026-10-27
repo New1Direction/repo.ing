@@ -16,7 +16,7 @@ import { percent, isOpenCreatorFeeChoice } from '../../src/hooklab-launch-menus.
 import { coinImageUrl, telegramHandle, websiteUrl, xHandle } from '../../src/hooklab-coin-profile.mjs'
 import { launchHookInput, reservationInput } from '../lib/hooklab-native-launch-form.mjs'
 import { signReviewedLaunch } from '../lib/hooklab-launch-wallet.mjs'
-import { OPEN_LAUNCH_NOTE, OPEN_LAUNCH_STEPS, TWO_APPROVALS, THREE_APPROVALS, continuousFeeChoice, freshNeedsReserve, defaultOpenChoices, menuChoice, nextOpenLaunchAction, openCreationProblem, openLaunchCosts,
+import { OPEN_LAUNCH_NOTE, OPEN_LAUNCH_STEPS, TWO_APPROVALS, THREE_APPROVALS, continuousFeeChoice, freshNeedsReserve, refusedPassWaitMs, defaultOpenChoices, menuChoice, nextOpenLaunchAction, openCreationProblem, openLaunchCosts,
   openLaunchPrice, openLaunchStatus, openMenus, solOrWallet, approxSol, sameLaunchHook, SELECTED_HOOK_NOTE, BURN_DESCRIPTION, feeFormOf } from '../lib/hooklab-open-launch.mjs'
 import { describeFeeSplit } from '../../src/hooklab-fee-split.mjs'
 
@@ -259,6 +259,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
     const resumeId = idsRef.current.launchId || idsRef.current.preparationId || idsRef.current.setupId
     if (!op && current.status === 'launching' && uuid(resumeId))
       op = await review(idsRef.current.launchId ? 'launch' : idsRef.current.preparationId ? 'preparation' : 'hook-setup')
+    let refusals = 0
     for (let moves = 0; moves < 400; moves++) {
       const action = nextOpenLaunchAction(op, { wallet: walletRef.current })
       setStatus(openLaunchStatus(op, action))
@@ -271,8 +272,28 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
         }
         consentRef.current=null; op = await signStep(op); continue
       }
-      if (['cosign', 'submit', 'refresh'].includes(action)) { op = checked((await api({ action: action === 'refresh' ? 'refresh-review' : action, signingId: op.id })).operation, op.id); continue }
-      if (action === 'close') { op = checked((await api({ action: 'expire', signingId: op.id })).operation, op.id); continue }
+      // After the wallet signs, one call adds repo.ing's signatures and submits (the separate steps no longer fit the review lease).
+      if (['cosign', 'submit', 'refresh'].includes(action)) {
+        try { op = checked((await api({ action: action === 'refresh' ? 'refresh-review' : action === 'cosign' ? 'complete' : action, signingId: op.id })).operation, op.id) }
+        catch (e) {
+          // Refused before anything was sent (usually the review ran out on a slow network): wait for it to end, then
+          // the loop closes it on chain proof and asks for a fresh approval. Anything claimed or sent is never touched.
+          if (action === 'refresh') throw e
+          const current = checked((await api({ action: 'get', signingId: op.id })).operation, op.id), wait = refusedPassWaitMs(current)
+          if (wait === null || refusals++ >= 2) throw e
+          setStatus('The network was slow, so this approval ran out before repo.ing could finish. Nothing was sent. Preparing a fresh approval…')
+          await sleep(wait); op = current
+        }
+        continue
+      }
+      if (action === 'close') {
+        // The chain must show the old transaction can no longer land; that can trail the review's end by a little.
+        for (let tries = 0; ; tries++) {
+          try { op = checked((await api({ action: 'expire', signingId: op.id })).operation, op.id); break }
+          catch (e) { if (tries >= 7) throw e; await sleep(8000) }
+        }
+        continue
+      }
       if (action === 'reconcile' || action === 'wait') { await sleep(4000); op = checked((await api({ action: action === 'wait' ? 'get' : 'reconcile', signingId: op.id })).operation, op.id); continue }
       if (action === 'fresh') { if (freshNeedsReserve(op, current)) await reserve(current); op = await review(op.stage, true); continue }
       if (action === 'preparation') { op = await review('preparation'); continue }

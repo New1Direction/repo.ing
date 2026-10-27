@@ -23,6 +23,14 @@ test('native HTTP advances only explicitly requested action and never retries un
  const result=await (await handler(request({action:'cosign',signingId:id}))).json();assert.equal(result.operation.status,'signing-unknown');assert.equal(calls,1)
  operation.status='signing-unknown';assert.equal((await handler(request({action:'cosign',signingId:id}))).status,409);assert.equal(calls,1)
 })
+test('native HTTP complete runs the single pass only after the wallet has signed',async()=>{
+ let calls=0;const operation={id,status:'partial',review:{requiredSigners:[owner,'mint','config']},signedBy:[owner]}
+ const lifecycle={get:async()=>operation,completeSigning:async(t,i)=>{assert.equal(t,token);assert.equal(i,id);calls++;return {...operation,status:'submitted',signature:'sig'}}}
+ const handler=createNativeLaunchHandler({...options,runtime:()=>({lifecycle})})
+ const result=await (await handler(request({action:'complete',signingId:id}))).json();assert.equal(result.operation.status,'submitted');assert.equal(calls,1)
+ operation.signedBy=[];assert.equal((await handler(request({action:'complete',signingId:id}))).status,409);assert.equal(calls,1)
+ operation.signedBy=[owner];operation.status='reviewed';assert.equal((await handler(request({action:'complete',signingId:id}))).status,409);assert.equal(calls,1)
+})
 test('native HTTP generic errors never echo callback details or key material',async()=>{
  const handler=createNativeLaunchHandler({...options,runtime:()=>({lifecycle:{get:async()=>{throw Error('PRIVATE-KEY-SENTINEL')}}})})
  const response=await handler(request({action:'get',signingId:id}));assert.equal(response.status,409);assert.ok(!(await response.text()).includes('PRIVATE-KEY'))

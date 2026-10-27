@@ -24,7 +24,7 @@ const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 const inputSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('reserve'),operationId:uuid,capBps:z.number().int().min(0).max(9999),selectedHook:selectedHookSchema.optional(),hookPublication:hookPublicationSelectionSchema.optional(),quoteCut:preparationSchema.shape.quoteCut,authorShareBps:preparationSchema.shape.authorShareBps,rules:preparationSchema.shape.rules.optional(),label:text(32).min(1),name:text(32).min(1),symbol:text(10).min(1),uri:text(200),virtualQuote:z.string().regex(/^(0|[1-9][0-9]*)$/).max(20),creatorFeeBps:z.number().int().min(0).max(9999)}).strict().refine(x=>x.selectedHook?x.capBps===0:x.capBps>0&&x.quoteCut===undefined&&x.authorShareBps===undefined&&(x.rules===undefined||gateBurnRulesSchema.safeParse(x.rules).success),'Selected hooks cannot claim a max-wallet cap'),
  z.object({action:z.literal('review'),operationId:uuid,signingId:uuid,stage:z.enum(['hook-setup','preparation','launch'])}).strict(),
- z.object({action:z.enum(['get','refresh-review','wallet-request','cosign','submit','reconcile','expire']),signingId:uuid}).strict(),
+ z.object({action:z.enum(['get','refresh-review','wallet-request','cosign','complete','submit','reconcile','expire']),signingId:uuid}).strict(),
  z.object({action:z.literal('retain-wallet'),signingId:uuid,signedTransactionBase64:z.string().max(1644)}).strict(),
 ])
 const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
@@ -110,6 +110,12 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
      if(existing.status!=='partial')throw Error()
      const signer=existing.review.requiredSigners.find(x=>x!==owner.wallet&&!existing.signedBy.includes(x));if(!signer)throw Error()
      operation=await lifecycle.coSignNext(token,input.signingId,signer)
+    }else if(input.action==='complete'){
+     // After the wallet's signature: every remaining custody co-signature and the submit, on one revalidation (the
+     // per-step cosign and submit stay available).
+     const existing=await lifecycle.get(token,input.signingId)
+     if(!['partial','signed'].includes(existing.status)||!existing.signedBy.includes(owner.wallet))throw Error()
+     operation=await lifecycle.completeSigning(token,input.signingId)
     }else if(input.action==='submit')operation=await lifecycle.submitOnce(token,input.signingId)
     else if(input.action==='expire')operation=await lifecycle.expire(token,input.signingId)
     else{
