@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { Connection } from '@solana/web3.js'
+import { programDataCachedConnection } from './hooklab-program-data-cache.mjs'
 import { remoteAdminSigner } from './hooklab-owner-approval.mjs'
 import { remoteLaunchLookupTable } from './hooklab-owner-launch-tables.mjs'
 import { openLaunchRent, openLaunchesEnabled, siteLaunchesEnabled } from './hooklab-open-creation.mjs'
@@ -92,7 +93,7 @@ async function stackBundleFrom({env,readBundle,legacy}){
 }
 
 // Everything the runtimes need, verified. Separate from installation so it can be tested.
-export async function productionSettings({env=process.env,readBundle=path=>readFile(path),connectionFor=url=>catchUpConnection(new Connection(url,{commitment:'finalized',disableRetryOnRateLimit:true}))}={}){
+export async function productionSettings({env=process.env,readBundle=path=>readFile(path),connectionFor=url=>catchUpConnection(programDataCachedConnection(new Connection(url,{commitment:'finalized',disableRetryOnRateLimit:true})))}={}){
  need(siteLaunchesEnabled(env),'site launches are not enabled (neither HOOK_OWNER_APPROVED_LAUNCHES nor HOOK_OPEN_LAUNCHES is true)')
  need(!openLaunchesEnabled(env)||env.HOOK_NATIVE_LAUNCHES_ENABLED==='true','open launches need HOOK_NATIVE_LAUNCHES_ENABLED=true (they are native SOL only)')
  need(env.HOOK_NATIVE_LAUNCH_ENABLED==='true'&&env.HOOK_WALLET_IDENTITY_ENABLED==='true','native launch and wallet identity switches must both be on')
