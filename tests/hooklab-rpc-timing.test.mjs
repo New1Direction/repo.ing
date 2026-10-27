@@ -46,3 +46,17 @@ test('two concurrent scopes keep their own calls', async () => {
   assert.ok(lines.some(l => /rpc a: 1 calls/.test(l) && /getSlot/.test(l) && !/getBalance/.test(l)))
   assert.ok(lines.some(l => /rpc b: 1 calls/.test(l) && /getBalance/.test(l) && !/getSlot/.test(l)))
 })
+
+test('database query and connection time inside a scope join the same line', async () => {
+  const { timedDatabasePool } = await import('../src/hooklab-rpc-timing.mjs')
+  const client = { query: async () => ({ rows: [] }), release() {} }
+  const pool = timedDatabasePool({ query: async () => ({ rows: [] }), connect: async () => client })
+  const lines = []
+  await withRpcTiming(async () => {
+    rpcLabel('db only')
+    await pool.query('select 1')
+    const c = await pool.connect(); await c.query('select 2'); c.release()
+  }, line => lines.push(line))
+  assert.match(lines[0], /^Hook Lab rpc db only: 0 calls/)
+  assert.match(lines[0], /db queries \d+ms\/2 connect \d+ms\/1/)
+})

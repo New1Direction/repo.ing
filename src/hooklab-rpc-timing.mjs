@@ -32,8 +32,22 @@ export function timedFetch(fetchImpl = globalThis.fetch) {
 
 export const rpcLabel = label => { const scope = scopes.getStore(); if (scope) scope.label = String(label).slice(0, 60) }
 export const noteRpcRetry = () => { const scope = scopes.getStore(); if (scope) scope.retries++ }
+const noteDb = (kind, ms) => { const scope = scopes.getStore(); if (scope) { scope.db[kind].ms += ms; scope.db[kind].n++ } }
+const timed = async (kind, work) => { const started = performance.now(); try { return await work() } finally { noteDb(kind, performance.now() - started) } }
 
-export function rpcSummaryLine({ label, calls, retries, totalMs }) {
+// The same record for a pg pool: query time and connection checkout time (a new connection includes its TLS handshake).
+export function timedDatabasePool(pool) {
+  const query = pool.query.bind(pool), connect = pool.connect.bind(pool)
+  pool.query = (...args) => timed('query', () => query(...args))
+  pool.connect = async () => {
+    const client = await timed('connect', () => connect())
+    if (!client.__hooklabTimed) { const q = client.query.bind(client); client.query = (...args) => timed('query', () => q(...args)); client.__hooklabTimed = true }
+    return client
+  }
+  return pool
+}
+
+export function rpcSummaryLine({ label, calls, retries, totalMs, db = { query: { ms: 0, n: 0 }, connect: { ms: 0, n: 0 } } }) {
   const ms = value => `${Math.round(value)}ms`
   const group = key => Object.entries(calls.reduce((all, call) => {
     const entry = all[call[key]] ??= { ms: 0, n: 0, bytes: 0 }
@@ -47,11 +61,12 @@ export function rpcSummaryLine({ label, calls, retries, totalMs }) {
   const throttled = calls.filter(c => c.status === 429).length
   return `Hook Lab rpc ${label}: ${calls.length} calls ${ms(calls.reduce((n, c) => n + c.ms, 0))} in ${ms(totalMs)} | hosts ${hosts}`
     + ` | methods ${methods} | slowest ${slowest} | 429s ${throttled} retries ${retries}`
+    + ` | db queries ${ms(db.query.ms)}/${db.query.n} connect ${ms(db.connect.ms)}/${db.connect.n}`
 }
 
 // Runs one request with its own call record and logs its summary line when it ends, however it ends.
 export async function withRpcTiming(work, log = line => console.error(line)) {
-  const scope = { label: '-', calls: [], retries: 0 }, started = performance.now()
+  const scope = { label: '-', calls: [], retries: 0, db: { query: { ms: 0, n: 0 }, connect: { ms: 0, n: 0 } } }, started = performance.now()
   try { return await scopes.run(scope, work) }
-  finally { if (scope.calls.length) log(rpcSummaryLine({ ...scope, totalMs: performance.now() - started })) }
+  finally { if (scope.calls.length || scope.db.query.n) log(rpcSummaryLine({ ...scope, totalMs: performance.now() - started })) }
 }
