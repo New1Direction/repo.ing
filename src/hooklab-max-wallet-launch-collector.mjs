@@ -18,6 +18,7 @@ import { selectedHookPinSchema, selectedHookLaunchInventory, compileSelectedHook
 import { selectedHookPolicyReleaseSchema, observeSelectedHookCompatibility, validateLocalSelectedHookPolicy } from './hooklab-selected-hook-compatibility.mjs'
 import { selectedAuthorityAccounts } from './hooklab-selected-hook-preparation.mjs'
 import { TOKEN_HOLDING_SIZE } from './hooklab-token-holding.mjs'
+import { refusalLine } from './hooklab-refusal-log.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex')
 const check=(v,m)=>{if(!v)throw Object.assign(Error(m),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
 const integer=v=>{check(Number.isSafeInteger(v)&&v>=0,'Invalid RPC integer');return v}
@@ -122,7 +123,7 @@ export async function collectMaxWalletLaunchReview(input){
 // An open (self-serve) launch: native, no reviewer, through the operator's shared launch table.
 export async function collectOpenLaunchReview(input){
  try{return await collectLaunchReview({...input,nativeLaunches:true,open:true})}
- catch(error){passRefusal(error,()=>Object.assign(Error('Open launch evidence unavailable or changed'),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'}))}
+ catch(error){console.error(refusalLine('open launch evidence',error));passRefusal(error,()=>Object.assign(Error('Open launch evidence unavailable or changed'),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'}))}
 }
 // nativeLaunches: HOOK_NATIVE_LAUNCHES_ENABLED on this server. The compiler then reads launch Config byte 186 from the two
 // providers' identical snapshots: on, it compiles create_launch_custom_v4; off, v3 exactly as before.

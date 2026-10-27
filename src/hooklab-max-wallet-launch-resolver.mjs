@@ -8,6 +8,7 @@ import { collectMaxWalletLaunchReview, collectOpenLaunchReview, validateMaxWalle
 import { parseMaxWalletLaunchRequest } from './hooklab-max-wallet-launch.mjs'
 import { passRefusal } from './hooklab-open-creation.mjs'
 import { collectSelectedHookLaunchSimulation } from './hooklab-selected-hook-launch-simulation.mjs'
+import { refusalLine } from './hooklab-refusal-log.mjs'
 const check=(v,m)=>{if(!v)throw Object.assign(Error(m),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
 // open: self-serve launches (create_launch_open_v1, no reviewer). Settlement follows each operation's own context, so a
 // launch reviewed before the switch to open launches still settles.
@@ -69,7 +70,7 @@ export function coLocatedMaxWalletLaunchResolver(pool,{origin,config,profile,dos
     preparationSignature:prep.signature,preparationIntentSha256:prep.preparationIntentSha256,request:result.plan.request,
     profileSha256:result.profileSha256,messageSha256:result.plan.review.messageSha256,review:result.plan.review,
     approvalReference:result.approvalReference,collection:result.collection,canSign:false,canSubmit:false,canRetry:false})
-   }catch(error){passRefusal(error,()=>Object.assign(Error('Max-wallet launch unavailable or changed'),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'}))}
+   }catch(error){console.error(refusalLine('max-wallet launch resolve',error));passRefusal(error,()=>Object.assign(Error('Max-wallet launch unavailable or changed'),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'}))}
   },
  })
 }
