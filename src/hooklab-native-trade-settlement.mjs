@@ -165,8 +165,8 @@ export function verifyNativeTradeEvents({ci,plan,tx,fee}){
  }
  const at=(index,program,name)=>events.filter(e=>e.index===index&&e.program===program&&e.name===name).map(e=>e.data)
  if(selected&&r.feeModel===1)return verifyShareTrade({ci,plan,tx,fee,events,swapAt,createAt,graduateAt,coders,P})
- check(events.filter(e=>e.index===swapAt).every(e=>(e.program===P.swap&&['InclusiveCreatorFeeAccrued','Swapped','SwappedNative'].includes(e.name))||(e.program===P.token&&e.name==='Transferred'&&e.caller===P.swap)))
- const fees=at(swapAt,P.swap,'InclusiveCreatorFeeAccrued'),swaps=at(swapAt,P.swap,'Swapped'),natives=at(swapAt,P.swap,'SwappedNative'),transfers=at(swapAt,P.token,'Transferred')
+ check(events.filter(e=>e.index===swapAt).every(e=>(e.program===P.swap&&['InclusiveCreatorFeeAccrued','Swapped','SwappedNative'].includes(e.name))||(e.program===P.token&&['Transferred','Burned'].includes(e.name)&&e.caller===P.swap)))
+ const fees=at(swapAt,P.swap,'InclusiveCreatorFeeAccrued'),swaps=at(swapAt,P.swap,'Swapped'),natives=at(swapAt,P.swap,'SwappedNative'),transfers=at(swapAt,P.token,'Transferred'),burns=at(swapAt,P.token,'Burned')
  check(fees.length===1&&swaps.length===1&&natives.length===1&&transfers.length===1)
  const [f]=fees,[s]=swaps,[nat]=natives,[e]=transfers
  // create_holding is idempotent: HoldingCreated means it created the trader's holding (and took its rent), none means the
@@ -190,7 +190,12 @@ export function verifyNativeTradeEvents({ci,plan,tx,fee}){
  check(s.pool.toBase58()===a.pool&&s.trader.toBase58()===r.trader&&s.recipient.toBase58()===r.trader&&s.direction===(buy?1:0)&&B(s.amount_in)===amount&&n(s.slot)===String(tx.slot)
   &&B(s.delivered_out)===delivered&&delivered>=BigInt(r.minAmountOut)&&B(s.protocol_fee)===platform&&B(s.lp_fee)===0n&&s.lp_fee_bps===0&&(selected||B(s.burn_in)===burnIn&&B(s.burn_out)===burnOut)
   &&B(s.received_in)===received&&received>0n&&received<=amount&&isDeepStrictEqual(list(s.deltas_in),buy?paid:[])&&isDeepStrictEqual(list(s.deltas_out),buy?[]:paid)
-  &&B(s.cuts_in)===(buy?creator:amount-received)&&B(s.cuts_out)===(buy?out-delivered:creator)&&B(s.swap_count)>0n)
+  &&B(s.cuts_in)===(buy?creator:amount-burnIn-received)&&B(s.cuts_out)===(buy?out-burnOut-delivered:creator)&&B(s.swap_count)>0n)
+ // A burn is the token program's one Burned event under the swap: the coin's own tokens, exactly the quoted amount, from
+ // the pool's vault on a buy (after the curve) and from the seller's holding on a sell (before it).
+ const burned=burnIn+burnOut
+ check(burns.length===(selected||burned===0n?0:1)&&burns.every(b=>b.mint.toBase58()===r.mint&&B(b.amount)===burned
+  &&b.source.toBase58()===(buy?a.baseVault:a.traderBase)&&b.source_owner.toBase58()===(buy?a.pool:r.trader)))
  const poolIndex=tx.keys.indexOf(a.pool)
  check(nat.pool.toBase58()===a.pool&&nat.direction===(buy?1:0)&&B(nat.quote_lamports)===(buy?amount-creator:delivered)&&isDeepStrictEqual(list(nat.quote_deltas),paid)
   &&poolIndex>=0&&B(nat.pool_lamports)===BigInt(tx.post[poolIndex]))
