@@ -4,7 +4,9 @@
 // request: totals per provider and per method, the slowest calls, 429s and catch-up retries.
 import { AsyncLocalStorage } from 'node:async_hooks'
 
-const scopes = new AsyncLocalStorage()
+// One store per process: the bootstrap that builds the connections and the route that opens the scope are separate Next
+// bundles, each with its own copy of this module.
+const scopes = globalThis.__hooklabRpcTimingScopes ??= new AsyncLocalStorage()
 const SLOWEST = 5
 
 const describe = init => {
