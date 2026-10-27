@@ -20,21 +20,25 @@ import { openLaunchNetworkFee } from './hooklab-open-launch.mjs'
 import { selectedHookSchema } from '../../src/hooklab-selected-hook.mjs'
 import { hookPublicationSelectionSchema } from '../../src/hooklab-hook-catalog.mjs'
 import { selectedHookPreparationRequestSchema as preparationSchema } from '../../src/hooklab-selected-hook-preparation.mjs'
+import { gateBurnRulesSchema } from '../../src/hooklab-inclusive-max-wallet-profile.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 // A 384 KB PNG as base64 plus its data: prefix, and the JSON around it.
 const MAX_IMAGE_DATA_URL=524_310,MAX_BODY_BYTES=540_000
 const inputSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('create'),requestId:uuid,name:text(32).min(1),symbol:text(10).min(1),creatorFeeBps:z.number().int(),capBps:z.number().int(),
   selectedHook:selectedHookSchema.optional(),hookPublication:hookPublicationSelectionSchema.optional(),quoteCut:preparationSchema.shape.quoteCut,authorShareBps:preparationSchema.shape.authorShareBps,rules:preparationSchema.shape.rules.optional(),image:z.string().max(MAX_IMAGE_DATA_URL),description:z.string().max(2000),x:z.string().max(200),website:z.string().max(400),telegram:z.string().max(200)}).strict()
-  .refine(x=>x.selectedHook?x.capBps===0:x.capBps>0&&x.quoteCut===undefined&&x.authorShareBps===undefined&&x.rules===undefined),
+  // A gate coin's only economics: its token burn (owner design 2026-10-27), the same on both sides.
+  .refine(x=>x.selectedHook?x.capBps===0:x.capBps>0&&x.quoteCut===undefined&&x.authorShareBps===undefined&&(x.rules===undefined||gateBurnRulesSchema.safeParse(x.rules).success)),
  z.object({action:z.literal('get')}).strict(),
  z.object({action:z.literal('cancel'),requestId:uuid}).strict(),
 ])
 const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
 const enabled=env=>siteLaunchesEnabled(env)&&env.HOOK_WALLET_IDENTITY_ENABLED==='true'
+// HOOK_BURN_ENABLED (after the open-launch-burn migration): open gate coins may carry a token burn.
+export const burnEnabled=env=>openLaunchesEnabled(env)&&env.HOOK_BURN_ENABLED==='true'
 // The chain's open-creation state (menus, fee, pause) through the installed launch runtime's two providers. Only these
 // fields reach the browser: nothing about the stack's programs or quote marker is ever sent to customers.
-const PUBLIC_OPEN_CREATION=['native','open','paused','creatorFeeBps','continuousCreatorFee','capBps','maxCreatorFeeBps','launchFeeLamports','poolCreationFeeLamports','rentLamports','preparationRentLamports','launchRentLamports','guardRentLamports','minVirtualQuote','maxVirtualQuote','selectedHooksEnabled']
+const PUBLIC_OPEN_CREATION=['native','open','paused','creatorFeeBps','continuousCreatorFee','capBps','maxCreatorFeeBps','maxBurnBps','maxRulesFeeBps','maxHolderFeeBps','burnEnabled','launchFeeLamports','poolCreationFeeLamports','rentLamports','preparationRentLamports','launchRentLamports','guardRentLamports','minVirtualQuote','maxVirtualQuote','selectedHooksEnabled']
 export const publicOpenCreation=chain=>chain?Object.fromEntries(PUBLIC_OPEN_CREATION.filter(key=>chain[key]!==undefined).map(key=>[key,chain[key]])):null
 const chainOpenCreation=async()=>{const service=nativeLaunchRuntime();if(!service?.openLaunches)return null;return service.openCreation()}
 export function createLaunchRequestsHandler({env=process.env,configuration=walletIdentityConfiguration,database=createHookLabDatabasePool,
@@ -44,9 +48,9 @@ export function createLaunchRequestsHandler({env=process.env,configuration=walle
   let pool
   try{
    const config=configuration(env);pool=database(config)
-   const open=openLaunchesEnabled(env),usdPricing=open||usdLaunchPricingEnabled(env),approvals=store(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing,openLaunches:open})
+   const open=openLaunchesEnabled(env),usdPricing=open||usdLaunchPricingEnabled(env),approvals=store(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing,openLaunches:open,burnEnabled:burnEnabled(env)})
    // Open launches: what the chain offers now (menus, creation fee, opening-price bounds, paused or not).
-   const chain=open?await openCreation().catch(()=>null):undefined
+   const observed=open?await openCreation().catch(()=>null):undefined,chain=observed&&{...observed,burnEnabled:burnEnabled(env)}
    if(request.method==='GET'){
     if(new URL(request.url).search)return reply({error:'Query parameters unavailable.'},400)
     // With USD pricing on, the page shows SOL amounts at today's price until the launch fixes them (null: USD only).
@@ -67,8 +71,9 @@ export function createLaunchRequestsHandler({env=process.env,configuration=walle
    if(profile)try{profile={...profile,image:await validateTokenImage(input.image)}}catch{return reply({error:'Add a coin image again (PNG, JPEG, WebP or GIF, up to 2 MB).'},400)}
    let launchRequest
    if(input.action==='create'&&open&&!(chain?.native&&chain.open&&!chain.paused))return reply({error:'Launches are paused right now. Try again later.'},409)
-   if(input.action==='create')launchRequest=await approvals.createRequest(owner.wallet,{id:input.requestId,name:input.name,symbol:input.symbol,uri:(input.selectedHook?selectedCoinMetadataUri:coinMetadataUri)(config.origin,input.requestId),creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,...(input.selectedHook?{selectedHook:input.selectedHook,hookPublication:input.hookPublication,...Object.fromEntries(['quoteCut','authorShareBps','rules'].filter(k=>input[k]!==undefined).map(k=>[k,input[k]]))}:{})},profile,
-    open?{source:'open',menus:{creatorFeeBps:chain.creatorFeeBps,continuousCreatorFee:chain.continuousCreatorFee,maxCreatorFeeBps:chain.maxCreatorFeeBps,capBps:chain.capBps}}:{})
+   if(input.action==='create')launchRequest=await approvals.createRequest(owner.wallet,{id:input.requestId,name:input.name,symbol:input.symbol,uri:(input.selectedHook?selectedCoinMetadataUri:coinMetadataUri)(config.origin,input.requestId),creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,...(!input.selectedHook&&input.rules!==undefined?{rules:input.rules}:{}),...(input.selectedHook?{selectedHook:input.selectedHook,hookPublication:input.hookPublication,...Object.fromEntries(['quoteCut','authorShareBps','rules'].filter(k=>input[k]!==undefined).map(k=>[k,input[k]]))}:{})},profile,
+    open?{source:'open',menus:{creatorFeeBps:chain.creatorFeeBps,continuousCreatorFee:chain.continuousCreatorFee,maxCreatorFeeBps:chain.maxCreatorFeeBps,capBps:chain.capBps,
+     maxBurnBps:chain.maxBurnBps,maxRulesFeeBps:chain.maxRulesFeeBps,maxHolderFeeBps:chain.maxHolderFeeBps}}:{})
    else if(input.action==='cancel')launchRequest=await approvals.cancelRequest(owner.wallet,input.requestId)
    else launchRequest=await approvals.requestFor(owner.wallet)
    return reply({status:'available',request:launchRequest,...(open?{open:true,openCreation:publicOpenCreation(chain)}:await approvals.availability())})

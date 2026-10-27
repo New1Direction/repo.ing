@@ -172,7 +172,7 @@ test('selected zero-fee migration preserves existing rows and every other databa
   rejectedFee, 'restoring the old check is unsafe once zero-fee requests exist, including cancelled requests')
   assert.equal((await insert(0)).rows[0].creator_fee_bps, 0, 'failed rollback leaves the valid new constraint intact')
   assert.equal((await pool.query(migration.inspect)).rows[0].convalidated, true)
-}, Object.keys(MIGRATIONS).filter(name => name !== 'selected-hook-zero-creator-fee')))
+}, Object.keys(MIGRATIONS).filter(name => !['selected-hook-zero-creator-fee', 'open-launch-burn'].includes(name))))   // the burn migration follows it
 
 async function bind(pool, store, creator, operationId, { id, ...value }) {   // the request id is not part of what binds
   const db = await pool.connect()
@@ -274,4 +274,73 @@ test('a finalized open launch is listed; the owner delists it with a reason (app
   assert.equal((await store.moderate({ mint, action: 'relist', actor: 'owner' })).delisted, false)
   assert.deepEqual((await store.launchedCoins()).map(c => c.mint), [mint])
   assert.equal((await pool.query('select count(*)::int n from hook_lab_coin_moderation')).rows[0].n, 2)
+}))
+
+// Burn (owner design 2026-10-27): one total fee split between the creator and a token burn. The chain's bounds as
+// readOpenCreation reports them: creator at most 5%, burn and the combined fee at most 10%, Holders Earn not live.
+const BURN_MENUS = { creatorFeeBps: [], continuousCreatorFee: true, maxCreatorFeeBps: 500, capBps: [100, 200, 300, 500], maxBurnBps: 1000, maxRulesFeeBps: 1000, maxHolderFeeBps: 1000 }
+const burn = bps => ({ rules: { burnBuyBps: bps, burnSellBps: bps } })
+test('a token burn: an open gate coin keeps its burn for good, within the chain bounds and only with Burn on; the launch binds the same burn', { skip: process.env.HOOK_SKIP_DB === 'true' && 'database tests skipped' }, () => withDatabase(async pool => {
+  const off = ownerApprovalStore(pool, { openLaunches: true, usdPricing: true }), store = ownerApprovalStore(pool, { openLaunches: true, usdPricing: true, burnEnabled: true })
+  const [a, b, c] = [key('burn-a'), key('burn-b'), key('burn-c')], [ra, rb, rc] = [randomUUID(), randomUUID(), randomUUID()]
+  await assert.rejects(off.createRequest(a, intent(ra, { creatorFeeBps: 500, ...burn(500) }), profile, { source: 'open', menus: BURN_MENUS }), /Burn is not available/)
+  await assert.rejects(store.createRequest(a, intent(ra, { creatorFeeBps: 600, ...burn(400) }), profile, { source: 'open', menus: BURN_MENUS }), /creator fee/)   // over the creator ceiling
+  await assert.rejects(store.createRequest(a, intent(ra, { creatorFeeBps: 100, ...burn(700) }), profile, { source: 'open', menus: { ...BURN_MENUS, maxBurnBps: 500 } }), /burn can be at most 5%/)
+  await assert.rejects(store.createRequest(a, intent(ra, { creatorFeeBps: 500, ...burn(500) }), profile, { source: 'open', menus: { ...BURN_MENUS, maxRulesFeeBps: 900 } }), /total fee can be at most 9%/)
+  await assert.rejects(store.createRequest(a, intent(ra, { creatorFeeBps: 500, rules: { burnBuyBps: 500, burnSellBps: 400 } }), profile, { source: 'open', menus: BURN_MENUS }), /fee/)
+  const created = await store.createRequest(a, intent(ra, { creatorFeeBps: 500, ...burn(500) }), profile, { source: 'open', menus: BURN_MENUS })
+  assert.deepEqual([created.creatorFeeBps, created.rules], [500, { burnBuyBps: 500, burnSellBps: 500 }])
+  // All burn and no creator fee, and a 0% total, are coins too.
+  assert.equal((await store.createRequest(b, intent(rb, { creatorFeeBps: 0, ...burn(1000) }), profile, { source: 'open', menus: BURN_MENUS })).creatorFeeBps, 0)
+  assert.equal((await store.createRequest(c, intent(rc, { creatorFeeBps: 0 }), profile, { source: 'open', menus: BURN_MENUS })).rules, undefined)
+  assert.deepEqual((await store.requestFor(a)).rules, { burnBuyBps: 500, burnSellBps: 500 })
+  // The burn is fixed: the database refuses any change, and a burn only on an open gate coin.
+  await assert.rejects(pool.query('update hook_lab_launch_requests set burn_bps=100 where id=$1', [ra]), /burn is immutable/i)
+  await assert.rejects(pool.query("update hook_lab_launch_requests set source='owner-invite' where id=$1", [rb]), { code: '23514' })
+  // The launch must carry exactly the stored burn.
+  const op = randomUUID(), value = { ...intent(ra, { creatorFeeBps: 500, ...burn(500) }), virtualQuote: pricing.virtualQuote, pricing }
+  await assert.rejects(bind(pool, store, a, op, { ...value, ...burn(300) }), /differ/)
+  await assert.rejects(bind(pool, store, a, op, { ...value, rules: undefined }), /differ/)
+  await assert.rejects(bind(pool, off, a, op, value), /Burn is not available/)
+  assert.equal((await bind(pool, store, a, op, value)).status, 'launching')
+}))
+
+test('the open-launch-burn migration adds a fixed burn column, keeps every row, and refuses a burn on any other coin', { skip: process.env.HOOK_SKIP_DB === 'true' && 'database tests skipped' }, () => withDatabase(async pool => {
+  const insert = (fee, burnBps, source = 'open') => pool.query(`insert into hook_lab_launch_requests(id,creator_wallet,name,symbol,uri,creator_fee_bps,cap_bps,status,source,burn_bps)
+    values($1,$2,'Coin','C','',$3,100,'queued',$4,$5) returning *`, [randomUUID(), key(randomUUID()), fee, source, burnBps])
+  const old = (await pool.query(`insert into hook_lab_launch_requests(id,creator_wallet,name,symbol,uri,creator_fee_bps,cap_bps,status,source)
+    values($1,$2,'Old','O','',100,100,'queued','open') returning *`, [randomUUID(), key('old')])).rows[0]
+  await pool.query(migrationSchema('open-launch-burn').sql)
+  assert.equal((await pool.query('select burn_bps from hook_lab_launch_requests where id=$1', [old.id])).rows[0].burn_bps, 0, 'an existing row keeps no burn')
+  assert.equal((await insert(100, 300)).rows[0].burn_bps, 300)
+  await assert.rejects(insert(100, 300, 'owner-invite'), { code: '23514' })
+  await assert.rejects(insert(100, 1001), { code: '23514' })
+  await assert.rejects(insert(500, 501), { code: '23514' }, 'creator 5% + burn 5.01% is over 10%')
+  await assert.rejects(insert(0, 0, 'owner-invite'), { code: '23514' }, 'an invited coin still needs a creator fee')
+  assert.ok((await pool.query(migrationSchema('open-launch-burn').inspect)).rows.length >= 2)
+}, Object.keys(MIGRATIONS).filter(name => name !== 'open-launch-burn')))
+
+test('the launch-requests API takes a gate coin\'s burn only with HOOK_BURN_ENABLED, and the form reads the chain\'s fee bounds', { skip: process.env.HOOK_SKIP_DB === 'true' && 'database tests skipped' }, () => withDatabase(async pool => {
+  const creator = key('burn-http'), token = Buffer.alloc(32, 81).toString('base64url'), genesisHash = executionGenesis()
+  await pool.query("insert into hook_lab_wallet_sessions(token_sha256,wallet,origin,audience,genesis_hash,expires_at) values($1,$2,'https://repo.ing','general-launcher',$3,clock_timestamp()+interval '30 minutes')", [createHash('sha256').update(token).digest('hex'), creator, genesisHash])
+  const image = `data:image/png;base64,${(await sharp({ create: { width: 512, height: 512, channels: 3, background: '#f97316' } }).png().toBuffer()).toString('base64')}`
+  const options = burn => ({ env: { HOOK_OPEN_LAUNCHES: 'true', HOOK_WALLET_IDENTITY_ENABLED: 'true', HOOK_NATIVE_LAUNCH_ENABLED: 'true', ...(burn ? { HOOK_BURN_ENABLED: 'true' } : {}) },
+    configuration: () => ({ origin: 'https://repo.ing', audience: 'general-launcher', genesisHash }),
+    database: () => ({ query: (...a) => pool.query(...a), connect: () => pool.connect(), end: async () => {} }),
+    openCreation: async () => ({ native: true, open: true, paused: false, ...BURN_MENUS }), launchPriceEstimate: async () => null })
+  const post = (burnOn, body) => createLaunchRequestsHandler(options(burnOn))(new Request('https://repo.ing/api/hook-lab/launch-requests', { method: 'POST',
+    headers: { origin: 'https://repo.ing', 'content-type': 'application/json', cookie: `__Host-hook-wallet-session=${token}` }, body: JSON.stringify(body) }))
+  const coin = { action: 'create', requestId: randomUUID(), name: 'Burn coin', symbol: 'BURN', image, description: '', x: '', website: '', telegram: '', creatorFeeBps: 500, capBps: 200, ...burn(500) }
+  const off = await post(false, coin)
+  assert.equal(off.status, 409); assert.match((await off.json()).error, /Burn is not available/)
+  for (const bad of [{ rules: { burnBuyBps: 500, burnSellBps: 400 } }, { rules: { burnBuyBps: 1001, burnSellBps: 1001 } }, { quoteCut: { maxBuyBps: 80, maxSellBps: 40 } }])
+    assert.equal((await post(true, { ...coin, ...bad, requestId: randomUUID() })).status, 400, JSON.stringify(bad))
+  const on = await post(true, coin)
+  assert.equal(on.status, 200, await on.clone().text())
+  assert.deepEqual((await on.json()).request.rules, { burnBuyBps: 500, burnSellBps: 500 })
+  // GET: the form learns whether Burn is on and the chain's bounds for one total fee.
+  for (const burnOn of [false, true]) {
+    const shown = (await (await createLaunchRequestsHandler(options(burnOn))(new Request('https://repo.ing/api/hook-lab/launch-requests'))).json()).openCreation
+    assert.deepEqual([shown.burnEnabled, shown.maxBurnBps, shown.maxRulesFeeBps, shown.maxHolderFeeBps], [burnOn, 1000, 1000, 1000])
+  }
 }))
