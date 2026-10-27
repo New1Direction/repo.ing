@@ -8,10 +8,16 @@ import { z } from 'zod'
 import { inspectHookLabMessage,verifyHookLabSignedMessage } from './hooklab-message-boundary.mjs'
 import { lockWalletPrincipal } from './hooklab-wallet-principal-lock.mjs'
 import { localAcceptanceNetwork } from './hooklab-local-acceptance.mjs'
+import { refusalLine } from './hooklab-refusal-log.mjs'
 const fail=()=>Object.assign(Error('Native signing operation unavailable or changed; preserve the original identity'),{code:'NATIVE_SIGNING_UNAVAILABLE'})
 const check=value=>{if(!value)throw fail()}
 // Fixed texts a resolver marks for the customer (owner-approval and funding refusals) pass through; everything else is masked.
-const visible=error=>['OWNER_APPROVAL_UNAVAILABLE','HOOKLAB_USER_REFUSAL'].includes(error?.code)?error:fail()
+// The customer sees the fixed refusal; the server logs what was refused (code, short redacted message, function names).
+const visible=error=>{
+ if(['OWNER_APPROVAL_UNAVAILABLE','HOOKLAB_USER_REFUSAL'].includes(error?.code))return error
+ console.error(refusalLine('native signing',error))
+ return fail()
+}
 function context(resolved){
  check(typeof resolved.configurationSha256==='string'&&/^[a-f0-9]{64}$/.test(resolved.configurationSha256))
  check(resolved.settlementContext&&typeof resolved.settlementContext==='object')
