@@ -175,6 +175,17 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
    accounts:snapshot.value.map((v,i)=>({address:all[i],account:v===null?null:{address:all[i],owner:v.owner.toBase58(),executable:v.executable,lamports:String(integer(v.lamports)),dataBase64:Buffer.from(v.data).toString('base64')}}))})
  }))
  check(isDeepStrictEqual(observations[0].accounts,observations[1].accounts),'Provider account snapshots disagree')
+ // The blockhash is observed right after the account snapshot, before the CPU-heavy evidence inspection, so the slot gap
+ // the lifetime check bounds (maxSlotLag) measures the chain, not this server's speed. The checks themselves are unchanged.
+ const slot=Math.max(...observations.map(x=>x.slot)),latest=retainedReview
+  ?{context:{slot},value:{blockhash:VersionedMessage.deserialize(Buffer.from(retainedReview.messageBase64,'base64')).recentBlockhash,lastValidBlockHeight:retainedReview.lastValidBlockHeight}}
+  :await connections[0].connection.getLatestBlockhashAndContext({commitment:'finalized',minContextSlot:slot})
+ check(integer(latest.context.slot)>=slot,'Stale blockhash context')
+ const confirmations=await Promise.all(connections.map(async({connection})=>{
+  const v=await connection.isBlockhashValid(latest.value.blockhash,{commitment:'finalized',minContextSlot:latest.context.slot})
+  check(v.value===true&&integer(v.context.slot)>=latest.context.slot,'Blockhash invalid')
+  return {slot:v.context.slot,height:integer(await connection.getBlockHeight({commitment:'finalized',minContextSlot:v.context.slot}))}
+ }))
  const map=new Map(observations[0].accounts.map(x=>[x.address,x.account]))
  check(map.get(configAddress)?.dataBase64===Buffer.from(bootstrap.value[0].data).toString('base64'),'Bootstrap config changed')
  if(selected)for(const [address,value]of selectedBootstrap)check(isDeepStrictEqual((({lamports,...v})=>v)(map.get(address)),value),'Selected bootstrap changed')
@@ -191,15 +202,6 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
  check(lc.admin.toBase58()===c.reviewer&&lc.treasury.toBase58()===c.treasury&&sc.treasury.toBase58()===c.treasury,'Operator admin or treasury differs')
  check(isDeepStrictEqual(open?{...c.economics,creatorFeeBps:r.creatorFeeBps}:c.economics,{creatorFeeBps:r.creatorFeeBps,authorShareBps:0,lpFeeBps:lc.lp_fee_bps,maxCreatorFeeBps:lc.max_creator_fee_bps,
   protocolFeeBps:sc.protocol_fee_bps,launchProtocolShareBps:sc.launch_protocol_share_bps,launchFeeLamports:lc.launch_fee_lamports.toString(),poolCreationFeeLamports:sc.pool_creation_fee_lamports.toString()}),'Unapproved or unsupported economics')
- const slot=Math.max(...observations.map(x=>x.slot)),latest=retainedReview
-  ?{context:{slot},value:{blockhash:VersionedMessage.deserialize(Buffer.from(retainedReview.messageBase64,'base64')).recentBlockhash,lastValidBlockHeight:retainedReview.lastValidBlockHeight}}
-  :await connections[0].connection.getLatestBlockhashAndContext({commitment:'finalized',minContextSlot:slot})
- check(integer(latest.context.slot)>=slot,'Stale blockhash context')
- const confirmations=await Promise.all(connections.map(async({connection})=>{
-  const v=await connection.isBlockhashValid(latest.value.blockhash,{commitment:'finalized',minContextSlot:latest.context.slot})
-  check(v.value===true&&integer(v.context.slot)>=latest.context.slot,'Blockhash invalid')
-  return {slot:v.context.slot,height:integer(await connection.getBlockHeight({commitment:'finalized',minContextSlot:v.context.slot}))}
- }))
  const priority=(BigInt(limits.computeUnitLimit)*BigInt(limits.computeUnitPriceMicroLamports)+999999n)/1000000n
  const recentBlockhash={...latest.value,genesisHash:p.genesisHash,providers:profile.providers,observedAtMs:started,currentBlockHeight:Math.max(...confirmations.map(x=>x.height)),
   blockhashValid:true,observedSlot:Math.max(...confirmations.map(x=>x.slot)),networkFeeLamports:String(BigInt(new Set([r.creator,r.feePayer,r.mint,...(open?[]:[r.reviewer])]).size)*BigInt(c.lamportsPerSignature)+priority),lamportsPerSignature:c.lamportsPerSignature}
