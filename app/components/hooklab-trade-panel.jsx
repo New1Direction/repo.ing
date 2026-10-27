@@ -320,6 +320,7 @@ export function HookTradeSummary({ market, symbol, buying, estimate, plan, hold,
       <div><dt>Minimum received</dt><dd>{estimate.minAmountOut===null?'Unmeasured — get a quote first':`${formatUnits(estimate.minAmountOut, buying ? market.decimals : 9, buying ? 0 : 6)} ${buying ? symbol : 'SOL'}`}</dd></div>
       <div><dt>Price impact</dt><dd className={estimate.priceImpactBps >= 500 ? 'is-high' : undefined}>{estimate.hookDeductionsUnmeasured?'Unmeasured':`${(estimate.priceImpactBps / 100).toFixed(2)}%`}</dd></div>
       <div><dt>Creator base fee <small>({market.creatorFeeBps / 100}%)</small></dt><dd>{sol(estimate.creatorFee, 6)}</dd></div>
+      {BigInt(estimate.burned ?? 0) > 0n && <div><dt>Token burn <small>({(buying ? market.burnBuyBps : market.burnSellBps) / 100}%)</small></dt><dd>{formatUnits(BigInt(estimate.burned), market.decimals)} {symbol}</dd></div>}
       {estimate.hookDeductionsUnmeasured&&<div><dt>Token-hook fee / burn / custom SOL cut</dt><dd>Unmeasured</dd></div>}
       {deposit > 0n && <div><dt>{native ? <>Coin account deposit <small>(first buy)</small></> : <>Hook Lab deposits <small>(first trade only)</small></>}</dt><dd>{sol(deposit, 5)}</dd></div>}
       {plan && <div><dt>Network fees</dt><dd>{sol(plan.steps.reduce((sum, s) => sum + s.feeLamports, 0n), 6)}</dd></div>}
