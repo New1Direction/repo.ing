@@ -10,7 +10,9 @@ import { nativeLaunchRuntime } from './hooklab-native-launch-runtime.mjs'
 import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
 import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 import { usdLaunchPricingEnabled } from '../../src/hooklab-launch-pricing.mjs'
-import { openLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
+import { burnEnabled, openLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
+import { gateBurnRulesSchema } from '../../src/hooklab-inclusive-max-wallet-profile.mjs'
+import { checkFeeSplit } from '../../src/hooklab-fee-split.mjs'
 import { launchPriceAtInvite } from './hooklab-launch-price.mjs'
 import { selectedHookSchema, refuseUnsupportedSelectedHook } from '../../src/hooklab-selected-hook.mjs'
 import { hookPublicationSelectionSchema } from '../../src/hooklab-hook-catalog.mjs'
@@ -20,7 +22,7 @@ import { isOpenCreatorFeeChoice } from '../../src/hooklab-launch-menus.mjs'
 import { refusalLine } from '../../src/hooklab-refusal-log.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 const inputSchema=z.discriminatedUnion('action',[
- z.object({action:z.literal('reserve'),operationId:uuid,capBps:z.number().int().min(0).max(9999),selectedHook:selectedHookSchema.optional(),hookPublication:hookPublicationSelectionSchema.optional(),quoteCut:preparationSchema.shape.quoteCut,authorShareBps:preparationSchema.shape.authorShareBps,rules:preparationSchema.shape.rules.optional(),label:text(32).min(1),name:text(32).min(1),symbol:text(10).min(1),uri:text(200),virtualQuote:z.string().regex(/^(0|[1-9][0-9]*)$/).max(20),creatorFeeBps:z.number().int().min(0).max(9999)}).strict().refine(x=>x.selectedHook?x.capBps===0:x.capBps>0&&x.quoteCut===undefined&&x.authorShareBps===undefined&&x.rules===undefined,'Selected hooks cannot claim a max-wallet cap'),
+ z.object({action:z.literal('reserve'),operationId:uuid,capBps:z.number().int().min(0).max(9999),selectedHook:selectedHookSchema.optional(),hookPublication:hookPublicationSelectionSchema.optional(),quoteCut:preparationSchema.shape.quoteCut,authorShareBps:preparationSchema.shape.authorShareBps,rules:preparationSchema.shape.rules.optional(),label:text(32).min(1),name:text(32).min(1),symbol:text(10).min(1),uri:text(200),virtualQuote:z.string().regex(/^(0|[1-9][0-9]*)$/).max(20),creatorFeeBps:z.number().int().min(0).max(9999)}).strict().refine(x=>x.selectedHook?x.capBps===0:x.capBps>0&&x.quoteCut===undefined&&x.authorShareBps===undefined&&(x.rules===undefined||gateBurnRulesSchema.safeParse(x.rules).success),'Selected hooks cannot claim a max-wallet cap'),
  z.object({action:z.literal('review'),operationId:uuid,signingId:uuid,stage:z.enum(['hook-setup','preparation','launch'])}).strict(),
  z.object({action:z.enum(['get','refresh-review','wallet-request','cosign','submit','reconcile','expire']),signingId:uuid}).strict(),
  z.object({action:z.literal('retain-wallet'),signingId:uuid,signedTransactionBase64:z.string().max(1644)}).strict(),
@@ -69,11 +71,16 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
     const chain=await service.openCreation()
     if(!chain.native||!chain.open||chain.paused)return reply({status:'paused',error:'Launches are paused right now. Your SOL was not spent; try again later.'},409)
     if(!isOpenCreatorFeeChoice(input,chain)||(input.selectedHook?input.capBps!==0:!chain.capBps.includes(input.capBps)))return reply({error:'That creator fee or max per wallet is no longer offered. Review the current chain limits.'},409)
+    // A gate coin's token burn: only with Burn on, and the creator fee plus the burn within the chain's bounds today.
+    const burnBps=!input.selectedHook&&input.rules&&input.rules!=='none'?input.rules.burnBuyBps:0
+    if(burnBps&&!burnEnabled(env))return reply({error:'Burn is not available yet. Launch without a burn.'},409)
+    const feeProblem=burnBps?checkFeeSplit({creatorFeeBps:input.creatorFeeBps,burnBps,holderFeeBps:0},chain):''
+    if(feeProblem)return reply({error:`${feeProblem} Review the current chain limits.`},409)
     let pricing
     try{pricing=await launchPrice()}catch(error){return reply({error:error?.code==='LAUNCH_PRICE_REFUSED'?error.message:'The SOL price is unavailable right now. Try again in a minute.'},409)}
     if(BigInt(pricing.virtualQuote)<BigInt(chain.minVirtualQuote)||BigInt(pricing.virtualQuote)>BigInt(chain.maxVirtualQuote))return reply({error:'At today\'s SOL price the opening price is outside what the launch program accepts. Try again later.'},409)
-    const approvals=ownerApprovals(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing:true,openLaunches:true,selectedHooksEnabled:service.selectedHooksEnabled===true}),db=await pool.connect()
-    try{await db.query('begin');const bound=await approvals.bindOpenLaunch(db,owner.wallet,input.operationId,{name:input.name,symbol:input.symbol,uri:input.uri,creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,...(input.selectedHook?{selectedHook:input.selectedHook,hookPublication:input.hookPublication,...selectedHookEconomics(input)}:{}),virtualQuote:pricing.virtualQuote,pricing});pricing=bound?.pricing??pricing;await db.query('commit')}
+    const approvals=ownerApprovals(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing:true,openLaunches:true,selectedHooksEnabled:service.selectedHooksEnabled===true,burnEnabled:burnEnabled(env)}),db=await pool.connect()
+    try{await db.query('begin');const bound=await approvals.bindOpenLaunch(db,owner.wallet,input.operationId,{name:input.name,symbol:input.symbol,uri:input.uri,creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,...(input.selectedHook?{selectedHook:input.selectedHook,hookPublication:input.hookPublication,...selectedHookEconomics(input)}:burnBps?{rules:input.rules}:{}),virtualQuote:pricing.virtualQuote,pricing});pricing=bound?.pricing??pricing;await db.query('commit')}
     catch(error){await db.query('rollback').catch(()=>{});return reply({error:error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error.message:'Create your coin first.'},409)}
     finally{db.release()}
     const reserved=await service.reserve({sessionToken:token,owner:owner.wallet,input:{...input,virtualQuote:pricing.virtualQuote}})

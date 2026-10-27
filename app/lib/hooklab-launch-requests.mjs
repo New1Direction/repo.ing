@@ -14,7 +14,7 @@ import { walletIdentityConfiguration,walletIdentitySessionToken,walletIdentityQu
 import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 import { usdLaunchPricingEnabled } from '../../src/hooklab-launch-pricing.mjs'
 import { launchPriceEstimate } from './hooklab-launch-price.mjs'
-import { openLaunchesEnabled, siteLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
+import { burnEnabled, openLaunchesEnabled, siteLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
 import { nativeLaunchRuntime } from './hooklab-native-launch-runtime.mjs'
 import { openLaunchNetworkFee } from './hooklab-open-launch.mjs'
 import { selectedHookSchema } from '../../src/hooklab-selected-hook.mjs'
@@ -34,8 +34,6 @@ const inputSchema=z.discriminatedUnion('action',[
 ])
 const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
 const enabled=env=>siteLaunchesEnabled(env)&&env.HOOK_WALLET_IDENTITY_ENABLED==='true'
-// HOOK_BURN_ENABLED (after the open-launch-burn migration): open gate coins may carry a token burn.
-export const burnEnabled=env=>openLaunchesEnabled(env)&&env.HOOK_BURN_ENABLED==='true'
 // The chain's open-creation state (menus, fee, pause) through the installed launch runtime's two providers. Only these
 // fields reach the browser: nothing about the stack's programs or quote marker is ever sent to customers.
 const PUBLIC_OPEN_CREATION=['native','open','paused','creatorFeeBps','continuousCreatorFee','capBps','maxCreatorFeeBps','maxBurnBps','maxRulesFeeBps','maxHolderFeeBps','burnEnabled','launchFeeLamports','poolCreationFeeLamports','rentLamports','preparationRentLamports','launchRentLamports','guardRentLamports','minVirtualQuote','maxVirtualQuote','selectedHooksEnabled']

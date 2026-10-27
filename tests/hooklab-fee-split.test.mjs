@@ -33,6 +33,8 @@ test('the split is checked against the chain: creator within its ceiling, each h
   assert.match(checkFeeSplit(splitFee({ totalBps: 400, shares: { creator: 10000, burn: 0 } }), { ...bounds, maxRulesFeeBps: 300 }), /3%/)
   // Holders Earn is not live: any holder share is refused.
   assert.match(checkFeeSplit({ totalBps: 100, creatorFeeBps: 50, burnBps: 0, holderFeeBps: 50 }, bounds), /Holders Earn/)
+  // A bound the chain did not report refuses the split (never compares against undefined).
+  for (const missing of Object.keys(bounds)) assert.match(checkFeeSplit(splitFee({ totalBps: 100, shares: { creator: 5000, burn: 5000 } }), { ...bounds, [missing]: undefined }), /limits are unavailable/, missing)
 })
 
 test('the launch rules carry the burn on both sides and nothing else; no burn is no rules', () => {

@@ -13,6 +13,8 @@ const fail = message => Object.assign(Error(message), { code: 'OPEN_CREATION_UNA
 // HOOK_OPEN_LAUNCHES=true: self-serve launches (after the open-launches migration). The site's coin pages, metadata and
 // listing serve coins from either path while owner-approved launches remain readable.
 export const openLaunchesEnabled = env => env?.HOOK_OPEN_LAUNCHES === 'true'
+// HOOK_BURN_ENABLED=true (after the open-launch-burn migration): open gate coins may carry a token burn.
+export const burnEnabled = env => openLaunchesEnabled(env) && env?.HOOK_BURN_ENABLED === 'true'
 export const siteLaunchesEnabled = env => env?.HOOK_OWNER_APPROVED_LAUNCHES === 'true' || openLaunchesEnabled(env)
 const pda = (program, seed) => PublicKey.findProgramAddressSync([Buffer.from(seed)], new PublicKey(program))[0]
 

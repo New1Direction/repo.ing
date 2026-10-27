@@ -344,3 +344,25 @@ test('the launch-requests API takes a gate coin\'s burn only with HOOK_BURN_ENAB
     assert.deepEqual([shown.burnEnabled, shown.maxBurnBps, shown.maxRulesFeeBps, shown.maxHolderFeeBps], [burnOn, 1000, 1000, 1000])
   }
 }))
+
+test('reserving a burning gate coin hands the runtime exactly the stored burn, only with Burn on and within the chain bounds', { skip: process.env.HOOK_SKIP_DB === 'true' && 'database tests skipped' }, () => withDatabase(async pool => {
+  const creator = key('burn-reserve'), id = randomUUID(), operationId = randomUUID(), value = intent(id, { creatorFeeBps: 500, capBps: 200, ...burn(500) })
+  await ownerApprovalStore(pool, { openLaunches: true, usdPricing: true, burnEnabled: true }).createRequest(creator, value, profile, { source: 'open', menus: BURN_MENUS })
+  const handed = []
+  const handler = (burnOn, chain = BURN_MENUS) => createNativeLaunchHandler({ env: { HOOK_OPEN_LAUNCHES: 'true', HOOK_NATIVE_LAUNCH_ENABLED: 'true', HOOK_WALLET_IDENTITY_ENABLED: 'true', ...(burnOn ? { HOOK_BURN_ENABLED: 'true' } : {}) },
+    configuration: () => ({ origin: 'https://repo.ing' }), database: () => ({ connect: () => pool.connect(), end: async () => {} }),
+    principalStore: () => ({ resolve: async () => ({ wallet: creator }) }), quota: async () => true, launchPrice: async () => pricing,
+    runtime: () => ({ openLaunches: true, selectedHooksEnabled: false, openCreation: async () => ({ native: true, open: true, paused: false, ...chain, minVirtualQuote: '1', maxVirtualQuote: '18446744073709551615' }),
+      reserve: async ({ input, owner }) => { handed.push(input.rules); return { owner, operationId, request: input } } }) })
+  const { id: _, ...reserveValue } = value
+  const reserve = (patch, ...options) => handler(...options)(new Request('https://repo.ing/api/hook-lab/native-launch', { method: 'POST', headers: { origin: 'https://repo.ing', 'content-type': 'application/json',
+    cookie: `__Host-hook-wallet-session=${Buffer.alloc(32, 18).toString('base64url')}` }, body: JSON.stringify({ action: 'reserve', operationId, label: 'OPEN', ...reserveValue, virtualQuote: pricing.virtualQuote, ...patch }) }))
+  const off = await reserve({}, false)
+  assert.equal(off.status, 409); assert.match((await off.json()).error, /Burn is not available/)
+  assert.equal((await reserve({}, true, { ...BURN_MENUS, maxBurnBps: 400 })).status, 409, 'the chain lowered the burn bound')
+  assert.equal((await reserve({ ...burn(300) }, true)).status, 409, 'another burn than the coin\'s')
+  assert.equal((await reserve({ rules: { burnBuyBps: 500, burnSellBps: 300 } }, true)).status, 400)
+  const ok = await reserve({}, true)
+  assert.equal(ok.status, 200, await ok.clone().text())
+  assert.deepEqual(handed, [{ burnBuyBps: 500, burnSellBps: 500 }], 'only the accepted reserve reached the runtime, with the burn')
+}))

@@ -20,6 +20,7 @@ import { reserveNewMintSelectedHookPreparationIntent } from './hooklab-new-mint-
 import { resolveHookPublicationSelection, bindSelectedHookSetupIntent, selectedHookSetupResolver } from './hooklab-selected-hook-setup-resolver.mjs'
 import { hookCatalogStore, revalidateHookPublication } from './hooklab-hook-catalog.mjs'
 import { selectedHookEconomics } from '../app/lib/hooklab-native-launch-form.mjs'
+import { checkFeeSplit } from './hooklab-fee-split.mjs'
 // openLaunches (HOOK_OPEN_LAUNCHES): self-serve launches. Anyone may launch while open creation is on chain; the launch
 // is create_launch_open_v1 through the operator's shared launch table, signed by the creator and the sealed mint key, with
 // no admin key and no owner approval. Launches reviewed before the switch still settle.
@@ -102,8 +103,12 @@ export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustod
    try{
     // Creator rate is an explicit immutable approved profile/configuration input; an open launch's comes from the chain.
     const reviewedProfile=JSON.parse(profile.json)
+    // A gate coin's token burn launches only through open creation, within the chain's bounds for the whole fee.
+    const burnBps=!input.selectedHook&&input.rules&&input.rules!=='none'?input.rules.burnBuyBps:0
     let chain=null
-     if(openLaunches){chain=await openCreation();if(!chain.native||!chain.open||chain.paused||!isOpenCreatorFeeChoice(input,chain)||(input.selectedHook?input.capBps!==0:!chain.capBps.includes(input.capBps)))throw Error()}
+    if(openLaunches){chain=await openCreation();if(!chain.native||!chain.open||chain.paused||!isOpenCreatorFeeChoice(input,chain)||(input.selectedHook?input.capBps!==0:!chain.capBps.includes(input.capBps))
+     ||burnBps&&checkFeeSplit({creatorFeeBps:input.creatorFeeBps,burnBps,holderFeeBps:0},chain))throw Error()}
+    else if(burnBps)throw Error()
     else if(reviewedProfile.capability.creatorFeeBpsChoices?!isApprovedLaunchChoice(reviewedProfile,input):input.creatorFeeBps!==config.economics.creatorFeeBps)throw Error()
     let publication
     if(input.selectedHook){
@@ -115,7 +120,7 @@ export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustod
      await revalidateHookPublication({store:hookCatalogStore(pool),digest:publication.digest,observe:observeSelectedHookCompatibility})
     }
     const result=await (input.selectedHook?reserveNewMintSelectedHookPreparationIntent:reviewNewMintPreparationCandidate)({custody:input.selectedHook?selectedCustody:custody,sessionToken,
-     input:{operationId:input.operationId,...(input.selectedHook?{selectedHook:input.selectedHook,...selectedHookEconomics(input)}:{capBps:input.capBps}),label:input.label,creatorFeeBps:input.creatorFeeBps},
+     input:{operationId:input.operationId,...(input.selectedHook?{selectedHook:input.selectedHook,...selectedHookEconomics(input)}:{capBps:input.capBps,...(burnBps?{rules:input.rules}:{})}),label:input.label,creatorFeeBps:input.creatorFeeBps},
      profile:preparationProfile,openCreation:chain,hookPin:config.selectedHookPin,observeSelectedHook,connections,limits:input.selectedHook?undefined:{...preparationLimits,...(reviewTiming?await reviewTiming({stage:'preparation'}):{})},clock})
     if(result.custody.owner!==owner)throw Error()
     const setup=input.selectedHook?await bindSelectedHookSetupIntent(pool,{custodyOperationId:input.operationId,owner,profileSha256:profile.expectedSha256,mint:result.custody.mint,selectedConfig:result.custody.selectedConfig,selectedHook:input.selectedHook,hookPublication:publication}):null

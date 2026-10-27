@@ -22,6 +22,7 @@ export function splitFee({ totalBps, shares }) {
 // Why the chain would refuse this split under the launch Config's bounds, or ''. The creator's ceiling is the lower of
 // max_creator_fee_bps and max_rules_fee_bps, as the open route checks it (hook-lab independent.rs fee_ceiling).
 export function checkFeeSplit(split, { maxCreatorFeeBps, maxRulesFeeBps, maxBurnBps, maxHolderFeeBps }) {
+  if (![maxCreatorFeeBps, maxRulesFeeBps, maxBurnBps, maxHolderFeeBps].every(Number.isInteger)) return 'The chain\'s fee limits are unavailable right now.'
   const { creatorFeeBps, burnBps, holderFeeBps } = split, creatorCeiling = Math.min(maxCreatorFeeBps, maxRulesFeeBps)
   if (holderFeeBps !== 0) return 'Holders Earn is not live yet.'
   if (creatorFeeBps > creatorCeiling) return `The creator fee can be at most ${percent(creatorCeiling)}.`
