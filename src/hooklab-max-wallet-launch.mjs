@@ -414,10 +414,12 @@ function compileLaunch(input, fixture, canary = false, open = false) {
   const canonicalRegistry = Buffer.concat([Buffer.from('02daf6662c38c0cd01020000000000', 'hex'), kb(a.policy), Buffer.from([0, 0]), kb(a.launch)])
   check(registryBytes.equals(canonicalRegistry), 'Registry must contain exactly two literal read-only canonical policy and launch entries')
   }
-  if(selectedBranch)assertSelectedHookRuleBounds(r,c)
+  // A gate coin's token burn rides in the same rules, bounded the same way; only an open launch offers one.
+  check(selectedBranch || r.rules === 'none' || open, 'A token burn launches only through open creation')
+  if(selectedBranch || r.rules !== 'none')assertSelectedHookRuleBounds(r,c)
   check(selected.version === 1 && str(selected.creator) === (r.configAuthor ?? r.creator) && selected.custom_hook && str(selected.custom_hook) === (selectedBranch?r.selectedHook.program:G)
     && selected.creator_fee_bps === r.creatorFeeBps && selected.author_share_bps === (r.authorShareBps ?? 0) && selected.custom_hook_flags === (selectedBranch?r.hookFlags:1)
-    && selected.label === r.label && isDeepStrictEqual(selected.reserved, selectedHookConfigReserved(r, selectedBranch && input.selectedAuthorityEvidence?.authority.kind==='timelocked')) && isDeepStrictEqual(selected.rules, selectedBranch ? selectedHookRules(r) : noRules), 'Prepared selected configuration differs')
+    && selected.label === r.label && isDeepStrictEqual(selected.reserved, selectedHookConfigReserved(r, selectedBranch && input.selectedAuthorityEvidence?.authority.kind==='timelocked')) && isDeepStrictEqual(selected.rules, selectedHookRules(r)), 'Prepared selected configuration differs')
   if(inclusive)check((selectedBranch || policy.fee_model===2 && policy.protocol_share_bps===2500 && policy.creator_fee_bps===r.creatorFeeBps)
     && c.lp_fee_bps===0 && n(c.sniper_window_secs)===0n && c.sniper_start_bps===0 && d.protocol_fee_bps===0
     && d.launch_protocol_share_bps===2500 && r.creatorFeeBps<=c.max_creator_fee_bps, 'Inclusive fee policy or economics differs')
@@ -478,7 +480,7 @@ function compileLaunch(input, fixture, canary = false, open = false) {
   if(inclusive&&!selectedBranch)hookAccounts=inclusiveHookAccountsHash({program:G,registry:{address:a.registry,owner:G,data:registryBytes},policy:{address:a.policy,owner:G,data:policyBytes},launch:{address:a.launch,owner:L}})
   const guard = { version: 2, deadline_slot: bn(l.validUntilSlot), expected_launch_economics_hash: [...launchEconomics], expected_pool_economics_hash: [...poolEconomics],
     max_launch_fee_lamports: bn(l.maxLaunchFeeLamports), max_pool_creation_fee_lamports: bn(l.maxPoolCreationFeeLamports), max_rent_lamports: bn(BigInt(l.maxRentLamports)-holdingRent), max_total_debit_lamports: bn(BigInt(l.maxInstructionDebitLamports)-holdingRent) }
-  const data = launch.coder.instruction.encode(selectedBranch?'create_launch_open_v1':open ? 'create_launch_custom_v4' : instructionName, { args: { name: r.name, symbol: r.symbol, uri: r.uri, creator_fee_bps: r.creatorFeeBps, virtual_quote: bn(r.virtualQuote), rules: selectedBranch ? selectedHookRules(r) : noRules },
+  const data = launch.coder.instruction.encode(selectedBranch?'create_launch_open_v1':open ? 'create_launch_custom_v4' : instructionName, { args: { name: r.name, symbol: r.symbol, uri: r.uri, creator_fee_bps: r.creatorFeeBps, virtual_quote: bn(r.virtualQuote), rules: selectedHookRules(r) },
     guard, ...(inclusive?{fee_model:feeModel}:{}), ...(native?{quote_form:QUOTE_FORM_NATIVE}:{}), expected_control_hash: [...control], expected_hook_accounts_hash: [...hookAccounts] })
   if (open) OPEN_LAUNCH_DISCRIMINATOR.copy(data, 0)   // v4's argument encoding under the open instruction's discriminator
   const instruction = new TransactionInstruction({ programId: pk(L), keys: metas, data })

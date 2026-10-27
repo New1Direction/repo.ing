@@ -25,6 +25,7 @@ const raw = (text, maximum) => {
 const role = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 // Shared schema module imports only the legacy module, avoiding cyclic V3 imports.
 import { parseInclusiveMaxWalletProfile, inclusiveMaxWalletPreparationRequestSchema } from './hooklab-inclusive-max-wallet-profile.mjs'
+import { selectedHookRules, assertSelectedHookRuleBounds } from './hooklab-selected-hook-preparation.mjs'
 export { inclusiveMaxWalletProfileSchema, inclusiveMaxWalletPreparationRequestSchema } from './hooklab-inclusive-max-wallet-profile.mjs'
 const account = z.object({ address: key, owner: key, executable: z.boolean(), dataBase64: z.string().max(14000000), lamports: u64 }).strict()
 const presentOrAbsent = z.object({ address: key, account: account.nullable() }).strict()
@@ -51,8 +52,6 @@ const inputSchema = z.object({ profile: z.object({ json: z.string().max(16384), 
   request: inclusiveMaxWalletPreparationRequestSchema, observations: z.array(observationSchema).length(2),
   recentBlockhash: blockhashSchema, lookupTable: lookupSchema, limits: limitsSchema,
 }).strict()
-const rules = { holder_fee_buy_bps: 0, holder_fee_sell_bps: 0, burn_buy_bps: 0, burn_sell_bps: 0,
-  max_wallet_bps: 0, creator_lock_secs: 0, early_window_secs: 0, early_lock_secs: 0 }
 function binding(artifact) {
   const bytes = raw(artifact.idlBase64, 1048576)
   check(sha(bytes) === artifact.idlSha256, 'IDL digest differs')
@@ -149,7 +148,7 @@ export function planInclusiveMaxWalletPreparation(input) {
   [['payer', true, true], ['mint', false, true], ['policy', true, false], ['registry', true, false], ['system_program', false, false]])
   const config = instruction(launch, 'create_config', { creator: r.creator, config: addresses.launchConfig,
     launch_config: r.selectedConfig, hook_program: addresses.gate, system_program: zero, event_authority: addresses.eventAuthority, program: addresses.launch },
-  { args: { rules, creator_fee_bps: r.creatorFeeBps, custom_hook: pk(addresses.gate), custom_hook_flags: r.hookFlags, label: r.label } },
+  { args: { rules: selectedHookRules(r), creator_fee_bps: r.creatorFeeBps, custom_hook: pk(addresses.gate), custom_hook_flags: r.hookFlags, label: r.label } },
   [['creator', true, true], ['config', false, false], ['launch_config', true, true], ['hook_program', false, false],
     ['system_program', false, false], ['event_authority', false, false], ['program', false, false]])
   // Rust create_config client appends this remaining account; it is absent from the declared IDL list.
@@ -214,6 +213,8 @@ function readLaunchConfig(launch, profile, request, account) {
     && isPreparableLaunchChoice(profile, request, parseLaunchConfigReserved(Buffer.from(c.reserved))) && request.creatorFeeBps <= c.max_creator_fee_bps && request.creatorFeeBps <= c.rule_bounds.max_rules_fee_bps
     && BigInt(c.supply.toString(10)) > 0n
     && BigInt(c.supply.toString(10)) * BigInt(request.capBps) / 10000n > 0n, 'Max-wallet launch economics or rounded cap invalid')
+  // The coin's token burn, if any: within the chain's burn bound, and with the creator fee within the combined bound.
+  assertSelectedHookRuleBounds(request, c)
   return c
 }
 /** Pure expected-byte reconstruction for a future receipt verifier. The timestamp must be
@@ -237,7 +238,7 @@ export function deriveInclusiveMaxWalletPreparedAccounts(input) {
   const policy = canonicalAccount(gate, 'PolicyV2', { version: 2, mint: pk(r.mint), initial_supply: c.supply,
     cap_bps: r.capBps, quote_mint: c.quote_mint, lp_fee_bps: 0, fee_model: 2, protocol_share_bps: 2500, creator_fee_bps: r.creatorFeeBps }, 90)
   const registry = Buffer.concat([Buffer.from('02daf6662c38c0cd01020000000000', 'hex'), pk(policyAddress).toBuffer(), Buffer.from([0, 0]), pk(canonicalLaunch).toBuffer()])
-  const selected = canonicalAccount(launch, 'LaunchConfig', { version: 1, creator: pk(r.creator), rules,
+  const selected = canonicalAccount(launch, 'LaunchConfig', { version: 1, creator: pk(r.creator), rules: selectedHookRules(r),
     creator_fee_bps: r.creatorFeeBps, custom_hook: pk(G), custom_hook_flags: 1, label: r.label, created_at: new BN(observedCreatedAtUnixSeconds, 10),
     author_share_bps: 0, reserved: Array(30).fill(0) }, 176)
   const expected = (address, owner, bytes) => ({ address, owner, executable: false, dataBase64: bytes.toString('base64'), sha256: sha(bytes), size: bytes.length })

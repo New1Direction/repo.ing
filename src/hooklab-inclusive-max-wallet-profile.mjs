@@ -12,8 +12,14 @@ export const inclusiveMaxWalletProfileSchema=maxWalletProfileSchema.extend({
    &&(c.capBpsChoices===undefined)===(c.defaultCapBps===undefined)&&(c.capBpsChoices===undefined||(new Set(c.capBpsChoices).size===c.capBpsChoices.length&&c.capBpsChoices.includes(c.defaultCapBps))),
    'Creator menus must be unique and contain their defaults'),
 }).strict()
+// A gate coin's token burn (owner design 2026-10-27): the same share of every buy and sell, 1 bp to 10%. No burn is 'none',
+// as before, so earlier requests and their intent hashes are unchanged.
+const burnBps=z.number().int().min(1).max(1000)
+export const gateBurnRulesSchema=z.union([z.literal('none'),z.object({burnBuyBps:burnBps,burnSellBps:burnBps}).strict()
+ .refine(r=>r.burnBuyBps===r.burnSellBps,'A token burn is the same on both sides')])
 export const inclusiveMaxWalletPreparationRequestSchema=maxWalletPreparationRequestSchema.extend({
  schema:z.literal('repoing/inclusive-max-wallet-preparation-request/1'),policyVersion:z.literal(2),creatorFeeBps:z.number().int().min(0).max(9999),feeModel:z.literal(2),protocolShareBps:z.literal(2500),
+ rules:gateBurnRulesSchema,
 }).strict()
 export const isInclusiveMaxWalletProfile=profile=>['hook-lab/offline-inclusive-max-wallet-builder-profile/1',LOCAL_PROFILE_SCHEMA].includes(profile?.schema)
 export function parseInclusiveMaxWalletProfile(profile){

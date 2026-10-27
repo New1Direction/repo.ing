@@ -27,7 +27,8 @@ export function localTestEnvironment(){return {NODE_ENV:'development',HOOK_LOCAL
 // tests whose wallets must reach the curve's end.
 // openElfDirectory: the open-creation build's launch ELF (hook-lab 36dd07e); the state then pins that launch program and
 // its IDL (native, with create_launch_open_v1), every other program as native.
-export function makeCanaryState({elfDirectory,roles,blockhash,native=false,prepared=true,capBps=200,virtualQuote=null,openElfDirectory=null}){
+// burnBps: the coin's token burn on both sides (its LaunchConfig rules and request); the rule bounds then allow it.
+export function makeCanaryState({elfDirectory,roles,blockhash,native=false,prepared=true,capBps=200,virtualQuote=null,openElfDirectory=null,burnBps=0}){
  const open=!!openElfDirectory
  if(open&&!native)throw Error('The open-creation build is native')
  const base=new URL('../../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/',import.meta.url),nativeBase=new URL('../../vendor/hooklab-native-candidate/',import.meta.url),openBase=new URL('../../vendor/hooklab-native-candidate/open-36dd07e/',import.meta.url)
@@ -62,7 +63,7 @@ export function makeCanaryState({elfDirectory,roles,blockhash,native=false,prepa
   if(role!=='gate'){header[12]=1;pk(roles.upgrade).toBuffer().copy(header,13)}
   put(pd,loader,Buffer.concat([header,elfs[role]]));const program=Buffer.alloc(36);program.writeUInt32LE(2);pk(pd).toBuffer().copy(program,4);put(address,loader,program,'10000000000',true)
  }
- const ruleBounds=value('launch','RuleBounds',{max_rules_fee_bps:100,min_max_wallet_bps:1,max_max_wallet_bps:9999})
+ const ruleBounds=value('launch','RuleBounds',{max_rules_fee_bps:burnBps?1000:100,max_burn_bps:burnBps?1000:0,min_max_wallet_bps:1,max_max_wallet_bps:9999})
  const bounds=virtualQuote?[virtualQuote,virtualQuote]:native?['5625000000','112500000000']:['1000000000','1000000000']
  const lc=value('launch','Config',{version:1,bump:bump(L,'config'),admin:pk(roles.admin),treasury:pk(roles.treasury),quote_mint:pk(profile.quoteMint),
   max_creator_fee_bps:100,curve_bps:7500,supply:bn('1000000000000000'),decimals:6,min_virtual_quote:bn(bounds[0]),max_virtual_quote:bn(bounds[1]),paused:false,rule_bounds:ruleBounds})
@@ -74,11 +75,11 @@ export function makeCanaryState({elfDirectory,roles,blockhash,native=false,prepa
    roles:Object.fromEntries(['admin','upgrade','guardian','treasury'].map(k=>[k,pk(roles[k])])),revision:bn(0),gates:{creation:false,trading:role==='swap'&&!native},config_digest:[...Buffer.from(sha(economics),'hex')],custody_digest:Array(32).fill(7),pending_admin:null}},348)
  }
  typed('launch','CreatorAuthorization',pda(L,'creator-authorization',pk(roles.creator).toBuffer()),value('launch','CreatorAuthorization',{creator:pk(roles.creator),enabled:true,expires_at_slot:bn(1000),max_launches:bn(1),revision:bn(1)}),73)
- if(prepared)typed('launch','LaunchConfig',roles.config,value('launch','LaunchConfig',{version:1,creator:pk(roles.creator),label:'private-canary',creator_fee_bps:100,custom_hook:pk(G),custom_hook_flags:1}),176)
+ if(prepared)typed('launch','LaunchConfig',roles.config,value('launch','LaunchConfig',{version:1,creator:pk(roles.creator),label:'private-canary',creator_fee_bps:100,custom_hook:pk(G),custom_hook_flags:1,rules:value('launch','LaunchRules',{burn_buy_bps:burnBps,burn_sell_bps:burnBps})}),176)
  if(prepared)typed('gate','PolicyV2',pda(G,'policy-v2',pk(roles.mint).toBuffer()),value('gate','PolicyV2',{version:2,mint:pk(roles.mint),initial_supply:lc.supply,cap_bps:capBps,quote_mint:pk(profile.quoteMint),fee_model:2,protocol_share_bps:2500,creator_fee_bps:100}),90)
  if(prepared)put(pda(G,'bordrless-hook-accounts',pk(roles.mint).toBuffer()),G,Buffer.concat([Buffer.from('02daf6662c38c0cd01020000000000','hex'),pk(pda(G,'policy-v2',pk(roles.mint).toBuffer())).toBuffer(),Buffer.from([0,0]),pk(pda(L,'launch',pk(roles.mint).toBuffer())).toBuffer()]))
  typed('token','Mint',profile.quoteMint,value('token','Mint',{version:1,decimals:9,supply:bn('1000000000000'),max_supply:bn('1000000000000'),name:'Synthetic quote',symbol:'TEST',creator:pk(roles.creator)}),519)
- const prep={schema:'repoing/inclusive-max-wallet-preparation-request/1',policyKind:'max-wallet',policyVersion:2,creator:roles.creator,feePayer:roles.creator,mint:roles.mint,selectedConfig:roles.config,capBps,label:'private-canary',creatorFeeBps:100,rules:'none',hookFlags:1,feeModel:2,protocolShareBps:2500}
+ const prep={schema:'repoing/inclusive-max-wallet-preparation-request/1',policyKind:'max-wallet',policyVersion:2,creator:roles.creator,feePayer:roles.creator,mint:roles.mint,selectedConfig:roles.config,capBps,label:'private-canary',creatorFeeBps:100,rules:burnBps?{burnBuyBps:burnBps,burnSellBps:burnBps}:'none',hookFlags:1,feeModel:2,protocolShareBps:2500}
  const request={...prep,schema:'repoing/inclusive-max-wallet-launch-request/1',reviewer:roles.admin,name:'Private canary',symbol:'CANARY',uri:'',virtualQuote:virtualQuote??(native?'53251917070':'1000000000')}
  const derived=maxWalletLaunchInventory(envelope,request,Buffer.from(accounts.get(pda(L,'config')).dataBase64,'base64')),a=derived.addresses
  const table=Buffer.alloc(56+32*derived.inventory.length);table.writeUInt32LE(1);table.writeBigUInt64LE(0xffffffffffffffffn,4);table.writeBigUInt64LE(99n,12);table[21]=1;pk(roles.admin).toBuffer().copy(table,22)

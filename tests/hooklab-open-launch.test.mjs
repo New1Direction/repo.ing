@@ -7,7 +7,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { PublicKey, VersionedMessage } from '@solana/web3.js'
-import { compileOpenLaunchReview, compileMaxWalletLaunchReview, openLaunchInventory, openLaunchTableAddresses, OPEN_LAUNCH_DISCRIMINATOR } from '../src/hooklab-max-wallet-launch.mjs'
+import { compileOpenLaunchReview, compileMaxWalletLaunchReview, openLaunchInventory, openLaunchTableAddresses, OPEN_LAUNCH_DISCRIMINATOR, openLaunchRequestSchema } from '../src/hooklab-max-wallet-launch.mjs'
 import { openState, openInput, openConnections, sharedTable, OWNER_MENUS, withLocalAcceptance } from './fixtures/hooklab-open-launch.mjs'
 import { readOpenCreation } from '../src/hooklab-open-creation.mjs'
 import { deriveInclusiveMaxWalletPreparedAccounts } from '../src/hooklab-inclusive-max-wallet-preparation.mjs'
@@ -106,4 +106,32 @@ test('an open-creation Config without a fee menu prepares any creator fee up to 
   assert.throws(() => derive(continuous, 501), /economics/, 'over the ceiling')
   assert.throws(() => derive(openState({ ceiling: 500, rulesCeiling: 1000 }), 300), /economics/, 'a fee menu on chain still binds')
   assert.ok(derive(openState({ ceiling: 500, rulesCeiling: 1000 }), 100).accounts.selectedConfig)
+}))
+
+// Burn (owner design 2026-10-27): an open gate coin may burn a share of every trade's coins. The coin's own LaunchConfig
+// and the launch carry it in LaunchRules (burn_buy_bps = burn_sell_bps); the chain bounds the burn and the creator fee
+// plus the burn.
+test('an open launch with a token burn carries it on both sides of its rules, within the chain\'s burn and combined bounds', { skip }, () => withLocalAcceptance(() => {
+  const world = openState({ burnBps: 300 }), plan = compileOpenLaunchReview(openInput(world))
+  const data = Buffer.from(plan.canonicalInstruction.dataHex, 'hex'), coder = world.state.bindings.launch.coder
+  const args = coder.instruction.decode(Buffer.concat([sha(Buffer.from('global:create_launch_custom_v4')).subarray(0, 8), data.subarray(8)])).data.args
+  assert.deepEqual({ buy: args.rules.burn_buy_bps, sell: args.rules.burn_sell_bps, creator: args.creator_fee_bps, wallet: args.rules.max_wallet_bps }, { buy: 300, sell: 300, creator: 100, wallet: 0 })
+  assert.deepEqual(plan.request.rules, { burnBuyBps: 300, burnSellBps: 300 })
+  assert.throws(() => compileOpenLaunchReview(openInput(openState({ burnBps: 300, burnCeiling: 200 }))), /burn bounds/)
+  assert.throws(() => compileOpenLaunchReview(openInput(openState({ burnBps: 300, rulesCeiling: 350 }))), /burn bounds|ceiling/, 'creator 1% + burn 3% is over 3.5%')
+  // The launch must carry the burn its prepared LaunchConfig holds: no other burn, and none dropped.
+  assert.throws(() => compileOpenLaunchReview(openInput(world, { request: { rules: { burnBuyBps: 200, burnSellBps: 200 } } })), /Preparation intent|selected configuration/)
+  assert.throws(() => compileOpenLaunchReview(openInput(world, { request: { rules: 'none' } })), /Preparation intent|selected configuration/)
+}))
+
+test('a token burn is the same on both sides, at least 1 bp, at most 10%; no burn is "none"', () => {
+  for (const rules of [{ burnBuyBps: 300, burnSellBps: 200 }, { burnBuyBps: 0, burnSellBps: 0 }, { burnBuyBps: 1001, burnSellBps: 1001 }, { burnBuyBps: 300 }, { burnBuyBps: 1.5, burnSellBps: 1.5 }])
+    assert.throws(() => openLaunchRequestSchema.shape.rules.parse(rules), JSON.stringify(rules))
+  assert.deepEqual(openLaunchRequestSchema.shape.rules.parse({ burnBuyBps: 1000, burnSellBps: 1000 }), { burnBuyBps: 1000, burnSellBps: 1000 })
+  assert.equal(openLaunchRequestSchema.shape.rules.parse('none'), 'none')
+})
+
+test('the open-creation state carries the chain\'s burn, Holders Earn and combined fee bounds for the fee form', { skip }, () => withLocalAcceptance(async () => {
+  const world = openState({ burnBps: 300, burnCeiling: 600, rulesCeiling: 900 }), chain = await readOpenCreation(openConnections(world), world.programs)
+  assert.deepEqual({ burn: chain.maxBurnBps, holders: chain.maxHolderFeeBps, combined: chain.maxRulesFeeBps, creator: chain.maxCreatorFeeBps }, { burn: 600, holders: 0, combined: 900, creator: 100 })
 }))

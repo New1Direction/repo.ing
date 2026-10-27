@@ -101,8 +101,8 @@ function derivePostconditions(settlementContext,{slot,timestamp},canary,lpName=L
  const launch={...zeroStruct(b.launch,'Launch'),version:1,bump:bump(L,'launch',pk(r.mint).toBuffer()),mint:pk(r.mint),creator:pk(r.creator),pool:pk(a.pool),quote_mint:pk(p.quoteMint),
   creator_fee_bps:r.creatorFeeBps,lp_fee_bps:lc.lp_fee_bps,sniper_window_secs:lc.sniper_window_secs,sniper_start_bps:lc.sniper_start_bps,virtual_quote:bn(vquote),virtual_base:bn(vbase),graduation_quote:bn(graduation),curve_tokens:bn(curve),reserve_tokens:bn(reserve),
   reserve_holding:pk(a.launchReserve),quote_holding:pk(a.launchQuote),lp_holding:pk(a.launchLp),created_at:bn(timestamp),kit_config:pk(kitConfig),holder_vault:pk(holder),config:pk(r.selectedConfig),custom_hook:pk(H),custom_hook_flags:flags,reserved:flagged('Launch',17)}
+ launch.rules=selectedHookRules(r)
  if(r.policyKind==='selected-hook'){
-  launch.rules=selectedHookRules(r)
   launch.author_share_bps=(r.configAuthor??r.creator)===r.creator?0:r.authorShareBps??0
   if(r.quoteCut){
    const reserved=Buffer.from(launch.reserved)
@@ -139,7 +139,7 @@ function derivePostconditions(settlementContext,{slot,timestamp},canary,lpName=L
  if(inclusive)put(a.inclusiveFeePolicy,S,Buffer.concat([Buffer.from(sha(Buffer.from('account:InclusiveFeePolicy')),'hex').subarray(0,8),Buffer.from([1]),pk(a.pool).toBuffer(),sc.fee_collector.toBuffer(),Buffer.from([0xc4,9])]))
  const launchEvent={...zeroStruct(b.launch,'LaunchCreated'),launch:pk(a.launch),mint:pk(r.mint),creator:pk(r.creator),pool:pk(a.pool),quote_mint:pk(p.quoteMint),lp_mint:pk(a.lpMint),name:r.name,symbol:r.symbol,uri:r.uri,supply:bn(supply),decimals:lc.decimals,
   creator_fee_bps:r.creatorFeeBps,lp_fee_bps:lc.lp_fee_bps,sniper_window_secs:lc.sniper_window_secs,sniper_start_bps:lc.sniper_start_bps,virtual_quote:bn(vquote),virtual_base:bn(vbase),graduation_quote:bn(graduation),curve_tokens:bn(curve),reserve_tokens:bn(reserve),launch_fee_lamports:lc.launch_fee_lamports,config:pk(r.selectedConfig),custom_hook:pk(H),custom_hook_flags:flags,slot:bn(slot),ts:bn(timestamp)}
- if(r.policyKind==='selected-hook')launchEvent.rules=selectedHookRules(r)
+ launchEvent.rules=selectedHookRules(r)
  const poolEvent={...zeroStruct(b.swap,'PoolCreated'),pool:pk(a.pool),payer:pk(r.creator),creator:pk(a.launch),base_mint:pk(r.mint),quote_mint:pk(p.quoteMint),lp_mint:pk(a.lpMint),base_vault:pk(a.baseVault),quote_vault:pk(a.quoteVault),
   lp_fee_bps:lc.lp_fee_bps,fee_model:inclusive?2:1,protocol_share_bps:sc.launch_protocol_share_bps,hook_program:pk(L),hook_flags:1985,virtual_base:bn(vbase),virtual_quote:bn(vquote),base_reserve:bn(curve),curve:true,slot:bn(slot),ts:bn(timestamp)}
  // E2-1: a v4 creation also announces itself after LaunchCreated, which still names bridged SOL as the quote.
