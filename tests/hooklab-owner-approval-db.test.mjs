@@ -269,3 +269,25 @@ test('one wallet can attach at most five coin images a day',async()=>withDatabas
  await assert.rejects(store.createRequest(creatorA,{id:randomUUID(),...intent},profile),/several launch requests today/)
  assert.equal((await store.createRequest(creatorB,{id:randomUUID(),...intent},profile)).status,'queued','other wallets are unaffected')
 }))
+
+// A launch review can expire and be reviewed again under the same custody operation (two launch-stage rows, as on
+// mainnet 2026-10-27). The creator's request must still load, with the mint, and a launched coin is listed once.
+test('a request whose launch was reviewed twice still loads, and its coin is listed once',async()=>withDatabase(async pool=>{
+ const store=ownerApprovalStore(pool,{adminAddress:admin})
+ const request=await store.createRequest(creatorA,{id:randomUUID(),...intent}),custody=randomUUID(),mint=Keypair.generate().publicKey.toBase58()
+ await pool.query("update hook_lab_launch_requests set status='launching',custody_operation_id=$2,invited_at=clock_timestamp(),invite_expires_at=clock_timestamp()+interval '1 hour' where id=$1",[request.id,custody])
+ const columns=await pool.query("select column_name from information_schema.columns where table_name='hook_lab_native_signing_operations'")
+ const has=new Set(columns.rows.map(r=>r.column_name))
+ // Only the query is under test: the row-level triggers (verified signing context) are off for these synthetic rows.
+ await pool.query('alter table hook_lab_native_signing_operations disable trigger all')
+ for(const [i,status] of ['expired','finalized-success'].entries()){
+  const values={id:randomUUID(),owner_wallet:creatorA,custody_operation_id:custody,stage:'launch',profile_sha256:'a'.repeat(64),review:JSON.stringify(reviewFor(`launch ${i}`)),
+   message_sha256:String(i).repeat(64),partial_transaction:'AA==',status,...(status==='expired'?{expired_evidence:JSON.stringify({slot:1})}:{}),...(has.has('resolved_request')?{resolved_request:JSON.stringify({mint})}:{})}
+  const keys=Object.keys(values)
+  await pool.query(`insert into hook_lab_native_signing_operations(${keys.join(',')}) values(${keys.map((_,n)=>`$${n+1}`).join(',')})`,Object.values(values))
+ }
+ await pool.query('alter table hook_lab_native_signing_operations enable trigger all')
+ assert.equal((await store.requestFor(creatorA)).id,request.id)
+ await pool.query("update hook_lab_launch_requests set status='launched' where id=$1",[request.id])
+ assert.equal((await store.launchedCoins()).filter(coin=>coin.id===request.id).length,1)
+}))

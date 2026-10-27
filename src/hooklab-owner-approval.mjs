@@ -61,7 +61,9 @@ const publicRequest=row=>row&&Object.freeze({id:row.id,creator:row.creator_walle
 const priceColumns=row=>({sol_usd_micros:row.sol_usd_micros,price_sources:row.sources,virtual_quote:row.virtual_quote,priced_at:row.priced_at,has_pricing:true})
 const requestQuery=usdPricing=>`select r.*,p.description,p.x_handle,p.website,p.telegram,(p.request_id is not null) as has_profile,
  ${usdPricing?'pr.sol_usd_micros,pr.sources as price_sources,pr.virtual_quote,pr.priced_at,(pr.request_id is not null) as has_pricing,':''}
- (select o.resolved_request->>'mint' from hook_lab_native_signing_operations o where o.custody_operation_id=r.custody_operation_id and o.stage='launch') as mint
+ -- A launch review can expire and be reviewed again (several launch rows, one reserved mint): the newest names it.
+ (select o.resolved_request->>'mint' from hook_lab_native_signing_operations o where o.custody_operation_id=r.custody_operation_id and o.stage='launch'
+  order by o.created_at desc limit 1) as mint
  from hook_lab_launch_requests r left join hook_lab_coin_profiles p on p.request_id=r.id${usdPricing?' left join hook_lab_launch_request_prices pr on pr.request_id=r.id':''}`
 // Shown publicly (metadata and image) while the coin can still launch or has launched.
 const PUBLIC_COIN_STATUSES=['queued','invited','launching','launched']
@@ -130,7 +132,7 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
   // Public: coins launched through the site, newest first, with their mints and profiles (delisted coins left out).
   async launchedCoins(limit=50){
    const {rows}=await pool.query(`select r.*,p.description,p.x_handle,p.website,p.telegram,(p.request_id is not null) as has_profile,o.resolved_request->>'mint' as mint
-    from hook_lab_launch_requests r join hook_lab_native_signing_operations o on o.custody_operation_id=r.custody_operation_id and o.stage='launch'
+    from hook_lab_launch_requests r join hook_lab_native_signing_operations o on o.custody_operation_id=r.custody_operation_id and o.stage='launch' and o.status='finalized-success'
     left join hook_lab_coin_profiles p on p.request_id=r.id where r.status='launched'${openLaunches?` and not exists (select 1 from hook_lab_coin_moderation m where m.request_id=r.id
      and m.id=(select max(id) from hook_lab_coin_moderation l where l.request_id=r.id) and m.action='delist')`:''} order by r.updated_at desc limit $1`,[Math.min(Math.max(1,limit|0),100)])
    return rows.filter(row=>address.safeParse(row.mint).success).map(row=>Object.freeze({id:row.id,mint:row.mint,name:row.name,symbol:row.symbol,creator:row.creator_wallet,
