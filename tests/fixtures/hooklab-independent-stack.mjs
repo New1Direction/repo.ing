@@ -22,6 +22,9 @@ function defaultDir() {
   return path.join(state, 'independent-2b8b92a')
 }
 export const INDEPENDENT_DIR = process.env.HOOKLAB_INDEPENDENT_DIR ?? defaultDir()
+// Builds at the owner's final IDs (89d060b onward) retired the open-creation fee menu: their launch program refuses a
+// non-empty one (OpenMenuInvalid) and takes any whole creator fee up to the ceiling (hook-lab ffeff18).
+export const FEE_MENU_RETIRED = (() => { try { return /FINAL/i.test(JSON.parse(readFileSync(path.join(INDEPENDENT_DIR, 'ids/independent.json'), 'utf8')).status ?? '') } catch { return false } })()
 export const INDEPENDENT_SKIP = !complete(INDEPENDENT_DIR) && `hook-lab's independent build is not at ${INDEPENDENT_DIR} (HOOKLAB_INDEPENDENT_DIR)`
 if (!INDEPENDENT_SKIP && !/PLACEHOLDER/i.test(JSON.parse(readFileSync(path.join(INDEPENDENT_DIR, 'ids/independent.json'), 'utf8')).status ?? '')) {
   throw Error('HOOKLAB_INDEPENDENT_DIR must select a PLACEHOLDER build for this test fixture, not final owner IDs')

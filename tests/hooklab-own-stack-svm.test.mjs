@@ -13,7 +13,7 @@ import { openLaunchCosts, openLaunchNetworkFee } from '../app/lib/hooklab-open-l
 import { readHookCoinMarket } from '../src/hooklab-coin-market.mjs'
 import { nativeClaimResolver } from '../src/hooklab-native-claim-resolver.mjs'
 import { LEGACY_STACK } from '../src/hooklab-stack.mjs'
-import { ownStackWorld, openLaunch, launchLimitsFor, siteTrade, coinsHeld as heldBy, TRADE_LIMITS, CREATION_FEE_LAMPORTS, OWNER_MENUS } from './fixtures/hooklab-own-stack-world.mjs'
+import { ownStackWorld, openLaunch, launchLimitsFor, siteTrade, coinsHeld as heldBy, TRADE_LIMITS, CREATION_FEE_LAMPORTS, menusFor } from './fixtures/hooklab-own-stack-world.mjs'
 import { INDEPENDENT_SKIP, OWN_STACK_SKIP } from './fixtures/hooklab-own-stack.mjs'
 
 const runner = process.env.HOOKLAB_CANARY_REQUIRED !== 'true' && !process.env.HOOKLAB_CANARY_PYTHONPATH && 'the isolated SVM runner (HOOKLAB_CANARY_PYTHONPATH) is not available'
@@ -26,6 +26,7 @@ const pda = (program, ...seeds) => PublicKey.findProgramAddressSync(seeds.map(s 
 for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build}) from nothing: owner setup, its bundle, then open launches by fresh wallets, trades and refusals`, { skip, timeout: 600000 }, async t => {
   // At mainnet's rent rate (5,080 lamports per byte), so the creator's outlay is the economics review's exact figure.
   const w = await ownStackWorld({ build, rentPerByte: 5080 }); t.after(w.close)
+  const OWNER_MENUS = menusFor(build), continuous = OWNER_MENUS.creatorFeeBps.length === 0
   const profile = JSON.parse(w.bindings.profile.json), P = w.programs
   assert.ok(Object.values(P).every(id => !Object.values(LEGACY_STACK.programs).includes(id)) && profile.quoteMint !== LEGACY_STACK.quoteMint, 'a stack of its own')
   assert.equal(profile.programs.bridge, undefined)
@@ -117,7 +118,8 @@ for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build
   const failure = sent => { const code = Number(/InstructionErrorCustom\((\d+)\)/.exec(sent.error ?? '')?.[1]); return { code, text: openLaunchErrorText(code) } }
   await t.test('refused, in plain words: a choice off the menu, a launch signed before open creation turned off, then before the guardian paused creation', async () => {
     // Off the menu: the compiler refuses before anything is signed.
-    await assert.rejects(openLaunch(w, { creatorFeeBps: 150, capBps: 200, name: 'Off menu', symbol: 'OFF', virtualQuote: '1000000000' }), /unavailable|menu/i)
+    // (With a continuous fee: a fee over the chain's ceiling.)
+    await assert.rejects(openLaunch(w, { creatorFeeBps: continuous ? 9999 : 150, capBps: 200, name: 'Off menu', symbol: 'OFF', virtualQuote: '1000000000' }), /unavailable|menu|ceiling/i)
     // Each governed change is followed by the owner collecting the bundle again (it pins both governances exactly).
     const admin = async (label, instruction, { recollect = true } = {}) => { await w.must(label, w.send(await w.message(w.roles.admin, [instruction]))); if (recollect) await w.recollect() }
     // Reviewed while open, signed, then the owner turns open creation off: the program refuses it and only the network fee is spent.

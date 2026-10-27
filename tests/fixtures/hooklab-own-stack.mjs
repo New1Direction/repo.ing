@@ -121,4 +121,4 @@ export function ownStack({ seed = 'a', freshKit = false, upgradeAuthority = PLAC
 }
 
 // hook-lab feat/independent-stack's own build (no relocation), as tests/fixtures/hooklab-independent-stack.mjs finds it.
-export { INDEPENDENT_DIR, INDEPENDENT_SKIP, independentStack } from './hooklab-independent-stack.mjs'
+export { INDEPENDENT_DIR, INDEPENDENT_SKIP, FEE_MENU_RETIRED, independentStack } from './hooklab-independent-stack.mjs'

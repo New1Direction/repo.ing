@@ -14,7 +14,7 @@ import BN from 'bn.js'
 import bs58 from 'bs58'
 import { Keypair, PublicKey, TransactionInstruction, TransactionMessage, VersionedMessage, VersionedTransaction } from '@solana/web3.js'
 import { isolatedSvm, localTestEnvironment, syntheticGenesis } from './hooklab-canary.mjs'
-import { INDEPENDENT_SKIP, independentStack, ownStack } from './hooklab-own-stack.mjs'
+import { FEE_MENU_RETIRED, INDEPENDENT_SKIP, independentStack, ownStack } from './hooklab-own-stack.mjs'
 import { parseStack, stackElfLengths } from '../../src/hooklab-stack.mjs'
 import { collectStackProductionBundle, stackProductionArtifacts } from '../../src/hooklab-production-stack-bundle.mjs'
 import { productionProfileJson } from '../../src/hooklab-production-operator-bundle.mjs'
@@ -42,6 +42,8 @@ const ROLES = ['creator', 'admin', 'upgrade', 'guardian', 'treasury', 'mint', 'c
 // The runner's deterministic synthetic signers (tests/fixtures/hooklab-canary-svm.py).
 export const runnerKey = role => Keypair.fromSeed(sha(DOMAIN + role))
 export const OWNER_MENUS = Object.freeze({ creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500] })
+// The menus open creation turns on with for a build: an empty fee menu (a continuous creator fee) where the build retired it.
+export const menusFor = build => build === 'independent' && FEE_MENU_RETIRED ? Object.freeze({ creatorFeeBps: [], capBps: OWNER_MENUS.capBps }) : OWNER_MENUS
 // The owner's confirmed creation fee (0.02 SOL) and the USD-priced opening-price bounds the website quotes within.
 export const CREATION_FEE_LAMPORTS = 20000000n
 export const VIRTUAL_QUOTE_BOUNDS = Object.freeze(['1000000000', '112500000000'])
@@ -80,7 +82,7 @@ export function frozenTable(address, addresses) {
 // mainnet's 5,080 today; the bank's own default otherwise.
 // menus: the open-creation menus the owner sets (the owner's own unless given; a test that graduates a coin with two
 // wallets offers a 50% max per wallet).
-export async function ownStackWorld({ build = INDEPENDENT_SKIP ? 'relocated' : 'independent', seed = 'a', rentPerByte = null, menus = OWNER_MENUS } = {}) {
+export async function ownStackWorld({ build = INDEPENDENT_SKIP ? 'relocated' : 'independent', seed = 'a', rentPerByte = null, menus = menusFor(build) } = {}) {
   const env = localTestEnvironment(), saved = Object.fromEntries(Object.keys(env).map(k => [k, process.env[k]]))
   Object.assign(process.env, env)
   const roles = Object.fromEntries(ROLES.map(role => [role, runnerKey(role).publicKey.toBase58()]))
