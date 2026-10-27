@@ -69,3 +69,22 @@ test('a trade Solana refused reads in plain words, and always says only the fee 
   assert.equal(nativeFailureText('NativeInvariant', 'Sell'), 'Sell failed on Solana. Only its network fee was charged.')
   assert.equal(nativeFailureText(null, 'Buy'), 'Buy failed on Solana. Only its network fee was charged.')
 })
+
+// Token burn (owner 2026-10-27): the panel's estimate is the server's quote model with the coin's burn rate.
+test('a coin with a burn: the estimate shows the coins burned, delivers the rest, and minimum received counts the burn', async () => {
+  const { modelInclusiveCreatorQuote } = await import('../src/hooklab-inclusive-fee-quote.mjs')
+  const burning = { ...near, burnBuyBps: 300, burnSellBps: 300 }
+  for (const [side, amount] of [['buy', 1_000_000_000n], ['sell', 10_000_000_000n]]) {
+    const plain = estimateTrade(near, { side, amount }), withBurn = estimateTrade(burning, { side, amount })
+    assert.equal(plain.burned, 0n)
+    assert.ok(withBurn.burned > 0n, side)
+    assert.ok(withBurn.delivered < plain.delivered, `${side}: the burn lowers what is delivered`)
+    assert.equal(withBurn.minAmountOut, withBurn.delivered * 9700n / 10000n, 'minimum received is taken from what is delivered after the burn')
+    const p = near.pool, model = modelInclusiveCreatorQuote({ side, amountIn: amount, minAmountOut: 1n, maxInput: amount, creatorFeeBps: near.creatorFeeBps,
+      feeModel: 2, protocolShareBps: 2500, lpFeeBps: 0, flatProtocolFeeBps: 0, sniperWindowSecs: 0, sniperStartBps: 0, quoteHook: 'none', modules: 0,
+      authorShareBps: 0, rules: { burnBuyBps: 300, burnSellBps: 300 }, rewards: false, recipientBaseBalance: 0n, maxWalletLifted: false,
+      pool: Object.fromEntries(['baseReserve', 'quoteReserve', 'virtualBase', 'virtualQuote', 'protocolFeesQuote'].map(k => [k, BigInt(p[k])])),
+      policy: { version: 2, feeModel: 2, protocolShareBps: 2500, creatorFeeBps: near.creatorFeeBps, lpFeeBps: 0, initialSupply: BigInt(near.initialSupply), capBps: near.capBps } })
+    assert.deepEqual([withBurn.delivered, withBurn.burned], [model.delivered, model.burned], `${side} matches the server's model`)
+  }
+})

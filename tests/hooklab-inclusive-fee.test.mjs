@@ -75,3 +75,35 @@ test('immutable collector exact layout/PDA and final account privilege helper', 
   assert.equal(inclusivePolicyMeta(swap, pool, 'collect').writable, false)
   assert.notEqual(inclusiveMaxWalletPolicyAddress(swap, pool), PublicKey.findProgramAddressSync([Buffer.from('policy'), Buffer.alloc(32, 2)], new PublicKey(swap))[0].toBase58())
 })
+
+// Token burn (owner 2026-10-27): mirrors bordrless-core trade_burn (rounded down, none unless below the amount) at the
+// DEX's order: a buy burns from the curve's output before delivery; a sell burns from its input before the curve.
+const burn = bps => ({ burnBuyBps: bps, burnSellBps: bps })
+test('a buy burns its share of the coins the curve gives out, before delivery; max wallet counts what is delivered', () => {
+  const q = modelInclusiveCreatorQuote({ ...input(), rules: burn(500) })
+  assert.deepEqual([q.curveInput, q.grossOutput, q.burned, q.delivered], [9900n, 9802n, 490n, 9312n])
+  assert.equal(q.fees.grossQuote, 100n)
+  assert.equal(q.after.baseReserve, 1000000n - 9802n, 'the burned coins leave the vault and are destroyed')
+  assert.equal(q.recipientBaseAfter, 9312n)
+  // The cap applies to what the buyer receives: 100,000 cap, so a buyer already at 90,700 can take 9,300 more but not 9,312.
+  assert.throws(() => modelInclusiveCreatorQuote({ ...input(), rules: burn(500), recipientBaseBalance: 90700n }), /MAX_WALLET/)
+  assert.equal(modelInclusiveCreatorQuote({ ...input(), rules: burn(500), recipientBaseBalance: 90688n }).recipientBaseAfter, 100000n)
+  // Minimum received is checked against the coins delivered after the burn.
+  assert.throws(() => modelInclusiveCreatorQuote({ ...input(), rules: burn(500), minAmountOut: 9313n }), /MIN_OUTPUT/)
+})
+test('a sell burns its share of the coins sold before the curve; the creator fee comes from the SOL out', () => {
+  const q = modelInclusiveCreatorQuote({ ...input(), side: 'sell', rules: burn(500) })
+  assert.deepEqual([q.burned, q.curveInput, q.grossOutput, q.fees.grossQuote, q.delivered], [500n, 9500n, 9410n, 95n, 9315n])
+  assert.deepEqual([q.after.baseReserve, q.after.quoteReserve], [1000000n + 9500n, 1000000n - 9410n], 'the burned coins never reach the pool')
+})
+test('a burn rounds down and is dropped when it is not below the amount; no burn is the old quote exactly', () => {
+  assert.equal(modelInclusiveCreatorQuote({ ...input(), side: 'sell', amountIn: 19n, rules: burn(500) }).burned, 0n)
+  assert.equal(modelInclusiveCreatorQuote({ ...input(), side: 'sell', amountIn: 20n, rules: burn(500) }).burned, 1n)
+  const none = modelInclusiveCreatorQuote(input()), zero = modelInclusiveCreatorQuote({ ...input(), rules: burn(0) })
+  assert.deepEqual({ ...zero, burned: undefined }, { ...none, burned: undefined })
+  assert.equal(none.burned, 0n)
+  for (const bad of [{ burnBuyBps: 600, burnSellBps: 500 }, { burnBuyBps: 1001, burnSellBps: 1001 }, { burnBuyBps: 1.5, burnSellBps: 1.5 },
+    { burnBuyBps: 100, burnSellBps: 100, holderFeeBuyBps: 1 }]) assert.throws(() => modelInclusiveCreatorQuote({ ...input(), rules: bad }), /UNSUPPORTED_INCLUSIVE_ECONOMICS/)
+  // The combined ceiling: creator + burn is at most 10% on each side.
+  assert.throws(() => modelInclusiveCreatorQuote({ ...input(), creatorFeeBps: 500, policy: { ...input().policy, creatorFeeBps: 500 }, rules: burn(501) }), /UNSUPPORTED_INCLUSIVE_ECONOMICS/)
+})

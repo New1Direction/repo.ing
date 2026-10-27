@@ -44,6 +44,10 @@ export function formatUnits(raw, decimals, places = decimals) {
 }
 export const sol = (lamports, places = 4) => `${formatUnits(lamports, SOL_DECIMALS, places)} SOL`
 
+// A coin's token burn as the quote model takes it (the market reads it from the launch's rules), or 'none'.
+const burnRules = market => Number(market.burnBuyBps ?? 0) > 0 || Number(market.burnSellBps ?? 0) > 0
+  ? { burnBuyBps: Number(market.burnBuyBps), burnSellBps: Number(market.burnSellBps) } : 'none'
+
 const QUOTE_ERRORS = { MAX_WALLET: 'That would put you over this coin’s max per wallet.', MIN_OUTPUT: 'Price moved too much for this amount.' }
 
 // Estimated result of a buy (amount in lamports) or sell (amount in raw coin units) at the current pool. On the curve a
@@ -69,7 +73,7 @@ export function estimateTrade(market, { side, amount, coinBalance = 0n, slippage
     }
     const quote = (selected?previewSelectedHookQuote:modelInclusiveCreatorQuote)({ side, amountIn: amount, minAmountOut: 1n, maxInput: amount, creatorFeeBps: market.creatorFeeBps,
       feeModel: 2, protocolShareBps: 2500, lpFeeBps: 0, flatProtocolFeeBps: 0, sniperWindowSecs: 0, sniperStartBps: 0, quoteHook: 'none', modules: 0,
-      authorShareBps: 0, rules: 'none', rewards: false, recipientBaseBalance: BigInt(coinBalance), maxWalletLifted: graduated,
+      authorShareBps: 0, rules: burnRules(market), rewards: false, recipientBaseBalance: BigInt(coinBalance), maxWalletLifted: graduated,
       pool: { baseReserve: BigInt(p.baseReserve), quoteReserve: BigInt(p.quoteReserve), virtualBase: BigInt(p.virtualBase), virtualQuote: BigInt(p.virtualQuote), protocolFeesQuote: BigInt(p.protocolFeesQuote) },
       ...(!selected?{policy: { version: 2, feeModel: 2, protocolShareBps: 2500, creatorFeeBps: market.creatorFeeBps, lpFeeBps: 0, initialSupply: BigInt(market.initialSupply), capBps: market.capBps }}:{}) })
     const minAmountOut = quote.delivered * BigInt(10000 - slippageBps) / 10000n
@@ -78,7 +82,7 @@ export function estimateTrade(market, { side, amount, coinBalance = 0n, slippage
     const graduates = fill !== null && amount === fill
     // Without an exact fill no buy can stop at the graduation point, so one that gets there would overshoot it.
     if (curveBuy && !graduates && isReady(quote.after, market.graduationQuote)) return { error: 'That would take the coin past graduation. Try a smaller amount.' }
-    return { delivered: quote.delivered, minAmountOut, creatorFee: quote.fees.grossQuote, priceImpactBps: Number(quote.priceImpactBps), graduates,
+    return { delivered: quote.delivered, minAmountOut, creatorFee: quote.fees.grossQuote, burned: quote.burned, priceImpactBps: Number(quote.priceImpactBps), graduates,
       ...(selected?{minAmountOut:null,hookDeductionsUnmeasured:true}:{}) }
   } catch (error) {
     if (curveBuy && error?.message === 'INSUFFICIENT_LIQUIDITY') return { error: 'That’s more than this coin’s curve has left. Try a smaller amount.' }
