@@ -24,3 +24,15 @@ test('the vault may carry only AcceptAdmin, signed by the vault alone, on the Ho
   assert.throws(() => assertHookAdminAccept([], vault), /one to two/)
   assert.throws(() => assertHookAdminAccept([accept(), accept(), accept()], vault), /one to two/)
 })
+
+test('a vault Config change carries only governed_set_config on the Hook launch or swap program, signed by the vault alone', async () => {
+  const { assertHookGovernedConfig } = await import('../src/hooklab-admin-handover.mjs')
+  const data = Buffer.concat([Buffer.from([31, 41, 21, 144, 249, 132, 134, 137]), Buffer.alloc(32, 9), Buffer.alloc(200, 1)])
+  const ix = (over = {}) => new TransactionInstruction({ programId: launch, data, keys: [{ pubkey: vault, isSigner: true, isWritable: false },
+    { pubkey: config, isSigner: false, isWritable: true }, { pubkey: governance, isSigner: false, isWritable: true }], ...over })
+  assert.doesNotThrow(() => assertHookGovernedConfig([ix()], vault))
+  assert.throws(() => assertHookGovernedConfig([ix({ data: accept().data })], vault), /governed_set_config/)
+  assert.throws(() => assertHookGovernedConfig([ix({ programId: new PublicKey('11111111111111111111111111111111') })], vault), /program/)
+  assert.throws(() => assertHookGovernedConfig([ix({ keys: [{ pubkey: config, isSigner: true, isWritable: false }, ...ix().keys.slice(1)] })], vault), /vault/)
+  assert.throws(() => assertHookGovernedConfig([ix(), ix(), ix()], vault), /one to two/)
+})

@@ -2,6 +2,7 @@
 // vault accepts through the 2-of-3 multisig. The vault transaction may carry only these AcceptAdmin instructions:
 // governance_action { expected: Some(commitment), action: AcceptAdmin } on our own stack's launch or swap program,
 // accounts [authority = vault (the only signer), config, governance]. Layout: hook-lab IDL governance_action, Action tag 4.
+// Later governed changes (Config) go through the vault the same way.
 import { PublicKey, TransactionInstruction } from '@solana/web3.js'
 
 export const HOOK_GOVERNANCE_PROGRAMS = Object.freeze({
@@ -18,16 +19,33 @@ export function acceptAdminInstruction({ programId, authority, config, governanc
     data: Buffer.concat([GOVERNANCE_ACTION, Buffer.from([1]), Buffer.from(expected), Buffer.from([ACCEPT_ADMIN])]) })
 }
 
+// Each governed instruction: the Hook launch or swap program, accounts [authority = vault (the only signer), config,
+// governance].
+function assertVaultGoverned(ix, vault) {
+  check(new Set(Object.values(HOOK_GOVERNANCE_PROGRAMS)).has(ix.programId.toBase58()),
+    `instruction program ${ix.programId.toBase58()} is not the Hook launch or swap program`)
+  check(ix.keys.length === 3 && ix.keys[0].pubkey.toBase58() === new PublicKey(vault).toBase58(), 'the authority must be the vault')
+  check(ix.keys[0].isSigner && !ix.keys[1].isSigner && !ix.keys[2].isSigner, 'only the vault may be a signer')
+}
+
 // Refuses anything but one or two AcceptAdmin instructions the vault signs alone.
 export function assertHookAdminAccept(instructions, vault) {
   check(instructions.length >= 1 && instructions.length <= 2, 'the handover carries one to two AcceptAdmin instructions')
-  const programs = new Set(Object.values(HOOK_GOVERNANCE_PROGRAMS))
   for (const ix of instructions) {
-    check(programs.has(ix.programId.toBase58()), `instruction program ${ix.programId.toBase58()} is not the Hook launch or swap program`)
+    assertVaultGoverned(ix, vault)
     const data = Buffer.from(ix.data)
     check(data.subarray(0, 8).equals(GOVERNANCE_ACTION), 'instruction is not governance_action')
     check(data.length === 42 && data[8] === 1 && data[41] === ACCEPT_ADMIN, 'instruction is not AcceptAdmin with an expected commitment')
-    check(ix.keys.length === 3 && ix.keys[0].pubkey.toBase58() === new PublicKey(vault).toBase58(), 'the authority must be the vault')
-    check(ix.keys[0].isSigner && !ix.keys[1].isSigner && !ix.keys[2].isSigner, 'only the vault may be a signer')
+  }
+}
+
+// A vault Config change (owner-approved file, decoded and diffed by the builder before approval): only governed_set_config,
+// which cannot move funds, change the admin or unpause (the program keeps admin and paused out of it).
+const GOVERNED_SET_CONFIG = Buffer.from([31, 41, 21, 144, 249, 132, 134, 137])
+export function assertHookGovernedConfig(instructions, vault) {
+  check(instructions.length >= 1 && instructions.length <= 2, 'a Config change carries one to two governed_set_config instructions')
+  for (const ix of instructions) {
+    assertVaultGoverned(ix, vault)
+    check(Buffer.from(ix.data).subarray(0, 8).equals(GOVERNED_SET_CONFIG), 'instruction is not governed_set_config')
   }
 }

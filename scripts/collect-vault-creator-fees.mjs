@@ -13,6 +13,8 @@
 //   hook-admin-accept JOURNAL_FILE  the vault accepts the Hook admin role (HOOK_ACCEPT_FILE, approved by HOOK_ACCEPT_SHA256):
 //                      only AcceptAdmin instructions the vault signs alone (src/hooklab-admin-handover.mjs); payer spend
 //                      capped by HOOK_ACCEPT_CAP_LAMPORTS. Moves no funds.
+//   hook-config-change JOURNAL_FILE  a governed Hook Config change by the vault (HOOK_CONFIG_FILE, approved by
+//                      HOOK_CONFIG_SHA256): only governed_set_config the vault signs alone; capped by HOOK_CONFIG_CAP_LAMPORTS.
 // Env: CUSTODY_RECORDER_DATABASE_URL (restricted recorder role), SOLANA_RPC_URL, GRADUATION_VERIFICATION_RPC_URL;
 // collect also needs PAYER_KEY and ADMIN_KEY (key pipe paths) and MEMBER_KIT (the second approver's recovery kit, whose
 // passphrase is typed in a hidden dialog). Secrets are never printed.
@@ -32,7 +34,7 @@ import { recordValidatedDbcCustodyBatchCollection, validateDbcCustodyBatchReceip
 import { agreedFinalizedTransaction } from '../src/graduation-state.mjs'
 import { loadSigners, parseKeyArgs, wipe } from '../src/hooklab-owner-driver/keys.mjs'
 import { openKit } from './hooklab-recovery-kit.mjs'
-import { assertHookAdminAccept } from '../src/hooklab-admin-handover.mjs'
+import { assertHookAdminAccept, assertHookGovernedConfig } from '../src/hooklab-admin-handover.mjs'
 
 const PAYER = '3eCFwDiKetHe9pg1zNEkTohUECu2vtsZDRMZ3jeR4g5o', ADMIN = CUSTODY_MEMBERS[0], APPROVER = CUSTODY_MEMBERS[1]
 // Below this a pool's fees barely cover its share of a batch (two Squads accounts, a base account, seven signatures).
@@ -56,15 +58,16 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
 const writeAtomic = (path, text) => { writeFileSync(`${path}.tmp`, text, { mode: 0o600 }); renameSync(`${path}.tmp`, path) }
 
 const [mode, file] = process.argv.slice(2)
-const MODES = ['plan', 'collect', 'sweep', 'fund-vault', 'send-sol', 'hook-admin-accept']
-check(MODES.includes(mode) && file, 'Usage: collect-vault-creator-fees.mjs plan|collect PLAN_FILE | sweep|fund-vault|send-sol|hook-admin-accept JOURNAL_FILE')
+const MODES = ['plan', 'collect', 'sweep', 'fund-vault', 'send-sol', 'hook-admin-accept', 'hook-config-change']
+check(MODES.includes(mode) && file, 'Usage: collect-vault-creator-fees.mjs plan|collect PLAN_FILE | sweep|fund-vault|send-sol|hook-admin-accept|hook-config-change JOURNAL_FILE')
 for (const name of ['CUSTODY_RECORDER_DATABASE_URL', 'SOLANA_RPC_URL', 'GRADUATION_VERIFICATION_RPC_URL',
   ...(mode !== 'plan' ? ['PAYER_KEY'] : []), ...(!['plan', 'fund-vault'].includes(mode) ? ['ADMIN_KEY', 'MEMBER_KIT'] : []),
   ...(mode === 'collect' ? ['APPROVED_PLAN_SHA256'] : []),
   ...(mode === 'sweep' ? ['SWEEP_RECIPIENT', 'SWEEP_LAMPORTS', 'SWEEP_CAP_LAMPORTS'] : []),
   ...(mode === 'fund-vault' ? ['FUND_LAMPORTS', 'FUND_CAP_LAMPORTS'] : []),
   ...(mode === 'send-sol' ? ['SEND_RECIPIENT', 'SEND_LAMPORTS', 'SEND_CAP_LAMPORTS'] : []),
-  ...(mode === 'hook-admin-accept' ? ['HOOK_ACCEPT_FILE', 'HOOK_ACCEPT_SHA256', 'HOOK_ACCEPT_CAP_LAMPORTS'] : [])]) check(process.env[name], `${name} required`)
+  ...(mode === 'hook-admin-accept' ? ['HOOK_ACCEPT_FILE', 'HOOK_ACCEPT_SHA256', 'HOOK_ACCEPT_CAP_LAMPORTS'] : []),
+  ...(mode === 'hook-config-change' ? ['HOOK_CONFIG_FILE', 'HOOK_CONFIG_SHA256', 'HOOK_CONFIG_CAP_LAMPORTS'] : [])]) check(process.env[name], `${name} required`)
 const rpc = url => new Connection(url, { commitment: 'finalized', httpHeaders: { 'user-agent': 'repoing-custody-collector/1' } })
 const primary = rpc(process.env.SOLANA_RPC_URL), verification = rpc(process.env.GRADUATION_VERIFICATION_RPC_URL)
 check(new URL(primary.rpcEndpoint).hostname !== new URL(verification.rpcEndpoint).hostname, 'Two independently operated RPC providers are required')
@@ -430,23 +433,26 @@ async function sendSol() {
   } finally { wipe([...keys.values()]) }
 }
 
-// The vault accepts the Hook admin role nominated to it: one vault transaction carrying only the reviewed AcceptAdmin
-// instructions. Moves no funds; the payer pays the Squads accounts' rent and the fees.
-async function hookAdminAccept() {
-  const text = readFileSync(process.env.HOOK_ACCEPT_FILE, 'utf8'), cap = BigInt(process.env.HOOK_ACCEPT_CAP_LAMPORTS)
-  check(sha256(Buffer.from(text)) === process.env.HOOK_ACCEPT_SHA256, 'the accept file differs from its approved sha256')
+// A vault transaction carrying only an owner-approved file of Hook governance instructions (sha256-approved, checked by
+// `guard`): the admin role's acceptance, or a governed Config change. Moves no funds; the payer pays the Squads
+// accounts' rent and the fees.
+async function vaultHookInstructions(name, prefix, guard) {
+  const text = readFileSync(process.env[`${prefix}_FILE`], 'utf8'), cap = BigInt(process.env[`${prefix}_CAP_LAMPORTS`])
+  check(sha256(Buffer.from(text)) === process.env[`${prefix}_SHA256`], `the ${name} file differs from its approved sha256`)
   const instructions = JSON.parse(text).map(ix => new TransactionInstruction({ programId: pk(ix.programId), data: Buffer.from(ix.data, 'base64'),
     keys: ix.keys.map(k => ({ pubkey: pk(k.pubkey), isSigner: k.isSigner, isWritable: k.isWritable })) }))
-  assertHookAdminAccept(instructions, MULTISIG_VAULT)
+  guard(instructions, MULTISIG_VAULT)
   const { journal, spent, keys } = await openSession(file, cap)
   try {
-    if (!journal.batches['hook-admin-accept']) journal.saveBatch('hook-admin-accept', { index: String(await multisigIndex() + 1n) })
-    const signature = await runVaultTransaction('hook-admin-accept', instructions, keys, journal, spent)
+    if (!journal.batches[name]) journal.saveBatch(name, { index: String(await multisigIndex() + 1n) })
+    const signature = await runVaultTransaction(name, instructions, keys, journal, spent)
     const used = BigInt(journal.start) - BigInt(await primary.getBalance(pk(PAYER), 'finalized'))
-    journal.saveBatch('hook-admin-accept', { done: true, payerSpent: String(used) })
-    return { accepted: instructions.map(ix => ix.programId.toBase58()), signature, payerSpentLamports: used }
+    journal.saveBatch(name, { done: true, payerSpent: String(used) })
+    return { executed: instructions.map(ix => ix.programId.toBase58()), signature, payerSpentLamports: used }
   } finally { wipe([...keys.values()]) }
 }
+const hookAdminAccept = () => vaultHookInstructions('hook-admin-accept', 'HOOK_ACCEPT', assertHookAdminAccept)
+const hookConfigChange = () => vaultHookInstructions('hook-config-change', 'HOOK_CONFIG', assertHookGovernedConfig)
 
 async function sweep() {
   const recipient = new PublicKey(process.env.SWEEP_RECIPIENT).toBase58(), amount = BigInt(process.env.SWEEP_LAMPORTS)
@@ -525,7 +531,7 @@ try {
     console.log(json({ planSha256: sha256(Buffer.from(text)), ...plan.totals, missingBaseAccounts: plan.missingBaseAccounts.length,
       pools: plan.pools.map(p => ({ repoId: p.repoId, sol: Number(p.fee) / 1e9 })) }))
   } else {
-    const run = { collect: () => collect(db), sweep, 'fund-vault': fundVault, 'send-sol': sendSol, 'hook-admin-accept': hookAdminAccept }[mode]
+    const run = { collect: () => collect(db), sweep, 'fund-vault': fundVault, 'send-sol': sendSol, 'hook-admin-accept': hookAdminAccept, 'hook-config-change': hookConfigChange }[mode]
     console.log(json(await run()))
   }
 } finally { await db.end() }
