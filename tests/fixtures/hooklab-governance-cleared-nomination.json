@@ -1,0 +1,14 @@
+{
+ "note": "Mainnet Hook Governance accounts after the 2026-10-27 admin handover: a cleared nomination left 40 stale bytes after the data (public chain data).",
+ "slotContext": 462198254,
+ "accounts": {
+  "launch": {
+   "address": "nStGGzMSiky1JK9eQVebg3HEjnnXW6EpvW5qsFmfWPv",
+   "dataBase64": "Eo9YDUnZLzH+RSlpmKb44qeE212fleGPwj9wRBoQOURoAQiYebCMfvCFuSunwyPFrNh1LlYQq+rH3KB+FMVJj5EAvCyVCF4SxlXf3W2Ant9dMyfVX1I1Hc8cXrolQH+Gtemj/jMJk7JPesJl7+6Db+lpLWgc+oE3lSk7OqGt79/pYn3H9t/TYBQnApkCn8Nw4j05YdY9d22mfK/Hk1xZhLUGeCCi0VhRyNpSm+Uu8ERI/D8rYdd+2SfGqs81oipVgYBnRrOe7abBqh2M/olm2B5FmJZXndIcL2I+OtgPjWugoKM+U7sjJmEJAAAAAAAAAAAArNGnEhz3mZjwEA5+pszhEgZxng91ozJXuGReaoLcYmNYqwk8wTGY1bs16S30XiLMeg3V43nD+ZrL2MiwxMduigAnApkCn8Nw4j05YdY9d22mfK/Hk1xZhLUGeCCi0VhRyHDl52oAAAAA"
+  },
+  "swap": {
+   "address": "HDqS2e4MJYjPKVeXf75Pcngq4UmThs4HhccfN2BwkoY5",
+   "dataBase64": "Eo9YDUnZLzH/RSlpmKb44qeE212fleGPwj9wRBoQOURoAQiYebCMfvBZoZ8YTtEh2zXfteQ+lbKy4uYC9il7O7+4uASAPRurqilXad1Nf+2VAbHmBx8qRnPCfizzOrQXds710idNmvwyesJl7+6Db+lpLWgc+oE3lSk7OqGt79/pYn3H9t/TYBQnApkCn8Nw4j05YdY9d22mfK/Hk1xZhLUGeCCi0VhRyNpSm+Uu8ERI/D8rYdd+2SfGqs81oipVgYBnRrOe7abBqh2M/olm2B5FmJZXndIcL2I+OtgPjWugoKM+U7sjJmEEAAAAAAAAAAAAyB17Fr29mOnWwkXiy7J6e1H/Z/fkzSz8PxnzNwV/aQpYqwk8wTGY1bs16S30XiLMeg3V43nD+ZrL2MiwxMduigAnApkCn8Nw4j05YdY9d22mfK/Hk1xZhLUGeCCi0VhRyHDl52oAAAAA"
+  }
+ }
+}

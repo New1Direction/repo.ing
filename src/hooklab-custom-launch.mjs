@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { HOOK_MAINNET_GENESIS, hookAddress as key, hookDigest as digest, hookRawAmount as u64 } from './hooklab-execution-contract.mjs'
 import { customPreparationRequestSchema } from './hooklab-custom-preparation.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
+import { allowedTail } from './hooklab-account-tail.mjs'
 
 const check = (value, message) => { if (!value) throw Error(message) }
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -100,7 +101,7 @@ function decoded(binding, name, bytes) {
   const result = binding.coder.accounts.decode(name, bytes), encoded = binding.coder.types.encode(name, result)
   const disc = binding.idl.accounts.find(a => a.name === name)?.discriminator
   check(disc && bytes.subarray(0, 8).equals(Buffer.from(disc)) && bytes.subarray(8, 8 + encoded.length).equals(encoded)
-    && bytes.subarray(8 + encoded.length).every(b => b === 0), 'Noncanonical account encoding')
+    && allowedTail(name, result, bytes.subarray(8 + encoded.length)), 'Noncanonical account encoding')
   return result
 }
 function programEvidence(accounts, program, expected, length, slot, immutable) {

@@ -24,6 +24,7 @@ import { selectedHookOpenLaunchAccounts } from './hooklab-selected-hook.mjs'
 import { hookPublicationSelectionSchema, materializePostMintHoldingOwners } from './hooklab-hook-catalog.mjs'
 import { createHolding } from './hooklab-token-holding.mjs'
 import { supplementalTableSchema, supplementalTableInstructions, assertFrozenSupplementalTable } from './hooklab-selected-launch-table.mjs'
+import { allowedTail } from './hooklab-account-tail.mjs'
 
 export function postMintHoldingPlan(profile, r) {
   if (!r.postMintSetup) return []
@@ -253,7 +254,7 @@ function decoded(binding, name, bytes) {
   const result = binding.coder.accounts.decode(name, bytes), encoded = binding.coder.types.encode(name, result)
   const disc = binding.idl.accounts.find(a => a.name === name)?.discriminator
   check(disc && bytes.subarray(0, 8).equals(Buffer.from(disc)) && bytes.subarray(8, 8 + encoded.length).equals(encoded)
-    && bytes.subarray(8 + encoded.length).every(b => b === 0), 'Noncanonical account encoding')
+    && allowedTail(name, result, bytes.subarray(8 + encoded.length)), 'Noncanonical account encoding')
   return result
 }
 function programEvidence(accounts, program, expected, length, slot, immutable) {
