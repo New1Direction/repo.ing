@@ -235,6 +235,18 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
     })
    }catch(error){throw visible(error,logError)}
   },
+  // The wallet request for the review this same server call just built from a fresh evidence read (createReview): no
+  // second read. Only for that exact revision; signing and sending still revalidate (completeSigning, submitOnce).
+  async issueReviewedWalletRequest(sessionToken,id,revision){
+   try{
+    return await transaction(sessionToken,id,async(db,row)=>{
+     check(row&&row.status==='reviewed'&&pending.has(row.status)&&String(row.revision)===String(revision)&&!row.wallet_requested_at)
+     await currentReview(db,row.review)
+     const {rows:[saved]}=await db.query('update hook_lab_native_signing_operations set wallet_requested_at=clock_timestamp(),revision=revision+1,updated_at=clock_timestamp() where id=$1 returning *',[id])
+     return {operation:summary(saved),walletRequest:{review:row.review,partialTransactionBase64:row.partial_transaction,canSubmit:false}}
+    })
+   }catch(error){throw visible(error,logError)}
+  },
   async retainWalletSignature(sessionToken,id,signedTransactionBase64){
    return transaction(sessionToken,id,async(db,row,owner)=>{
     check(row&&pending.has(row.status))

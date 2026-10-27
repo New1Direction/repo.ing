@@ -184,6 +184,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   const session = useHookWalletSession(genesisHash)
   const walletRef = useRef(wallet); walletRef.current = wallet
   const running = useRef(false), idsRef = useRef(NO_IDS), consentRef = useRef(null)
+  const walletRequestsRef = useRef(null)
   const [availability, setAvailability] = useState(initial.availability ?? null)
   const [request, setRequest] = useState(initial.request ?? null)
   const [coin, setCoin] = useState({ ...EMPTY_COIN, ...defaultOpenChoices(initial.availability?.openCreation), ...initial.coin })
@@ -225,7 +226,11 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   const review = async (stage, fresh = false) => {
     const key = stage === 'hook-setup' ? 'setupId' : stage === 'preparation' ? 'preparationId' : 'launchId', ids = idsRef.current
     const next = { ...ids, [key]: !fresh && ids[key] ? ids[key] : crypto.randomUUID() }; retain(next)
-    return checked((await api({ action: 'review', operationId: next.operationId, signingId: next[key], stage })).operation, next[key])
+    const value = await api({ action: 'review', operationId: next.operationId, signingId: next[key], stage })
+    const op = checked(value.operation, next[key])
+    // The wallet request the review carried, for exactly this review revision (signStep uses it instead of asking again).
+    walletRequestsRef.current = value.walletRequest ? { id: op.id, revision: op.revision, value: value.walletRequest } : null
+    return op
   }
   // A recorded coin not bound to a launch yet gets a fresh operation; one already bound keeps it (and the signing IDs this
   // device kept for it). IDs from any other launch are never reused.
@@ -249,7 +254,9 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   const signStep = async op => {
     const problem = setupDisclosureProblem(op.stage, op.review, request?.selectedHook || coin.selectedHook)
     if (problem) throw Error(problem)
-    const walletRequest = await api({ action: 'wallet-request', signingId: op.id })
+    const carried = walletRequestsRef.current
+    const walletRequest = carried && carried.id === op.id && carried.revision === op.revision ? carried.value : await api({ action: 'wallet-request', signingId: op.id })
+    walletRequestsRef.current = null
     const signedTransactionBase64 = await signReviewedLaunch({ walletRequest, reviewed: op.review, address: walletRef.current, genesisHash, currentWallet: () => walletRef.current, adapter: provider() })
     return checked((await api({ action: 'retain-wallet', signingId: op.id, signedTransactionBase64 })).operation, op.id)
   }

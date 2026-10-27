@@ -103,8 +103,16 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
     result={operationId:reserved.operationId,mint:reserved.mint,selectedConfig:reserved.selectedConfig,request:reserved.request,...(reserved.hookSetupRequest?{hookSetupRequest:reserved.hookSetupRequest}:{})}
    }else if(input.action==='wallet-request'){result=await lifecycle.walletRequest(token,input.signingId);if(openLaunchesEnabled(env))result=customerWalletRequest(result)}
    else {
-    let operation
-    if(input.action==='review')operation=await lifecycle.createReview(token,input.signingId,{custodyOperationId:input.operationId,stage:input.stage})
+    let operation,walletRequest
+    if(input.action==='review'){
+     operation=await lifecycle.createReview(token,input.signingId,{custodyOperationId:input.operationId,stage:input.stage})
+     // Open launches: the wallet request rides with the review it was built from (one evidence read, not two); the page
+     // signs it next. A review that is not fresh (an existing one resumed) still uses the wallet-request action.
+     if(openLaunchesEnabled(env)&&operation?.status==='reviewed'&&!operation.walletRequestIssued){
+      const issued=await lifecycle.issueReviewedWalletRequest(token,input.signingId,operation.revision)
+      operation=issued.operation;walletRequest=customerWalletRequest(issued.walletRequest)
+     }
+    }
     else if(input.action==='get')operation=await lifecycle.get(token,input.signingId)
     else if(input.action==='refresh-review')operation=await lifecycle.refreshReview(token,input.signingId)
     else if(input.action==='retain-wallet')operation=await lifecycle.retainWalletSignature(token,input.signingId,input.signedTransactionBase64)
@@ -127,7 +135,7 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
      if((env.HOOK_OWNER_APPROVED_LAUNCHES==='true'||openLaunchesEnabled(env))&&operation?.stage==='launch'&&operation?.status==='finalized-success')
       await ownerApprovals(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,openLaunches:openLaunchesEnabled(env)}).markLaunched(operation.custodyOperationId)
     }
-    result={operation:openLaunchesEnabled(env)?customerOperation(publicNativeOperation(operation)):publicNativeOperation(operation)}
+    result={operation:openLaunchesEnabled(env)?customerOperation(publicNativeOperation(operation)):publicNativeOperation(operation),...(walletRequest?{walletRequest}:{})}
    }
    // Durable signatures/outcomes remain retained even if this response loses auth.
    if((await principal.resolve(token)).wallet!==owner.wallet)throw Error()

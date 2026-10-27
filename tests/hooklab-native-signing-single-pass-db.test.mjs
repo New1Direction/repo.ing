@@ -85,3 +85,20 @@ test('each signing call logs one timing line split into chain, database, signing
   assert.ok(!/postgres:|api-key/.test(logs.join('\n')))
  })
 })
+
+// 2026-10-27: the launch-stage review and the wallet request each re-read the chain evidence (14–16 s and 13–14 s in the
+// container). The wallet request issued with the review it was just built from needs no second read.
+test('a review issues its wallet request in the same call without another revalidation, identical to walletRequest',async t=>{
+ await world(t,async({store,counts})=>{
+  const id=randomUUID(),created=await store.createReview(token,id,{custodyOperationId:randomUUID(),stage:'preparation'})
+  counts.revalidate=0
+  const issued=await store.issueReviewedWalletRequest(token,id,created.revision)
+  assert.equal(counts.revalidate,0,'no second evidence read')
+  assert.equal(issued.operation.walletRequestIssued,true)
+  const again=await store.walletRequest(token,id)
+  assert.deepEqual(issued.walletRequest,again)
+  // Only for the exact review just built: a stale revision is refused.
+  const other=randomUUID(),second=await store.createReview(token,other,{custodyOperationId:randomUUID(),stage:'preparation'})
+  await assert.rejects(store.issueReviewedWalletRequest(token,other,String(BigInt(second.revision)+1n)))
+ })
+})
