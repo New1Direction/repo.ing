@@ -183,15 +183,15 @@ export function HookFeeSplit({ form, set, disabled, menus, state }) {
     <input id="fee-total-percent" className="field-input" type="number" min={0} max={fee.maxTotalBps / 100} step={0.01} required
       value={totalBps === '' ? '' : totalBps / 100} disabled={disabled} aria-describedby="fee-total-limit"
       onChange={e => change({ totalBps: e.target.value === '' ? '' : Math.round(Number(e.target.value) * 100) })}/>
-    <p id="fee-total-limit">One fee on every buy and sell, from 0% to {percent(fee.maxTotalBps)}, split between the parts below.</p>
+    <p id="fee-total-limit" className="launch-buy-hint">One fee on every buy and sell, from 0% to {percent(fee.maxTotalBps)}, split between the parts below.</p>
     <fieldset className="hooks-fee-shares" disabled={disabled}>
-      <legend className="field-label">How the fee is split</legend>
+      <legend className="field-label">How the fee is split (shares of the fee)</legend>
       <label htmlFor="fee-share-burn">Burn share (% of the fee)</label>
       <input id="fee-share-burn" type="range" min={0} max={100} step={1} value={burnShareBps / 100} onChange={e => change({ burnShareBps: share(e.target.value) })}/>
       <input id="fee-share-burn-percent" className="field-input" type="number" min={0} max={100} step={0.01} value={burnShareBps / 100} aria-label="Burn share, percent of the fee"
         onChange={e => change({ burnShareBps: e.target.value === '' ? 0 : share(e.target.value) })}/>
-      <div className="fee-line"><span>Creator<small>{fee.lines?.creator ?? 'The creator’s part, in SOL (repo.ing keeps a quarter of it).'}</small></span><strong>{percent(creatorShareBps)} of the fee</strong></div>
-      <div className="fee-line"><span>Burn<small>{BURN_DESCRIPTION}{fee.lines?.burn ? ` ${fee.lines.burn}` : ''}</small></span><strong>{percent(burnShareBps)} of the fee</strong></div>
+      <div className="fee-line"><span>Creator<small>{fee.lines?.creator ?? 'The creator’s part, in SOL (repo.ing keeps a quarter of it).'}</small></span><strong>{percent(creatorShareBps)}</strong></div>
+      <div className="fee-line"><span>Burn<small>{BURN_DESCRIPTION}</small></span><strong>{percent(burnShareBps)}</strong></div>
       <div className="fee-line is-soon"><span>Holders Earn<small>Part of every trade paid to the coin’s holders.</small></span><strong id="fee-share-holders">Coming</strong></div>
     </fieldset>
     <p className="launch-buy-hint" aria-live="polite">{fee.lines ? `${fee.lines.total} Worst case: ${percent(totalBps)} of each trade (creator ${percent(fee.creatorFeeBps)}, burn ${percent(fee.burnBps)}).` : ''}</p>
