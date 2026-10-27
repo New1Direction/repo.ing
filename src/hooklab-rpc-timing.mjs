@@ -36,13 +36,21 @@ const noteDb = (kind, ms) => { const scope = scopes.getStore(); if (scope) { sco
 const timed = async (kind, work) => { const started = performance.now(); try { return await work() } finally { noteDb(kind, performance.now() - started) } }
 
 // The same record for a pg pool: query time and connection checkout time (a new connection includes its TLS handshake).
+// pg's pool.query checks out through pool.connect(callback), so both the promise and the callback forms pass through.
 export function timedDatabasePool(pool) {
-  const query = pool.query.bind(pool), connect = pool.connect.bind(pool)
-  pool.query = (...args) => timed('query', () => query(...args))
-  pool.connect = async () => {
-    const client = await timed('connect', () => connect())
-    if (!client.__hooklabTimed) { const q = client.query.bind(client); client.query = (...args) => timed('query', () => q(...args)); client.__hooklabTimed = true }
+  const connect = pool.connect.bind(pool)
+  const timeClient = client => {
+    if (client && !client.__hooklabTimed) {
+      const q = client.query.bind(client)
+      client.query = (...args) => typeof args.at(-1) === 'function' ? q(...args) : timed('query', () => q(...args))
+      client.__hooklabTimed = true
+    }
     return client
+  }
+  pool.connect = callback => {
+    const started = performance.now()
+    if (typeof callback === 'function') return connect((error, client, done) => { noteDb('connect', performance.now() - started); callback(error, timeClient(client), done) })
+    return connect().then(client => { noteDb('connect', performance.now() - started); return timeClient(client) })
   }
   return pool
 }

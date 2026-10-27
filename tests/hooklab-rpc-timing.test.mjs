@@ -54,9 +54,23 @@ test('database query and connection time inside a scope join the same line', asy
   const lines = []
   await withRpcTiming(async () => {
     rpcLabel('db only')
-    await pool.query('select 1')
-    const c = await pool.connect(); await c.query('select 2'); c.release()
+    const c = await pool.connect(); await c.query('select 1'); await c.query('select 2'); c.release()
   }, line => lines.push(line))
   assert.match(lines[0], /^Hook Lab rpc db only: 0 calls/)
   assert.match(lines[0], /db queries \d+ms\/2 connect \d+ms\/1/)
+})
+
+test('a real pg pool still answers through the timed wrapper (pool.query checks out with a callback)', async () => {
+  const pg = (await import('pg')).default
+  const { timedDatabasePool } = await import('../src/hooklab-rpc-timing.mjs')
+  const pool = timedDatabasePool(new pg.Pool({ host: '127.0.0.1', port: 55432, user: 'postgres', password: 'launchtest', database: 'postgres', max: 1, connectionTimeoutMillis: 3000 }))
+  const lines = []
+  try {
+    await withRpcTiming(async () => {
+      rpcLabel('real pool')
+      assert.equal((await pool.query('select 1 as one')).rows[0].one, 1)
+      const client = await pool.connect(); try { assert.equal((await client.query('select 2 as two')).rows[0].two, 2) } finally { client.release() }
+    }, line => lines.push(line))
+  } finally { await pool.end() }
+  assert.match(lines[0], /db queries \d+ms\/[12] connect \d+ms\/2/)
 })
