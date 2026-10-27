@@ -26,10 +26,11 @@ const BEHIND=/Minimum context slot has not been reached|-32016/
 // Snapshot-to-blockhash slack across two real providers (the second waits to catch up): ~6 s. The
 // on-chain guards (deadline slot, minimum output, price impact) are unchanged.
 const SLOT_LAG=16
-// A review's slot lease. Mainnet slots run about 210 ms (2026-10-27), so 96 slots left about 20 s for the wallet, the
-// server's co-signature and the send. 112 is the most the checks allow: the deadline stays within 150 slots of the
-// snapshot (src/hooklab-max-wallet-launch.mjs) even when finalized trails confirmed by up to 32 slots.
-export const REVIEW_LEASE_SLOTS=112
+// A review's slot lease. Mainnet slots run about 210 ms (2026-10-27) and finalized trails confirmed by about one slot,
+// so 96 slots left about 20 s for the wallet, the server's co-signature and the send (each step re-reads the chain for
+// about 7 s). 140 keeps the deadline within the 150-slot ceiling the lifetime check allows from the snapshot
+// (src/hooklab-max-wallet-launch.mjs) with a 10-slot margin for finality lag; a larger lag refuses the review safely.
+export const REVIEW_LEASE_SLOTS=140
 // The most rent an owner-invited (legacy) launch may lock, as the program's debit guard counts it. An open launch's bound
 // is exact instead: computed from the chain's rent when the launch is reserved (openLaunchRent).
 const LEGACY_LAUNCH_MAX_RENT_LAMPORTS=45000000n
