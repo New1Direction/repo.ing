@@ -6,7 +6,6 @@ const { recoveryNotice } = await appModule('app/components/root-document.jsx')
 
 // The notice lists only what is not working yet.
 test('the recovery notice names only what is not live', () => {
-  assert.equal(recoveryNotice(true), 'Bundles are not live yet.')
-  assert.match(recoveryNotice(false), /^New launches are paused\. /)
-  assert.doesNotMatch(recoveryNotice(true), /Trading is live|Charts|claims open soon|Hooks|retired key/)
+  assert.equal(recoveryNotice(true), '', 'nothing to say, so no banner')
+  assert.equal(recoveryNotice(false), 'New launches are paused.')
 })
