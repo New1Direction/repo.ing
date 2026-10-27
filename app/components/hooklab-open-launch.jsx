@@ -16,8 +16,8 @@ import { percent, isOpenCreatorFeeChoice } from '../../src/hooklab-launch-menus.
 import { coinImageUrl, telegramHandle, websiteUrl, xHandle } from '../../src/hooklab-coin-profile.mjs'
 import { launchHookInput, reservationInput } from '../lib/hooklab-native-launch-form.mjs'
 import { signReviewedLaunch } from '../lib/hooklab-launch-wallet.mjs'
-import { OPEN_LAUNCH_NOTE, OPEN_LAUNCH_STEPS, TWO_APPROVALS, THREE_APPROVALS, continuousFeeChoice, defaultOpenChoices, menuChoice, nextOpenLaunchAction, openCreationProblem, openLaunchCosts,
-  openLaunchPrice, openLaunchStatus, openMenus, solOrWallet, sameLaunchHook, SELECTED_HOOK_NOTE, BURN_DESCRIPTION, feeFormOf } from '../lib/hooklab-open-launch.mjs'
+import { OPEN_LAUNCH_NOTE, OPEN_LAUNCH_STEPS, TWO_APPROVALS, THREE_APPROVALS, continuousFeeChoice, freshNeedsReserve, defaultOpenChoices, menuChoice, nextOpenLaunchAction, openCreationProblem, openLaunchCosts,
+  openLaunchPrice, openLaunchStatus, openMenus, solOrWallet, approxSol, sameLaunchHook, SELECTED_HOOK_NOTE, BURN_DESCRIPTION, feeFormOf } from '../lib/hooklab-open-launch.mjs'
 import { describeFeeSplit } from '../../src/hooklab-fee-split.mjs'
 
 const REQUESTS = '/api/hook-lab/launch-requests', LAUNCH = '/api/hook-lab/native-launch'
@@ -49,6 +49,17 @@ async function post(url, body) {
   if (value.status === 'blocked') throw Error(value.error || value.blockers?.map(item => item.message).filter(Boolean).join(' ') || 'Launching isn’t available right now. Nothing was signed.')
   if (!response.ok || value.status !== 'available') throw Error(value.error || 'Launching isn’t available right now. Try again in a minute.')
   return value
+}
+// Before a new launch: a wallet holding less than the launch needs would sign the setup and then stall at the launch.
+// Read from the site's balance endpoint; if it can't be read, the chain still decides (nothing is blocked on a guess).
+export async function walletShortfall(wallet, needLamports, fetchImpl = fetch) {
+  if (!wallet || needLamports === null || needLamports === undefined) return ''
+  try {
+    const response = await fetchImpl(`/api/hook-lab/wallet/${wallet}`, { cache: 'no-store' }), value = await response.json()
+    const have = response.ok && /^\d+$/.test(value?.wallet?.lamports ?? '') ? BigInt(value.wallet.lamports) : null
+    if (have === null || have >= BigInt(needLamports)) return ''
+    return `Your wallet has ${approxSol(have, { prefix: '' })}. Launching needs at least ${approxSol(BigInt(needLamports), { up: true, prefix: '' })}. Add SOL, then try again. Nothing was signed.`
+  } catch { return '' }
 }
 async function available() {
   const response = await fetch(REQUESTS, { cache: 'no-store' }), value = await response.json().catch(() => ({}))
@@ -263,7 +274,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
       if (['cosign', 'submit', 'refresh'].includes(action)) { op = checked((await api({ action: action === 'refresh' ? 'refresh-review' : action, signingId: op.id })).operation, op.id); continue }
       if (action === 'close') { op = checked((await api({ action: 'expire', signingId: op.id })).operation, op.id); continue }
       if (action === 'reconcile' || action === 'wait') { await sleep(4000); op = checked((await api({ action: action === 'wait' ? 'get' : 'reconcile', signingId: op.id })).operation, op.id); continue }
-      if (action === 'fresh') { op = await review(op.stage, true); continue }
+      if (action === 'fresh') { if (freshNeedsReserve(op, current)) await reserve(current); op = await review(op.stage, true); continue }
       if (action === 'preparation') { op = await review('preparation'); continue }
       if (action === 'launch') { op = await review('launch'); continue }
       if (action === 'live') { setStep('live'); setStatus(''); return }
@@ -281,6 +292,8 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
       if (!current) {
         const problem = coinProblem(coin) || openCreationProblem(openCreation, coin); if (problem) throw Error(problem)
         if (!isOpenCreatorFeeChoice(coin, openCreation)) throw Error('Enter an integer creator fee within the current chain limits.')
+        const short = !coin.selectedHook && await walletShortfall(walletRef.current, openLaunchCosts(openCreation, availability?.costs).needLamports)
+        if (short) throw Error(short)
         const created = await post(REQUESTS, { action: 'create', requestId: crypto.randomUUID(), name: coin.name.trim(), symbol: coin.symbol, image: coin.image,
           description: coin.description, x: coin.x, website: coin.website, telegram: coin.telegram, creatorFeeBps: coin.creatorFeeBps, ...launchHookInput(coin) })
         if ((coin.selectedHook || created.request?.selectedHook || coin.hookKind === 'selected') && !sameLaunchHook(coin, created.request))

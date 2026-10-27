@@ -82,3 +82,22 @@ test('the custom-hook path is offered only when the release allows it, or to rec
 test('a refusal shows next to the action, in plain words', () => {
   assert.match(form({ error: 'Enter an integer creator fee within the current chain limits.' }), /class="hlf-error"><div><p class="inline-error" role="alert">Enter an integer creator fee/)
 })
+
+test('an expired setup review renews the same reservation before its fresh review; other stages and custom hooks do not', async () => {
+  const { freshNeedsReserve, nextOpenLaunchAction } = await import('../app/lib/hooklab-open-launch.mjs')
+  const expired = { stage: 'preparation', status: 'expired', review: { reviewExpiresAtMs: 1 } }
+  assert.equal(nextOpenLaunchAction(expired, { wallet: 'w', now: 2 }), 'fresh')
+  assert.equal(freshNeedsReserve(expired, { selectedHook: undefined }), true)
+  assert.equal(freshNeedsReserve({ ...expired, stage: 'launch' }, {}), false)
+  assert.equal(freshNeedsReserve(expired, { selectedHook: { program: 'x', flags: 1 } }), false)
+})
+
+test('a wallet holding less than the launch needs is told before anything is signed; an unreadable balance blocks nothing', async () => {
+  const { walletShortfall } = await import('../app/components/hooklab-open-launch.jsx').catch(() => appModule('app/components/hooklab-open-launch.jsx'))
+  const reply = (lamports, ok = true) => async () => ({ ok, json: async () => ({ status: 'available', wallet: { lamports } }) })
+  assert.match(await walletShortfall('w', '92800000', reply('10000000')), /^Your wallet has 0\.01 SOL\. Launching needs at least 0\.0928 SOL\. Add SOL, then try again\. Nothing was signed\.$/)
+  assert.equal(await walletShortfall('w', '92800000', reply('92800000')), '')
+  assert.equal(await walletShortfall('w', '92800000', reply('1', false)), '', 'balance unavailable: the chain decides')
+  assert.equal(await walletShortfall('w', '92800000', async () => { throw Error('offline') }), '')
+  assert.equal(await walletShortfall('w', null, reply('1')), '', 'need unknown')
+})

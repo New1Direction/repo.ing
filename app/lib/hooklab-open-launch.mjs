@@ -143,6 +143,10 @@ export function nextOpenLaunchAction(operation, { wallet, now = Date.now() } = {
   if (status === 'finalized-success') return operation.stage === 'hook-setup' ? 'preparation' : operation.stage === 'preparation' ? 'launch' : 'live'
   return PENDING.has(status) ? 'reconcile' : 'stop'
 }
+// An expired setup review returns the coin's reservation to "reserved" on the server, so its fresh review needs the same
+// reservation renewed first (same mint, same keys); asking for the review alone is refused and the launch stays stuck.
+// A custom-hook setup has its own preparation path and is left as it was.
+export const freshNeedsReserve = (operation, coin) => operation?.stage === 'preparation' && !coin?.selectedHook
 // What the creator reads while the guided step runs.
 export function openLaunchStatus(operation, action) {
   const second = operation?.stage === 'launch'
