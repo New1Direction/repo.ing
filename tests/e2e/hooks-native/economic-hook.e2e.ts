@@ -257,7 +257,7 @@ describe(`local unreviewed economic ${role} hook lifecycle`, { serial: true }, (
     // Non-menu fee at the existing combined fee/burn ceiling: 117 + 83 = 200.
     await screen.getByLabel('Creator fee (bps)', { exact: true }).fill('117')
     await app.screenshot('economic-creator-configuration')
-    await screen.getByRole('button', { name: 'Review your launch' }).tap(); await signInForLaunch(screen)
+    await screen.getByRole('button', { name: 'Review launch' }).tap(); await signInForLaunch(screen)
     const review = screen.getByRole('region', { name: 'Check your launch' })
     await expect(review).toContainText('1.17%')
     await expect(review).toContainText('floor(gross / 4)')

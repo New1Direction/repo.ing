@@ -33,7 +33,7 @@ export async function fillAndReview(screen: any, coin: OpenCoin): Promise<string
   await expect(screen.getByText('Looks good')).toBeVisible()
   await screen.getByRole('group', { name: 'Max per wallet' }).getByRole('button', { name: percent(coin.capBps), exact: true }).tap()
   await screen.getByRole('group', { name: 'Creator fee' }).getByRole('button', { name: percent(coin.creatorFeeBps), exact: true }).tap()
-  await screen.getByRole('button', { name: 'Review your launch' }).tap()
+  await screen.getByRole('button', { name: 'Review launch' }).tap()
   const review = screen.getByRole('region', { name: 'Check your launch' })
   await expect(review).toBeVisible()
   return ((await review.textContent()) ?? '').replace(/\s+/g, ' ').trim()

@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
 import { HooksIntro, HooksNav, HooksUnavailable, HooksRisk } from '../../components/hooks-ui'
 import { openLaunchesEnabled, siteLaunchesEnabled } from '../../../src/hooklab-open-creation.mjs'
+import { HooksLaunchPage } from '../../components/hooks-launch-page'
 
 export const dynamic = 'force-dynamic'
 export async function generateMetadata() {
@@ -12,8 +13,9 @@ const StepArt = ({ src }) => <img className="launch-benefit-art" src={src} alt="
 
 export default function HooksPage() {
   if (!siteLaunchesEnabled(process.env)) return <DraftsOnly/>
-  // Self-serve launches: anyone launches straight from their wallet; no request or approval step.
+  // Self-serve launches: the launch form is the page (owner redesign 2026-10-27), no brochure first.
   const open = openLaunchesEnabled(process.env)
+  if (open) return <HooksLaunchPage/>
   return <><HooksIntro title="Coins with their own rules." art="find-repo" action={<Link className="button primary" href="/hooks/launch-review">Launch a coin <ArrowRight size={16} aria-hidden="true"/></Link>}>
     Launch a coin that caps how much one wallet can hold and pays you a fee on every trade. {open ? 'Sign it in your wallet and anyone can buy and sell it here, in SOL.' : 'repo.ing approves each launch, then anyone can buy and sell here.'}
   </HooksIntro><HooksNav active="markets"/>

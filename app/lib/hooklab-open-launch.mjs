@@ -41,7 +41,8 @@ export function menuChoice(menu, current, fallback) {
 }
 export const openMenus = openCreation => ({ creatorFeeBps: openCreation?.creatorFeeBps ?? [], capBps: openCreation?.capBps ?? [], maxCreatorFeeBps: openCreation?.maxCreatorFeeBps,
   continuousCreatorFee: openCreation?.continuousCreatorFee === true, burnEnabled: openCreation?.burnEnabled === true,
-  maxBurnBps: openCreation?.maxBurnBps, maxRulesFeeBps: openCreation?.maxRulesFeeBps, maxHolderFeeBps: openCreation?.maxHolderFeeBps })
+  maxBurnBps: openCreation?.maxBurnBps, maxRulesFeeBps: openCreation?.maxRulesFeeBps, maxHolderFeeBps: openCreation?.maxHolderFeeBps,
+  selectedHooksEnabled: openCreation?.selectedHooksEnabled === true })
 
 // The fee form with Burn on (owner design 2026-10-27): one total fee and the burn's share of it (in basis points of 100%);
 // the creator takes the rest. What the coin carries (creatorFeeBps, rules), the most the total may be, the plain lines the

@@ -73,7 +73,7 @@ describe('immutable selected hook on repaired independent stack (not max-wallet 
     await screen.getByLabel('Known token callback flags (1–255)').fill(String(hook.flags))
     await screen.getByRole('group', { name: 'Creator fee' }).getByRole('button', { name: '1%', exact: true }).tap()
     await app.screenshot('selected-hook-creator-configuration')
-    await screen.getByRole('button', { name: 'Review your launch' }).tap()
+    await screen.getByRole('button', { name: 'Review launch' }).tap()
     const review = screen.getByRole('region', { name: 'Check your launch' })
     await expect(review).toBeVisible()
     const reviewText = (await review.textContent()) ?? ''

@@ -8,8 +8,9 @@ import Link from 'next/link'
 import { ArrowRight, Check, ChevronDown, Info, LoaderCircle } from 'lucide-react'
 import { useWallet } from './wallet'
 import { HookWalletSignIn, shortAddress, useHookWalletSession } from './hooklab-wallet-signin'
-import { HookCoinFields, HookCoinPreview, HookLaunchNotes, HookEconomicsReview } from './hooklab-coin-form'
-import { HooksOperationError } from './hooks-ui'
+import { HookCoinPreview, HookEconomicsReview } from './hooklab-coin-form'
+import { HookLaunchForm } from './hooklab-launch-form'
+import { HooksOperationError, HooksRisk } from './hooks-ui'
 import { coinProblem } from './hooklab-launch-request'
 import { percent, isOpenCreatorFeeChoice } from '../../src/hooklab-launch-menus.mjs'
 import { coinImageUrl, telegramHandle, websiteUrl, xHandle } from '../../src/hooklab-coin-profile.mjs'
@@ -26,6 +27,7 @@ const NO_IDS = Object.freeze({ operationId: '', setupId: '', preparationId: '', 
 const uuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 const EMPTY_COIN = { name: '', symbol: '', image: null, description: '', x: '', website: '', telegram: '' }
+const isSelectedCoin = coin => coin.hookKind === 'selected' || !!coin.selectedHook
 const valid = (read, value) => { try { return read(value) } catch { return null } }
 const previewProfile = coin => ({ description: '', x: valid(xHandle, coin.x), website: valid(websiteUrl, coin.website), telegram: valid(telegramHandle, coin.telegram) })
 // Fail closed for selected setup reviews: this UI does not infer table costs from
@@ -95,6 +97,7 @@ export function OpenLaunchReview({ coin, image, profile, openCreation, costs, pr
       </div>
     </div>
     <p className="hooks-open-note" role="note"><Info size={18} aria-hidden="true"/><span>{OPEN_LAUNCH_NOTE}</span></p>
+    <HooksRisk native/>
     {problem && <p className="hooks-ended" role="status">{problem}</p>}
     <div className="launch-review-actions">
       <button type="button" className="button primary" disabled={busy || !!problem} onClick={onSign}>{busy ? 'Starting…' : coin.selectedHook && !selectedReady ? 'Check hook availability' : 'Sign and launch'}</button>
@@ -322,21 +325,12 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   const paused = initialBlockers.length > 0 || !!openCreationProblem(openCreation, coin)
   return <div className="hooks-launch hooks-open-launch">
     <OpenLaunchSteps phase={phase}/>
-    {step === 'coin' && <form className="launch-panel hooks-launch-panel" onSubmit={toReview} noValidate>
-      {availability && paused && <p className="hooks-ended" role="status">{openCreationProblem(openCreation, coin) || 'Launching isn’t available right now. Try again later.'}</p>}
-      {!session.signedIn && session.checked && <p className="hooks-returning">Already started a launch? <button type="button" className="hooks-text-button" disabled={session.busy} onClick={session.signIn}>{session.busy ? 'Check your wallet…' : 'Sign in to continue it'}</button></p>}
-      <div className="launch-columns">
-        <fieldset className="launch-fields launch-fieldset" disabled={busy}>
-          <h2>Your coin</h2><p className="launch-subtitle">How people will see it on repo.ing.</p>
-          <HookCoinPreview image={coin.image} name={coin.name.trim()} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} burnBps={!coin.selectedHook && coin.rules && coin.rules !== 'none' ? coin.rules.burnBuyBps : 0} selectedHook={coin.selectedHook} profile={previewProfile(coin)}/>
-          <HookCoinFields form={coin} set={set} disabled={busy} onImageBusy={setImageBusy} menus={menus} allowSelectedHook/>
-        </fieldset>
-        <div className="launch-side"><HookLaunchNotes capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} selectedHook={coin.selectedHook} launchPrice={availability?.launchPrice} open/></div>
-      </div>
-      <HooksOperationError error={error || session.error}/>
-      <button type="submit" className="button primary launch-submit" disabled={busy || imageBusy}>{imageBusy ? 'Preparing image…' : 'Review your launch'}</button>
-      <p className="form-fineprint">Nothing is created or signed until you approve it in your wallet.</p>
-    </form>}
+    {step === 'coin' && <HookLaunchForm coin={coin} set={set} disabled={busy} onImageBusy={setImageBusy} imageBusy={imageBusy} menus={menus}
+      openCreation={openCreation} costs={availability?.costs} onSubmit={toReview} allowSelectedHook={openCreation?.selectedHooksEnabled === true || isSelectedCoin(coin)}
+      notices={<>
+        {availability && paused && <p className="hooks-ended" role="status">{openCreationProblem(openCreation, coin) || 'Launching isn’t available right now. Try again later.'}</p>}
+        {!session.signedIn && session.checked && <p className="hooks-returning">Already started a launch? <button type="button" className="hooks-text-button" disabled={session.busy} onClick={session.signIn}>{session.busy ? 'Check your wallet…' : 'Sign in to continue it'}</button></p>}
+      </>} error={error || session.error}/>}
     {step === 'review' && <>
       {!session.signedIn && session.checked && <HookWalletSignIn genesisHash={genesisHash} session={session} title="Sign in to launch">Sign in with the wallet that will own this coin. It’s free and sends no transaction.</HookWalletSignIn>}
       <OpenLaunchReview coin={shown} image={image} profile={recorded?.profile ?? previewProfile(coin)} openCreation={openCreation} costs={availability?.costs} price={pricing ?? recorded?.pricing ?? availability?.launchPrice}

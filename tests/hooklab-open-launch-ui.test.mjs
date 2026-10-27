@@ -93,7 +93,7 @@ test('the review screen pays out only the essentials, every figure from the chai
 test('the create flow, step by step: your coin (the chain’s menus), review, one guided signing step, live', () => {
   const coinStep = html(h(HookOpenLaunch, { genesisHash, initial: { availability } }), { wallet: true })
   for (const pattern of [/<li data-state="current" aria-current="step"><span>1<\/span>Your coin<\/li>/, /Review<\/li>/, /Sign<\/li>/, /Live<\/li>/,
-    /Coin name/, /Ticker/, /Max per wallet/, /Creator fee/, /Review your launch/, /Approve twice in your wallet/, /Nothing is created or signed until you approve it in your wallet/])
+    /Name/, /Ticker/, /Max per wallet/, /Creator fee/, /Review launch/, /Review first\. Nothing is signed yet\./, /Launch cost/, /Coming soon/])
     assert.match(coinStep, pattern)
   for (const bps of ['0.5%', '1%', '2%']) assert.match(coinStep, new RegExp(`aria-pressed="(true|false)">${bps.replace('.', '\\.')}</button>`), `fee ${bps} from the chain menu`)
   assert.match(coinStep, /<button type="button" aria-pressed="true">1%<\/button>/); assert.match(coinStep, /<button type="button" aria-pressed="true">2%<\/button>/)
