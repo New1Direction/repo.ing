@@ -8,15 +8,21 @@ import { z } from 'zod'
 import { inspectHookLabMessage,verifyHookLabSignedMessage } from './hooklab-message-boundary.mjs'
 import { lockWalletPrincipal } from './hooklab-wallet-principal-lock.mjs'
 import { localAcceptanceNetwork } from './hooklab-local-acceptance.mjs'
-import { refusalLine } from './hooklab-refusal-log.mjs'
+import { refusalLine,timingLine } from './hooklab-refusal-log.mjs'
 const fail=()=>Object.assign(Error('Native signing operation unavailable or changed; preserve the original identity'),{code:'NATIVE_SIGNING_UNAVAILABLE'})
 const check=value=>{if(!value)throw fail()}
 // Fixed texts a resolver marks for the customer (owner-approval and funding refusals) pass through; everything else is masked.
 // The customer sees the fixed refusal; the server logs what was refused (code, short redacted message, function names).
-const visible=error=>{
+const visible=(error,logError=line=>console.error(line))=>{
  if(['OWNER_APPROVAL_UNAVAILABLE','HOOKLAB_USER_REFUSAL'].includes(error?.code))return error
- console.error(refusalLine('native signing',error))
+ logError(refusalLine('native signing',error))
  return fail()
+}
+// Where one signing call's time went; one log line per call (timingLine).
+function timer(){
+ const started=performance.now(),phases={revalidate:0,db:0,sign:0,send:0}
+ const time=async(phase,work)=>{const t=performance.now();try{return await work()}finally{phases[phase]+=performance.now()-t}}
+ return {time,add:(phase,ms)=>{phases[phase]+=ms},phases:()=>({...phases,total:performance.now()-started})}
 }
 function context(resolved){
  check(typeof resolved.configurationSha256==='string'&&/^[a-f0-9]{64}$/.test(resolved.configurationSha256))
@@ -50,7 +56,7 @@ const summary=row=>Object.freeze({id:row.id,owner:row.owner_wallet,custodyOperat
  walletRequestIssued:row.wallet_requested_at!=null,settlement:publicSettlement(row),executionAuthorized:false,canSign:false,canSubmit:false})
 // retiredOperations: {stage: [operation]} reviewed before a switch (owner-approved launches before open launches): their
 // rows stay readable so they settle and expire; no new review uses them.
-export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,serverSigner=null,sender=null,custodyAdapter=null,expiryObserver=null,closedStages=[],stageOperations={preparation:'max-wallet-preparation',launch:'max-wallet-launch'},retiredOperations={}}={}){
+export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,serverSigner=null,sender=null,custodyAdapter=null,expiryObserver=null,closedStages=[],stageOperations={preparation:'max-wallet-preparation',launch:'max-wallet-launch'},retiredOperations={},log=line=>console.info(line),logError=line=>console.error(line)}={}){
  const operations=Object.freeze(Object.fromEntries(Object.entries(stageOperations).map(([stage,value])=>[stage,Object.freeze(Array.isArray(value)?[...value]:[value])]))),allowed={'hook-setup':['selected-hook-setup'],preparation:['max-wallet-preparation','inclusive-max-wallet-preparation','selected-hook-preparation'],launch:['max-wallet-launch','open-launch'],'inclusive-buy':['inclusive-max-wallet-buy'],'inclusive-sell':['inclusive-max-wallet-sell'],
   'wallet-fund':['hooklab-wallet-fund'],'wallet-withdraw':['hooklab-wallet-withdraw'],
   // A native-SOL launch's creator claiming its fees (needs the native-stages migration's stage list).
@@ -101,6 +107,69 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
   const {rows:[saved]}=await db.query('update hook_lab_native_signing_operations set partial_transaction=$2,status=$3,pending_signer=null,revision=revision+1,updated_at=clock_timestamp() where id=$1 returning *',[row.id,wire(tx),status])
   return summary(saved)
  }
+  // verified: the pass's revalidation (completeSigning); null revalidates here, as the per-step call always has.
+  async function coSign(sessionToken,id,signerAddress,verified,t){
+   let claimed
+   try{
+    const captured=await t.time('db',()=>transaction(sessionToken,id,async(_db,row)=>{check(row&&!closed.has(row.stage)&&['partial','signed'].includes(row.status));return row}))
+    const capturedTx=transactionBytes(captured.review,captured.partial_transaction),index=captured.review.requiredSigners.indexOf(signerAddress)
+    check(index>=0&&signerAddress!==captured.owner_wallet&&capturedTx.signatures[captured.review.requiredSigners.indexOf(captured.owner_wallet)].some(x=>x!==0))
+    if(capturedTx.signatures[index].some(x=>x!==0))return summary(captured)
+    verified??=await t.time('revalidate',()=>fresh(captured,captured.owner_wallet,sessionToken))
+    claimed=await t.time('db',()=>transaction(sessionToken,id,async(db,row)=>{
+     check(row&&String(row.revision)===String(captured.revision)&&row.status==='partial')
+     await currentReview(db,row.review)
+     check((custodyAdapter??serverSigner)&&typeof (custodyAdapter??serverSigner).sign==='function')
+     await db.query("insert into hook_lab_native_signing_attempts(operation_id,signer_address,message_sha256,status) values($1,$2,$3,'claimed')",[id,signerAddress,row.message_sha256])
+     const {rows:[saved]}=await db.query("update hook_lab_native_signing_operations set status='signing-claimed',pending_signer=$2,revision=revision+1,updated_at=clock_timestamp() where id=$1 returning *",[id,signerAddress])
+     return saved
+    }))
+    // Claim committed before invoking a signer. Any lost result requires recovery,
+    // never another signing request. Keep an already-returned signature on expiry.
+    const signedAt=performance.now();let signMs=0
+    try{return await transaction(sessionToken,id,async(db,row,owner)=>{
+     check(row&&row.status==='signing-claimed'&&row.pending_signer===signerAddress&&String(row.revision)===String(claimed.revision))
+     await currentReview(db,row.review)
+     const tx=transactionBytes(row.review,row.partial_transaction),signer=custodyAdapter??serverSigner
+     const before=performance.now()
+     const signature=await signer.sign({db,sessionToken,owner,custodyOperationId:row.custody_operation_id,stage:row.stage,signerAddress,
+      message:Buffer.from(tx.message.serialize()),messageSha256:row.message_sha256,review:row.review,observedAdmin:verified.observedAdmin,request:verified.request})
+     signMs=performance.now()-before
+     check(signature instanceof Uint8Array&&signature.length===64&&signature.some(x=>x!==0));tx.signatures[index]=Uint8Array.from(signature)
+     transactionBytes(row.review,wire(tx))
+     const saved=await save(db,row,tx)
+     await db.query("update hook_lab_native_signing_attempts set status='completed',completed_at=clock_timestamp() where operation_id=$1 and signer_address=$2 and status='claimed'",[id,signerAddress])
+     return saved
+    },null,true)}finally{t.add('sign',signMs);t.add('db',performance.now()-signedAt-signMs)}
+   }catch(error){
+    logError(refusalLine('native signing cosign',error))
+    if(claimed){try{
+     await pool.query("update hook_lab_native_signing_operations set status='signing-unknown',revision=revision+1,updated_at=clock_timestamp() where id=$1 and status='signing-claimed' and pending_signer=$2 and message_sha256=$3",[id,signerAddress,claimed.message_sha256])
+     await pool.query("update hook_lab_native_signing_attempts set status='unknown' where operation_id=$1 and signer_address=$2 and status='claimed'",[id,signerAddress])
+    }catch{}}
+    throw fail()
+   }
+  }
+  // verified: the pass's revalidation (completeSigning); null revalidates here, as the per-step call always has.
+  async function submit(sessionToken,id,verified,t){
+   let captured;try{captured=await t.time('db',()=>transaction(sessionToken,id,async(_db,row)=>{check(row&&!closed.has(row.stage)&&row.status==='signed');return row}));if(!verified)await t.time('revalidate',()=>fresh(captured,captured.owner_wallet,sessionToken))}catch(error){throw visible(error,logError)}
+   const claimed=await t.time('db',()=>transaction(sessionToken,id,async(db,row,owner)=>{
+    check(row&&row.status==='signed'&&String(row.revision)===String(captured.revision)&&sender&&typeof sender.send==='function')
+    await currentReview(db,row.review)
+    const verified=verifyHookLabSignedMessage(row.review,row.partial_transaction)
+    const {rows:[saved]}=await db.query("update hook_lab_native_signing_operations set status='submission-claimed',signature=$2,revision=revision+1,updated_at=clock_timestamp() where id=$1 returning *",[id,verified.signature])
+    return saved
+   }))
+   // Claim is durable before I/O. Never retry after timeout, crash, or lost response.
+   let status='outcome-unknown'
+   try{const sent=await t.time('send',()=>sender.send({signedTransactionBase64:claimed.partial_transaction,signature:claimed.signature,messageSha256:claimed.message_sha256,review:claimed.review}));if(sent===claimed.signature)status='submitted'}catch{}
+   // Retain outcome even if auth expired/revoked while I/O was in progress. This is
+   // an internal exact claimed-row update, not fresh authority or a second send.
+   try{
+    const {rows:[saved]}=await t.time('db',()=>pool.query("update hook_lab_native_signing_operations set status=$2,revision=revision+1,updated_at=clock_timestamp() where id=$1 and status='submission-claimed' and message_sha256=$3 and signature=$4 returning *",[id,status,claimed.message_sha256,claimed.signature]))
+    check(saved);return summary(saved)
+   }catch{throw fail()}
+  }
  return Object.freeze({
   async createReview(sessionToken,id,{custodyOperationId,stage,intent}){
    try{
@@ -124,7 +193,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
       values($1,$2,$3,$4,$5,$6,$7,$8,'reviewed',$9,$10,$11) returning *`,[id,owner,custodyOperationId,stage,review.profileSha256,review,review.messageSha256,wire(tx),retainedContext.configurationSha256,retainedContext.settlementContext,resolved.request??null])
      return summary(saved)
     },custodyOperationId)
-   }catch(error){throw visible(error)}   // fixed owner-approval and funding texts reach the customer
+   }catch(error){throw visible(error,logError)}   // fixed owner-approval and funding texts reach the customer
   },
   async get(sessionToken,id){return transaction(sessionToken,id,async(_db,row)=>{check(row);return summary(row)})},
   async refreshReview(sessionToken,id){
@@ -151,7 +220,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
      const {rows:[saved]}=await db.query('update hook_lab_native_signing_operations set review=$2,message_sha256=$3,partial_transaction=$4,settlement_context=$5,review_generation=review_generation+1,revision=revision+1,updated_at=clock_timestamp() where id=$1 returning *',[id,review,review.messageSha256,wire(tx),retainedContext.settlementContext])
      return summary(saved)
     })
-   }catch(error){throw visible(error)}   // fixed owner-approval and funding texts reach the customer
+   }catch(error){throw visible(error,logError)}   // fixed owner-approval and funding texts reach the customer
   },
 
   async walletRequest(sessionToken,id){
@@ -164,7 +233,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
      if(!row.wallet_requested_at)await db.query('update hook_lab_native_signing_operations set wallet_requested_at=clock_timestamp(),revision=revision+1,updated_at=clock_timestamp() where id=$1',[id])
      return {review:row.review,partialTransactionBase64:row.partial_transaction,canSubmit:false}
     })
-   }catch(error){throw visible(error)}
+   }catch(error){throw visible(error,logError)}
   },
   async retainWalletSignature(sessionToken,id,signedTransactionBase64){
    return transaction(sessionToken,id,async(db,row,owner)=>{
@@ -181,42 +250,24 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
    })
   },
   async coSignNext(sessionToken,id,signerAddress){
-   let claimed
+   const t=timer()
+   try{return await coSign(sessionToken,id,signerAddress,null,t)}finally{log(timingLine('native signing cosign',t.phases()))}
+  },
+  // Single pass (2026-10-27): after the wallet's signature is retained, every remaining custody co-signature and then
+  // the submit, in order, on ONE revalidation of the chain evidence taken at the start (the per-step calls each
+  // revalidate, which no longer fits the review lease). Each step keeps its own checks, claims and review clock; any
+  // failure stops the pass where the per-step call would have stopped.
+  async completeSigning(sessionToken,id){
+   const t=timer()
    try{
-    const captured=await transaction(sessionToken,id,async(_db,row)=>{check(row&&!closed.has(row.stage)&&['partial','signed'].includes(row.status));return row})
-    const capturedTx=transactionBytes(captured.review,captured.partial_transaction),index=captured.review.requiredSigners.indexOf(signerAddress)
-    check(index>=0&&signerAddress!==captured.owner_wallet&&capturedTx.signatures[captured.review.requiredSigners.indexOf(captured.owner_wallet)].some(x=>x!==0))
-    if(capturedTx.signatures[index].some(x=>x!==0))return summary(captured)
-    const verified=await fresh(captured,captured.owner_wallet,sessionToken)
-    claimed=await transaction(sessionToken,id,async(db,row)=>{
-     check(row&&String(row.revision)===String(captured.revision)&&row.status==='partial')
-     await currentReview(db,row.review)
-     check((custodyAdapter??serverSigner)&&typeof (custodyAdapter??serverSigner).sign==='function')
-     await db.query("insert into hook_lab_native_signing_attempts(operation_id,signer_address,message_sha256,status) values($1,$2,$3,'claimed')",[id,signerAddress,row.message_sha256])
-     const {rows:[saved]}=await db.query("update hook_lab_native_signing_operations set status='signing-claimed',pending_signer=$2,revision=revision+1,updated_at=clock_timestamp() where id=$1 returning *",[id,signerAddress])
-     return saved
-    })
-    // Claim committed before invoking a signer. Any lost result requires recovery,
-    // never another signing request. Keep an already-returned signature on expiry.
-    return await transaction(sessionToken,id,async(db,row,owner)=>{
-     check(row&&row.status==='signing-claimed'&&row.pending_signer===signerAddress&&String(row.revision)===String(claimed.revision))
-     await currentReview(db,row.review)
-     const tx=transactionBytes(row.review,row.partial_transaction),signer=custodyAdapter??serverSigner
-     const signature=await signer.sign({db,sessionToken,owner,custodyOperationId:row.custody_operation_id,stage:row.stage,signerAddress,
-      message:Buffer.from(tx.message.serialize()),messageSha256:row.message_sha256,review:row.review,observedAdmin:verified.observedAdmin,request:verified.request})
-     check(signature instanceof Uint8Array&&signature.length===64&&signature.some(x=>x!==0));tx.signatures[index]=Uint8Array.from(signature)
-     transactionBytes(row.review,wire(tx))
-     const saved=await save(db,row,tx)
-     await db.query("update hook_lab_native_signing_attempts set status='completed',completed_at=clock_timestamp() where operation_id=$1 and signer_address=$2 and status='claimed'",[id,signerAddress])
-     return saved
-    },null,true)
-   }catch{
-    if(claimed){try{
-     await pool.query("update hook_lab_native_signing_operations set status='signing-unknown',revision=revision+1,updated_at=clock_timestamp() where id=$1 and status='signing-claimed' and pending_signer=$2 and message_sha256=$3",[id,signerAddress,claimed.message_sha256])
-     await pool.query("update hook_lab_native_signing_attempts set status='unknown' where operation_id=$1 and signer_address=$2 and status='claimed'",[id,signerAddress])
-    }catch{}}
-    throw fail()
-   }
+    const captured=await t.time('db',()=>transaction(sessionToken,id,async(_db,row)=>{check(row&&!closed.has(row.stage)&&['partial','signed'].includes(row.status)&&!row.signature);return row}))
+    const tx=transactionBytes(captured.review,captured.partial_transaction)
+    check(tx.signatures[captured.review.requiredSigners.indexOf(captured.owner_wallet)].some(x=>x!==0))
+    let verified;try{verified=await t.time('revalidate',()=>fresh(captured,captured.owner_wallet,sessionToken))}catch(error){throw visible(error,logError)}
+    for(const [index,signer] of captured.review.requiredSigners.entries())
+     if(signer!==captured.owner_wallet&&!tx.signatures[index].some(x=>x!==0))await coSign(sessionToken,id,signer,verified,t)
+    return await submit(sessionToken,id,verified,t)
+   }finally{log(timingLine('native signing complete',t.phases()))}
   },
   async retainRecoveredServerSignature(sessionToken,id,signatureBase64){
    return transaction(sessionToken,id,async(db,row)=>{
@@ -270,23 +321,8 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
    })
   },
   async submitOnce(sessionToken,id){
-   let captured;try{captured=await transaction(sessionToken,id,async(_db,row)=>{check(row&&!closed.has(row.stage)&&row.status==='signed');return row});await fresh(captured,captured.owner_wallet,sessionToken)}catch(error){throw visible(error)}
-   const claimed=await transaction(sessionToken,id,async(db,row,owner)=>{
-    check(row&&row.status==='signed'&&String(row.revision)===String(captured.revision)&&sender&&typeof sender.send==='function')
-    await currentReview(db,row.review)
-    const verified=verifyHookLabSignedMessage(row.review,row.partial_transaction)
-    const {rows:[saved]}=await db.query("update hook_lab_native_signing_operations set status='submission-claimed',signature=$2,revision=revision+1,updated_at=clock_timestamp() where id=$1 returning *",[id,verified.signature])
-    return saved
-   })
-   // Claim is durable before I/O. Never retry after timeout, crash, or lost response.
-   let status='outcome-unknown'
-   try{const sent=await sender.send({signedTransactionBase64:claimed.partial_transaction,signature:claimed.signature,messageSha256:claimed.message_sha256,review:claimed.review});if(sent===claimed.signature)status='submitted'}catch{}
-   // Retain outcome even if auth expired/revoked while I/O was in progress. This is
-   // an internal exact claimed-row update, not fresh authority or a second send.
-   try{
-    const {rows:[saved]}=await pool.query("update hook_lab_native_signing_operations set status=$2,revision=revision+1,updated_at=clock_timestamp() where id=$1 and status='submission-claimed' and message_sha256=$3 and signature=$4 returning *",[id,status,claimed.message_sha256,claimed.signature])
-    check(saved);return summary(saved)
-   }catch{throw fail()}
+   const t=timer()
+   try{return await submit(sessionToken,id,null,t)}finally{log(timingLine('native signing submit',t.phases()))}
   },
  })
 }

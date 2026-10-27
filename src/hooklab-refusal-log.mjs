@@ -10,3 +10,10 @@ export function refusalLine(route, error) {
   const where = String(error?.stack ?? '').split('\n').slice(1, 4).map(frame => frame.trim().match(/^at ([\w$.<>]+) /)?.[1]).filter(Boolean).join(' < ')
   return `Hook Lab refused ${route}: ${error?.code ?? '-'} ${message}${where ? ` [${where}]` : ''}`.slice(0, 400)
 }
+
+// One timing line per signing call: where its time went (revalidation = the chain evidence re-read, database, custody
+// signing, send) and the total, in whole milliseconds. Values only; never keys, URLs or signatures.
+export function timingLine(route, phases) {
+  const ms = value => `${Math.max(0, Math.round(value ?? 0))}ms`
+  return `Hook Lab timing ${route}: revalidate ${ms(phases.revalidate)} db ${ms(phases.db)} sign ${ms(phases.sign)} send ${ms(phases.send)} total ${ms(phases.total)}`
+}
