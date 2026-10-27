@@ -15,7 +15,7 @@ import {loadNativeArtifacts,nativeErrorName} from './hooklab-native-pins.mjs'
 import {loadArtifacts} from './hooklab-owner-driver/artifacts.mjs'
 import {canonicalObservation} from './hooklab-canonical-observation.mjs'
 import {REVIEWED_PROFILE_SHA256,reviewedEnvelope} from './hooklab-reviewed-profiles.mjs'
-import {inclusiveCreatorFee,modelInclusiveCreatorQuote} from './hooklab-inclusive-fee-quote.mjs'
+import {inclusiveCreatorFee,modelInclusiveCreatorQuote,tradeBurn} from './hooklab-inclusive-fee-quote.mjs'
 import {STATUS_GRADUATED} from './hooklab-graduation.mjs'
 import {shareProtocol,shareCreatorCuts} from './hooklab-share-fee-quote.mjs'
 const check=v=>{if(!v)throw Error('Native receipt evidence differs')},sha=x=>createHash('sha256').update(x).digest('hex')
@@ -180,21 +180,24 @@ export function verifyNativeTradeEvents({ci,plan,tx,fee}){
    &&graduations[0].pool.toBase58()===a.pool&&finals[0].pool.toBase58()===a.pool)
  }else check(events.every(x=>x.index===swapAt||x.index===createAt))
  const q=plan.quote,amount=BigInt(r.amountIn),out=B(s.amount_out),cut=inclusiveCreatorFee(buy?amount:out,r.creatorFeeBps)
- const gross=cut.grossQuote,platform=cut.platformQuote,creator=cut.creatorQuote,delivered=buy&&selected?B(s.delivered_out):buy?out:out-gross
- const received=selected&&!buy?B(s.received_in):amount-(buy?creator:0n)
+ // A gate coin's token burn (the review's rate): a buy burns from the curve's output, a sell from its input.
+ const burnBps=selected?0:Number(q.burnBps??0),burnIn=!buy?tradeBurn(amount,burnBps):0n,burnOut=buy?tradeBurn(out,burnBps):0n
+ const gross=cut.grossQuote,platform=cut.platformQuote,creator=cut.creatorQuote,delivered=buy&&selected?B(s.delivered_out):buy?out-burnOut:out-gross
+ const received=selected&&!buy?B(s.received_in):amount-(buy?creator:burnIn)
  const list=x=>x.map(d=>({holding:d.holding.toBase58(),amount:n(d.amount)})),paid=creator>0n?[{holding:a.launch,amount:String(creator)}]:[]
  check(f.version===1&&f.pool.toBase58()===a.pool&&f.quote_mint.toBase58()===p.quoteMint&&f.direction===(buy?1:0)&&f.platform_collector.toBase58()===q.platformCollector
   &&B(f.gross_quote)===gross&&B(f.creator_quote)===creator&&B(f.platform_quote)===platform&&f.creator_holding.toBase58()===(gross===0n?zero:a.launch))
  check(s.pool.toBase58()===a.pool&&s.trader.toBase58()===r.trader&&s.recipient.toBase58()===r.trader&&s.direction===(buy?1:0)&&B(s.amount_in)===amount&&n(s.slot)===String(tx.slot)
-  &&B(s.delivered_out)===delivered&&delivered>=BigInt(r.minAmountOut)&&B(s.protocol_fee)===platform&&B(s.lp_fee)===0n&&s.lp_fee_bps===0&&B(s.burn_in)===0n&&B(s.burn_out)===0n
+  &&B(s.delivered_out)===delivered&&delivered>=BigInt(r.minAmountOut)&&B(s.protocol_fee)===platform&&B(s.lp_fee)===0n&&s.lp_fee_bps===0&&(selected||B(s.burn_in)===burnIn&&B(s.burn_out)===burnOut)
   &&B(s.received_in)===received&&received>0n&&received<=amount&&isDeepStrictEqual(list(s.deltas_in),buy?paid:[])&&isDeepStrictEqual(list(s.deltas_out),buy?[]:paid)
   &&B(s.cuts_in)===(buy?creator:amount-received)&&B(s.cuts_out)===(buy?out-delivered:creator)&&B(s.swap_count)>0n)
  const poolIndex=tx.keys.indexOf(a.pool)
  check(nat.pool.toBase58()===a.pool&&nat.direction===(buy?1:0)&&B(nat.quote_lamports)===(buy?amount-creator:delivered)&&isDeepStrictEqual(list(nat.quote_deltas),paid)
   &&poolIndex>=0&&B(nat.pool_lamports)===BigInt(tx.post[poolIndex]))
  // The one coin transfer: the pool pays the buyer, or the seller pays the pool; its balances give the trader's before.
- const route=buy?{source:a.baseVault,destination:a.traderBase,sourceOwner:a.pool,destinationOwner:r.trader,authority:a.pool,amount:out}
-  :{source:a.traderBase,destination:a.baseVault,sourceOwner:r.trader,destinationOwner:a.pool,authority:r.trader,amount}
+ // A burn is not a transfer: the buyer receives the output less its burn, the pool the input less its burn.
+ const route=buy?{source:a.baseVault,destination:a.traderBase,sourceOwner:a.pool,destinationOwner:r.trader,authority:a.pool,amount:selected?out:out-burnOut}
+  :{source:a.traderBase,destination:a.baseVault,sourceOwner:r.trader,destinationOwner:a.pool,authority:r.trader,amount:selected?amount:received}
  check(e.mint.toBase58()===r.mint&&e.source.toBase58()===route.source&&e.destination.toBase58()===route.destination&&e.source_owner.toBase58()===route.sourceOwner
   &&e.destination_owner.toBase58()===route.destinationOwner&&e.authority.toBase58()===route.authority&&B(e.amount)===route.amount&&(selected||e.deltas.length===0)
   &&n(e.slot)===String(tx.slot)&&n(e.ts)===n(s.ts)&&B(buy?e.source_post:e.destination_post)===B(s.base_reserve))
@@ -210,7 +213,7 @@ export function verifyNativeTradeEvents({ci,plan,tx,fee}){
  const policy=selected?null:new BorshCoder(JSON.parse(Buffer.from(ci.profile.idls.gate,'base64'))).accounts.decode('PolicyV2',Buffer.from(ci.observations[0].accounts.find(x=>x.address===a.policy).account.dataBase64,'base64'))
  // The gate already applied the max wallet on chain, so receipt arithmetic does not apply it again.
  const actual=selected?selectedNativeMeasuredQuote({...r,graduate:false},pre,{[a.traderBase]:String(buy?delivered:-amount),[a.baseVault]:String(buy?-out:received)},a):modelInclusiveCreatorQuote({side:r.side,amountIn:amount,minAmountOut:BigInt(r.minAmountOut),maxInput:BigInt(r.maxInput),creatorFeeBps:r.creatorFeeBps,
-  feeModel:2,protocolShareBps:2500,lpFeeBps:0,flatProtocolFeeBps:0,sniperWindowSecs:0,sniperStartBps:0,quoteHook:'none',modules:0,authorShareBps:0,rules:'none',rewards:false,
+  feeModel:2,protocolShareBps:2500,lpFeeBps:0,flatProtocolFeeBps:0,sniperWindowSecs:0,sniperStartBps:0,quoteHook:'none',modules:0,authorShareBps:0,rules:burnBps?{burnBuyBps:burnBps,burnSellBps:burnBps}:'none',rewards:false,
   recipientBaseBalance:traderBefore,maxWalletLifted:true,pool:pre,policy:{version:2,feeModel:2,protocolShareBps:2500,creatorFeeBps:r.creatorFeeBps,lpFeeBps:0,initialSupply:B(policy.initial_supply),capBps:r.capBps}})
  check(actual.delivered===delivered&&actual.grossOutput===out&&actual.after.baseReserve===vaultAfter&&actual.after.quoteReserve===B(s.quote_reserve)&&actual.after.protocolFeesQuote===protocolAfter)
  // The swap met the curve the review read (its virtual offsets, which only graduation changes). If the coin graduated in

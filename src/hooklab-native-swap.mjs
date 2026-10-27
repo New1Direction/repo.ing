@@ -308,8 +308,13 @@ export function compileNativeSwapReview(input) {
   const configReserved = Buffer.from(selected.reserved), caps = { buy: configReserved.readUInt16LE(1), sell: configReserved.readUInt16LE(3) }
   const quoteCut = caps.buy !== 0 || caps.sell !== 0
   check(!quoteCut || nongate && r.feeModel === 1 && caps.buy > 0 && caps.buy <= 1000 && caps.sell <= 1000, 'Quote-cut caps differ')
-  const selectedRules = nongate && r.feeModel === 1 ? { ...noRules, burn_buy_bps: selected.rules.burn_buy_bps, burn_sell_bps: selected.rules.burn_sell_bps } : noRules
+  // A coin's token burn lives in its own config's rules: a selected hook's share model, or a gate coin's one total fee
+  // (owner 2026-10-27: creator + burn, one burn rate on both sides, within 10% per side). Nothing else is ever set.
+  const gateBurn = !nongate && r.feeModel === 2
+  const selectedRules = nongate && r.feeModel === 1 || gateBurn ? { ...noRules, burn_buy_bps: selected.rules.burn_buy_bps, burn_sell_bps: selected.rules.burn_sell_bps } : noRules
   check([selectedRules.burn_buy_bps, selectedRules.burn_sell_bps].every(v => Number.isInteger(v) && v >= 0 && v <= 10000), 'Burn rate differs')
+  check(!gateBurn || selectedRules.burn_buy_bps === selectedRules.burn_sell_bps && r.creatorFeeBps + selectedRules.burn_buy_bps <= 1000, 'Burn rate or combined fee differs')
+  const burning = selectedRules.burn_buy_bps > 0 || selectedRules.burn_sell_bps > 0
   check(selected.version === 1 && selected.custom_hook && str(selected.custom_hook) === H && selected.creator_fee_bps === r.creatorFeeBps
     && selected.author_share_bps <= (nongate && r.feeModel === 1 ? 5000 : 0) && Buffer.byteLength(selected.label) <= 32 && selected.custom_hook_flags === flags
     && selected.reserved.every((v, i) => v === 0 || i >= 1 && i < 5 && quoteCut || i === 0 && v === 1 && selectedAuthorityEvidence?.authority.kind === 'timelocked')
@@ -332,7 +337,7 @@ export function compileNativeSwapReview(input) {
     && state.modules === 0 && state.creator_fee_bps === r.creatorFeeBps && state.author_share_bps === (str(state.creator) === str(selected.creator) ? 0 : selected.author_share_bps) && state.lp_fee_bps === 0 && state.sniper_window_secs.isZero() && state.sniper_start_bps === 0
     && isDeepStrictEqual(state.rules, selectedRules) && str(state.kit_config) === a.kitConfig && str(state.holder_vault) === a.holderVault
     && str(state.reserve_holding) === a.launchReserve && str(state.quote_holding) === a.launchQuote && str(state.lp_holding) === a.launchLp && state.kit_caller_bump === 0
-    && ['creator_unlock_at', 'early_window_end', 'early_unlock_at', 'holder_fees_accrued', ...(!nongate || r.feeModel === 2 ? ['burned_on_trades', 'author_fees_paid'] : [])].every(k => state[k].isZero()), 'Launch rules or native coin binding differs')
+    && ['creator_unlock_at', 'early_window_end', 'early_unlock_at', 'holder_fees_accrued', ...(!nongate || r.feeModel === 2 ? [...(burning ? [] : ['burned_on_trades']), 'author_fees_paid'] : [])].every(k => state[k].isZero()), 'Launch rules or native coin binding differs')
   check(pool.version === 1 && pool.bump === bump(S, 'pool', kb(r.mint), kb(profile.quoteMint), Buffer.alloc(2), kb(L)) && pool.lp_mint_bump === bump(S, 'lp', kb(a.pool))
     && str(pool.base_mint) === r.mint && str(pool.quote_mint) === profile.quoteMint && str(pool.lp_mint) === a.lpMint && str(pool.base_vault) === a.baseVault
     && str(pool.quote_vault) === a.quoteVault && pool.hook_program && str(pool.hook_program) === L && pool.hook_flags === 1985
@@ -403,7 +408,8 @@ export function compileNativeSwapReview(input) {
     q = nongate ? selectedNativeMeasuredQuote(r, p, selectedTokenDeltas, a, economics) : modelInclusiveCreatorQuote({ side: r.side, amountIn: amount, minAmountOut: BigInt(r.minAmountOut),
       maxInput: BigInt(r.maxInput), creatorFeeBps: r.creatorFeeBps, feeModel: 2, protocolShareBps: 2500,
       lpFeeBps: 0, flatProtocolFeeBps: 0, sniperWindowSecs: 0, sniperStartBps: 0, quoteHook: 'none', modules: 0,
-      authorShareBps: 0, rules: 'none', rewards: false, recipientBaseBalance: traderBase, maxWalletLifted: graduated, pool: p,
+      authorShareBps: 0, rules: burning ? { burnBuyBps: selectedRules.burn_buy_bps, burnSellBps: selectedRules.burn_sell_bps } : 'none',
+      rewards: false, recipientBaseBalance: traderBase, maxWalletLifted: graduated, pool: p,
       policy: { version: 2, feeModel: 2, protocolShareBps: 2500, creatorFeeBps: policy.creator_fee_bps, lpFeeBps: 0, initialSupply: n(policy.initial_supply), capBps: policy.cap_bps } })
   } catch (error) { refuseUnless(!QUOTE_REFUSALS[error?.message], QUOTE_REFUSALS[error?.message]); throw error }
   refuseUnless(q.priceImpactBps <= BigInt(r.maxPriceImpactBps), `That moves the price more than ${r.maxPriceImpactBps / 100}%. Try a smaller amount.`)
@@ -477,6 +483,8 @@ export function compileNativeSwapReview(input) {
     sourceCommit: profile.sourceCommit, addresses: a, review, instructions: inspected.instructions, graduated, graduates: r.graduate, createsHolding, economics,
     quote: { delivered: String(q.delivered), minAmountOut: r.minAmountOut, capRaw: String(cap), capLifted: graduated, priceImpactBps: String(q.priceImpactBps), lpFee: '0',
       protocolFee: String(platform), grossCreatorFee: String(gross), netCreatorFee: String(creator), feeModel: r.feeModel, protocolShareBps: 2500, creatorFeeBps: r.creatorFeeBps,
+      // A gate coin's token burn: its one rate and the coins this trade burns (settlement re-derives both).
+      ...(gateBurn && burning ? { burnBps: selectedRules.burn_buy_bps, burnedToken: String(q.burned) } : {}),
       ...(r.feeModel === 1 ? { burnedToken: String(q.burnIn + q.burnOut), hookTokenFee: String(buy ? q.cutsOut : q.cutsIn),
         hookQuoteFee: String(q.fees.customQuote), authorShareBps: state.author_share_bps, configAuthor: str(selected.creator),
         consumedInput: String(consumed), unspentInput: String(amount - consumed), effectiveMinAmountOut: String(q.minAmountOut) } : {}),
