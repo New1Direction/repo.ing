@@ -9,11 +9,11 @@ fs.mkdirSync(dir + '/scripts', { recursive: true }); fs.mkdirSync(dir + '/config
 const manifest = fs.readFileSync('config/existing-market-custody.json')
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 fs.writeFileSync(dir + '/config/existing-market-custody.json', manifest)
-const contents = `import { runRecoveryCharts, createChartDiagnostics, chartFailure, CHART_RETRY_EXIT } from './scripts/recovery-chart-indexer.mjs';
+const contents = `import { runRecoveryCharts, runChartsWithRetries, createChartDiagnostics, chartFailure, chartReason, CHART_RETRY_EXIT } from './scripts/recovery-chart-indexer.mjs';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 const report = o => process.stdout.write(JSON.stringify(o)+'\\n');
-const diagnostics = createChartDiagnostics();
+let diagnostics = createChartDiagnostics();
 const failure = (error, phase = 'PREFLIGHT') => {
   const fallback = createChartDiagnostics(), scope = fallback.scope();
   scope.phase(phase); scope.fail(error);
@@ -36,13 +36,18 @@ if(process.argv.length === 3 && process.argv[2] === '--validate') {
     if(process.env.RECOVERY_CHART_RPC_MODE !== 'archival-paced')throw Error('MODE_REQUIRED');
     const names=['RECOVERY_CHART_DATABASE_URL','SOLANA_RPC_URL','SOLANA_ARCHIVE_VERIFICATION_RPC_URL','DBC_CONFIG','DBC_LEGACY_CONFIGS','TRADING_CUSTODY_RECOVERY_SHA256','RECOVERY_CHART_RPC_MODE'];
     const env=Object.fromEntries(names.map(k=>[k,process.env[k]]));
-    const result=await runRecoveryCharts(env,diagnostics);
-    phase = 'COMPLETENESS';
-    if(!Array.isArray(result.results)||result.results.length===0||result.results.some(r=>r.error))throw Error('INCOMPLETE_CYCLE');
+    // A one-off read failure reruns the whole pass (fresh diagnostics) up to three times; a data problem never does.
+    const result=await runChartsWithRetries(async attempt=>{
+      if(attempt>0){diagnostics=createChartDiagnostics();phase='PREFLIGHT';}
+      const pass=await runRecoveryCharts(env,diagnostics);
+      phase = 'COMPLETENESS';
+      if(!Array.isArray(pass.results)||pass.results.length===0||pass.results.some(r=>r.error))throw Error('INCOMPLETE_CYCLE');
+      return pass;
+    },{onRetry:({attempt,waitMs,error})=>report({lane:'chart',status:'CYCLE_RETRY',attempt,waitMs,code:chartFailure(error).code,reason:chartReason(error),diagnostics:failure(error,phase)})});
     report({lane:'chart',status:'CYCLE_COMPLETED',at:result.at,markets:result.results.length,transactions:result.results.reduce((n,r)=>n+r.transactions,0),inserted:result.results.reduce((n,r)=>n+r.inserted,0)});
   } catch(error) {
     const {code,retryable}=chartFailure(error);
-    report({lane:'chart',status:'CYCLE_FAILED',code,retryable,diagnostics:failure(error,phase)});
+    report({lane:'chart',status:'CYCLE_FAILED',code,retryable,reason:chartReason(error),diagnostics:failure(error,phase)});
     process.exitCode=retryable?CHART_RETRY_EXIT:1;
   }
   finally {clearTimeout(deadline)}

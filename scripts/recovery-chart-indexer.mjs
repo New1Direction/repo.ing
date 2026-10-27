@@ -93,12 +93,53 @@ export function createRecoveryChartProviders(env, fetchImpl = globalThis.fetch) 
 }
 
 // A failed pass exits CHART_RETRY_EXIT only for provider hiccups, so the unit retries instead of latching.
-// Data problems (mismatch, disagreement, incomplete history) and anything unrecognised still latch.
+// A one-off read failure with no code (a dropped connection, a client-side query timeout) is transient: the pass is
+// retried in process (runChartsWithRetries) and latches only if it persists. Data problems (mismatch, disagreement,
+// incomplete history, the database refusing the data itself) are never retried and latch at once.
 export const CHART_RETRY_EXIT = 75
 const RETRYABLE_FAILURES = new Set(['CHART_RPC_FAILED', 'STALE_PROGRESS', 'RPC_UNAVAILABLE', 'RPC_RATE_LIMITED'])
+const READ_FAILURES = new Set(['CHART_READ_UNAVAILABLE', 'UNCLASSIFIED'])
+// Integrity, data and access refusals (classes 22, 23, 42), unlike connection or timeout states.
+const DATA_SQLSTATE = /^(22|23|42)[0-9A-Z]{3}$/
 export function chartFailure(error) {
-  const code = typeof error?.message === 'string' && /^[A-Z_]+$/.test(error.message) ? error.message : 'UNCLASSIFIED'
-  return { code, retryable: RETRYABLE_FAILURES.has(code) }
+  const code = typeof error?.message === 'string' && /^[A-Z_]+$/.test(error.message) ? error.message
+    : typeof error?.code === 'string' && DATA_SQLSTATE.test(error.code) ? 'CHART_DATA_REJECTED' : 'UNCLASSIFIED'
+  return { code, retryable: RETRYABLE_FAILURES.has(code), transient: RETRYABLE_FAILURES.has(code) || READ_FAILURES.has(code) }
+}
+
+// Three retries with backoff for a transient failure; none starts past the budget, which stays inside the unit's
+// 600 s start timeout. Every attempt is a whole pass: inserts are idempotent and each cursor commits with its rows.
+export const CHART_RETRY_DELAYS_MS = Object.freeze([10000, 30000, 90000])
+export async function runChartsWithRetries(run, { delays = CHART_RETRY_DELAYS_MS, budgetMs = 420000,
+  sleep = ms => delay(ms), now = () => performance.now(), onRetry = () => {} } = {}) {
+  const started = now()
+  for (let attempt = 0; ; attempt++) {
+    try { return await run(attempt) } catch (error) {
+      const wait = delays[attempt]
+      if (!chartFailure(error).transient || wait === undefined || now() - started + wait > budgetMs) throw error
+      onRetry({ attempt: attempt + 1, waitMs: wait, error })
+      await sleep(wait)
+    }
+  }
+}
+
+const rootCause = error => {
+  let root = error
+  for (let n = 0; n < 5 && root?.cause instanceof Error; n++) root = root.cause
+  return root
+}
+// The real reason behind a failure, safe to log: the root error's name and code, its message without URLs, addresses
+// or long tokens, and where it was thrown. Never SQL, parameters, row data or an error's other fields.
+export function chartReason(error) {
+  const root = rootCause(error)
+  if (!(root instanceof Error)) return null
+  const scrub = (value, max) => String(value).replace(/[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<url>')
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, '<ip>').replace(/\[[0-9a-f:]+\](?::\d+)?/gi, '<ip>')
+    .replace(/[A-Za-z0-9+/=_-]{32,}/g, '<redacted>').replace(/[^\x20-\x7e]/g, '').slice(0, max)
+  const frame = String(root.stack ?? '').split('\n').find(line => /^\s+at /.test(line)) ?? ''
+  const at = /([^\s/()]+):(\d+):\d+\)?\s*$/.exec(frame)
+  return { name: scrub(root.name, 40), code: typeof root.code === 'string' ? scrub(root.code, 40) : null,
+    message: scrub(root.message, 200), at: at ? `${at[1]}:${at[2]}` : null }
 }
 
 // Pool and config accounts for a whole pass, batched like the graduation worker's reads. Concurrent workers
@@ -263,9 +304,10 @@ export async function runRecoveryCharts(env = process.env, diagnostics = createC
             result.progress = state.phase
           } catch (e) {
             trace.fail(e)
-            result.error = /^[A-Z_]+$/.test(e.message) ? e.message : 'CHART_READ_UNAVAILABLE'
+            const { code } = chartFailure(e)
+            result.error = code === 'UNCLASSIFIED' ? 'CHART_READ_UNAVAILABLE' : code
             // The first failure is the cause; later markets only see the stopped transport.
-            if (rpc.stop) { rpc.stop(result.error); throw Error(rpc.failure()) }
+            if (rpc.stop) { rpc.stop(result.error); throw Error(rpc.failure(), { cause: e }) }
           }
           results.push(result)
           await new Promise(r => setTimeout(r, 500))
@@ -274,8 +316,9 @@ export async function runRecoveryCharts(env = process.env, diagnostics = createC
     }
     coordinator.phase('WORKERS')
     await Promise.allSettled(Array.from({ length: Math.min(4, markets.length) }, work)).then(outcomes => {
-      const failed = outcomes.find(outcome => outcome.status === 'rejected')
-      if (failed) throw failed.reason
+      const failed = outcomes.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason)
+      // The worker whose own error stopped the transport, not one that only saw it stopped.
+      if (failed.length) throw failed.find(e => !/^[A-Z_]+$/.test(String(rootCause(e)?.message))) ?? failed[0]
     })
     return { at: new Date().toISOString(), results }
   } catch (e) {

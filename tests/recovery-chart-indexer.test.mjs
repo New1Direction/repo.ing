@@ -194,19 +194,80 @@ test('the paced transport reports its first failure code so a wrapped RPC error 
   assert.equal(quiet.failure(), 'RPC_DISAGREEMENT')
 })
 
-test('only transient RPC failures are retryable; data problems and unknown errors latch', () => {
+test('RPC hiccups exit retryable, one-off read failures retry in process, data problems never retry', () => {
   assert.equal(typeof charts.chartFailure, 'function')
   assert.equal(charts.CHART_RETRY_EXIT, 75)
   for (const code of ['CHART_RPC_FAILED', 'STALE_PROGRESS', 'RPC_UNAVAILABLE', 'RPC_RATE_LIMITED']) {
-    assert.deepEqual(charts.chartFailure(Error(code)), { code, retryable: true }, code)
+    assert.deepEqual(charts.chartFailure(Error(code)), { code, retryable: true, transient: true }, code)
   }
   for (const code of ['CHART_SLOT_MISMATCH', 'RPC_DISAGREEMENT', 'CHART_HISTORY_INCOMPLETE', 'CHART_HISTORY_LIMIT',
     'CONFIG_OR_POOL_MISMATCH', 'MIGRATION_EVIDENCE_INCOMPLETE', 'NETWORK_MISMATCH', 'CHART_RPC_DENIED', 'CHART_RPC_LIMIT',
-    'INCOMPLETE_CYCLE', 'CHART_READ_UNAVAILABLE', 'CUSTODY_BINDING_REQUIRED']) {
-    assert.deepEqual(charts.chartFailure(Error(code)), { code, retryable: false }, code)
+    'INCOMPLETE_CYCLE', 'CUSTODY_BINDING_REQUIRED', 'CHART_DATA_REJECTED']) {
+    assert.deepEqual(charts.chartFailure(Error(code)), { code, retryable: false, transient: false }, code)
   }
-  assert.deepEqual(charts.chartFailure(Error('connect ECONNREFUSED 10.0.0.1:5432 SECRET_SENTINEL')), { code: 'UNCLASSIFIED', retryable: false })
-  assert.deepEqual(charts.chartFailure(null), { code: 'UNCLASSIFIED', retryable: false })
+  // A dropped connection or a client-side query timeout carries no code: a one-off read failure.
+  assert.deepEqual(charts.chartFailure(Error('CHART_READ_UNAVAILABLE')), { code: 'CHART_READ_UNAVAILABLE', retryable: false, transient: true })
+  assert.deepEqual(charts.chartFailure(Error('connect ECONNREFUSED 10.0.0.1:5432 SECRET_SENTINEL')), { code: 'UNCLASSIFIED', retryable: false, transient: true })
+  assert.deepEqual(charts.chartFailure(Error('Query read timeout')), { code: 'UNCLASSIFIED', retryable: false, transient: true })
+  assert.deepEqual(charts.chartFailure(null), { code: 'UNCLASSIFIED', retryable: false, transient: true })
+  // The database refusing the data itself (duplicate, constraint, bad value, permission) is a data problem.
+  for (const sqlstate of ['23505', '23514', '22P02', '42501']) {
+    assert.deepEqual(charts.chartFailure(Object.assign(Error('duplicate key value'), { code: sqlstate })),
+      { code: 'CHART_DATA_REJECTED', retryable: false, transient: false }, sqlstate)
+  }
+  assert.equal(charts.chartFailure(Object.assign(Error('terminating connection'), { code: '57P01' })).transient, true)
+})
+
+test('a one-off read failure gets three retries with backoff; a data problem stops at once', async () => {
+  const run = failures => {
+    const waits = [], retries = []
+    let attempts = 0
+    const result = charts.runChartsWithRetries(async attempt => {
+      assert.equal(attempt, attempts++)
+      if (failures.length) throw failures.shift()
+      return 'done'
+    }, { sleep: async ms => { waits.push(ms) }, onRetry: r => retries.push(r.attempt) })
+    return { result, waits, retries, attempts: () => attempts }
+  }
+  assert.deepEqual(charts.CHART_RETRY_DELAYS_MS, [10000, 30000, 90000])
+  const recovered = run([Error('Connection terminated unexpectedly'), Error('CHART_READ_UNAVAILABLE')])
+  assert.equal(await recovered.result, 'done')
+  assert.deepEqual(recovered.waits, [10000, 30000])
+  assert.deepEqual(recovered.retries, [1, 2])
+  const persistent = run(Array.from({ length: 5 }, () => Error('CHART_READ_UNAVAILABLE')))
+  await assert.rejects(persistent.result, /CHART_READ_UNAVAILABLE/)
+  assert.equal(persistent.attempts(), 4, 'the first try plus three retries')
+  assert.deepEqual(persistent.waits, [10000, 30000, 90000])
+  for (const code of ['CHART_SLOT_MISMATCH', 'CHART_HISTORY_INCOMPLETE', 'RPC_DISAGREEMENT', 'INCOMPLETE_CYCLE']) {
+    const data = run([Error(code)])
+    await assert.rejects(data.result, new RegExp(code))
+    assert.equal(data.attempts(), 1, code)
+    assert.deepEqual(data.waits, [], code)
+  }
+  const duplicate = run([Object.assign(Error('duplicate key value'), { code: '23505' })])
+  await assert.rejects(duplicate.result, /duplicate/)
+  assert.equal(duplicate.attempts(), 1)
+  // No retry starts that would end past the budget (the unit's start timeout).
+  let clock = 0, attempts = 0
+  await assert.rejects(charts.runChartsWithRetries(async () => { attempts++; clock += 200000; throw Error('CHART_READ_UNAVAILABLE') },
+    { budgetMs: 420000, now: () => clock, sleep: async ms => { clock += ms } }), /CHART_READ_UNAVAILABLE/)
+  assert.equal(attempts, 2)
+})
+
+test('the logged failure reason is the root error, with URLs, addresses and long tokens removed', () => {
+  assert.equal(typeof charts.chartReason, 'function')
+  const root = Object.assign(Error('connect ECONNREFUSED 10.0.0.1:5432 via https://rpc.example/?api-key=SECRET_KEY_VALUE ' +
+    'key 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'), { code: 'ECONNREFUSED' })
+  const reason = charts.chartReason(Error('CHART_READ_UNAVAILABLE', { cause: root }))
+  assert.equal(reason.name, 'Error')
+  assert.equal(reason.code, 'ECONNREFUSED')
+  assert.equal(reason.message, 'connect ECONNREFUSED <ip> via <url> key <redacted>')
+  assert.match(reason.at, /^recovery-chart-indexer\.test\.mjs:\d+$/)
+  assert.equal(/SECRET_KEY_VALUE|10\.0\.0\.1|7xKXtg/.test(JSON.stringify(reason)), false)
+  assert.equal(charts.chartReason(Error('Query read timeout')).message, 'Query read timeout')
+  assert.equal(charts.chartReason(Object.assign(Error('x'.repeat(500)), { name: 'TypeError' })).message.length <= 200, true)
+  assert.equal(charts.chartReason(null), null)
+  assert.equal(charts.chartReason('text'), null)
 })
 
 test('a market with no earlier history is read from its own finalized launch transaction, and must end exactly there', async () => {
