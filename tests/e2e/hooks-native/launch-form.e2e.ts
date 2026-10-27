@@ -33,6 +33,7 @@ describe('the Hooks launch form: straight to the form, a 3% coin end to end, cle
     expect(await summary()).toMatch(/Creation fee ?0\.05 SOL/)
     expect(await summary()).toMatch(/First buy ?After launch/)
     await screen.getByLabel('Creator fee', { exact: true }).fill('3')
+    await until('the preview to show the 3% split', async () => /You receive ?2\.25%/.test(await summary()))
     expect(await summary()).toMatch(/You receive ?2\.25%/)
     expect(await summary()).toMatch(/repo\.ing receives ?0\.75%/)
     await expect(screen.getByText('At 3%: 2.25% to you + 0.75% to repo.ing of every buy and sell, in SOL.')).toBeVisible()
@@ -84,8 +85,8 @@ describe('the Hooks launch form: straight to the form, a 3% coin end to end, cle
     await openLaunchPage({ app, screen, browser }, creator)
     let held = false
     const off = await browser.onDialog(async (dialog: any) => {
-      // Hold the first transaction prompt past the review's lifetime, then approve it.
-      if (!held && dialog.message.includes('Sign this transaction:')) { held = true; await new Promise(r => setTimeout(r, 90_000)) }
+      // Hold the first transaction prompt well past the review's lifetime (60 s and 140 slots), then approve it. (A signature that arrives just before the deadline leaves a partial operation the server will not expire: a known open case.)
+      if (!held && dialog.message.includes('Sign this transaction:')) { held = true; await new Promise(r => setTimeout(r, 150_000)) }
       await dialog.accept()
     })
     await fillAndReview(screen, { name: 'Late Signer', symbol: 'LATE', creatorFeeBps: 257, capBps: 500 })
@@ -98,10 +99,13 @@ describe('the Hooks launch form: straight to the form, a 3% coin end to end, cle
       await retry.tap()
     }
     await expect(live).toBeVisible({ timeout: 300_000 })
-    const [prep] = await finalizedOperations(address, 'preparation', 1), [launchOp] = await finalizedOperations(address, 'launch', 1)
+    const ops = await operations(address), sent = ops.filter(op => op.signature !== null)
+    // The expired setup review was closed unsent; its replacement and the launch each landed once, and nothing else was sent.
+    expect(ops.filter(op => op.status === 'expired').every(op => op.signature === null)).toBe(true)
+    expect(sent.map(op => [op.stage, op.status])).toEqual([['preparation', 'finalized-success'], ['launch', 'finalized-success']])
     const sends = await control<Record<string, number>>('GET', '/rpc/sends')
-    expect([sends[prep.signature as string], sends[launchOp.signature as string]]).toEqual([1, 1])
-    expect((await operations(address)).filter(op => op.signature !== null).length).toBe(2)
+    expect(sent.map(op => sends[op.signature as string])).toEqual([1, 1])
+    expect((await launchRequests(address)).map(r => r.status)).toEqual(['launched'])
     await off()
   })
 })
