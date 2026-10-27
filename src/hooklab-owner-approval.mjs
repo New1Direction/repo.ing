@@ -188,7 +188,7 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
     left join hook_lab_coin_profiles p on p.request_id=r.id where r.status='launched'${openLaunches?` and not exists (select 1 from hook_lab_coin_moderation m where m.request_id=r.id
      and m.id=(select max(id) from hook_lab_coin_moderation l where l.request_id=r.id) and m.action='delist')`:''} order by r.updated_at desc limit $1`,[Math.min(Math.max(1,limit|0),100)])
    return rows.filter(row=>address.safeParse(row.mint).success).map(row=>Object.freeze({id:row.id,mint:row.mint,name:row.name,symbol:row.symbol,creator:row.creator_wallet,
-    creatorFeeBps:row.creator_fee_bps,capBps:row.cap_bps,profile:publicProfile(row),stack:coinStack(row)}))
+    creatorFeeBps:row.creator_fee_bps,burnBps:row.burn_bps>0?row.burn_bps:0,capBps:row.cap_bps,profile:publicProfile(row),stack:coinStack(row)}))
   },
   // Public: the launch request (and profile) behind a launched coin, found through its launch operation's mint.
   async coinByMint(mint){

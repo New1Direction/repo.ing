@@ -52,7 +52,7 @@ export default async function HooksCoinPage({ params }) {
         <h1 className="hooks-coin-title">Coin details are loading slowly</h1><p>We couldn’t read this coin from Solana just now. Refresh in a moment.</p></section>
         : <section className="hooks-card hooks-coin-hero" aria-labelledby="hooks-coin-name">
           <HookCoinPreview image={coin?.profile ? coinImageUrl('', coin.id, 256) : null} name={market.name} symbol={market.symbol}
-            capBps={market.capBps} creatorFeeBps={market.creatorFeeBps} selectedHook={market.selectedHook} profile={coin?.profile ?? null} capLifted={market.graduated}/>
+            capBps={market.capBps} creatorFeeBps={market.creatorFeeBps} burnBps={coin?.rules?.burnBuyBps ?? 0} selectedHook={market.selectedHook} profile={coin?.profile ?? null} capLifted={market.graduated}/>
           <h1 id="hooks-coin-name" className="sr-only">{market.name} (${market.symbol})</h1>
           {coin?.moderation?.delisted && <p className="hooks-delisted-notice" role="status">{coin.moderation.notice}</p>}
           {coin?.profile?.description && <p className="hooks-coin-about">{coin.profile.description}</p>}

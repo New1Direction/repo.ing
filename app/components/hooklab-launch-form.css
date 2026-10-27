@@ -106,3 +106,10 @@
 }
 @media(max-width:400px){.hlf-coin-grid{grid-template-columns:1fr}.hlf-image{flex-direction:row;align-items:center}.hlf-links span{width:96px}}
 .hlf-error:empty{display:none}.hlf-error .inline-error{margin:12px 0 0}
+/* Burn on: the burned share of the total fee, and what each part takes. */
+.hlf-share{margin-top:16px}
+.hlf-share>span{font-size:13px;color:var(--muted)}
+.hlf-split{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:14px 0 0}
+.hlf-split div{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--field)}
+.hlf-split dt{font-size:12px;color:var(--muted)}
+.hlf-split dd{margin:2px 0 0;font-weight:600;color:var(--text)}

@@ -8,7 +8,7 @@ import { ArrowRight, ChevronDown, Globe, Image as ImageIcon, Info, LoaderCircle,
 import { percent } from '../../src/hooklab-launch-menus.mjs'
 import { COIN_DESCRIPTION_MAX } from '../../src/hooklab-coin-profile.mjs'
 import { inclusiveCreatorFee } from '../../src/hooklab-inclusive-fee-quote.mjs'
-import { OPEN_LAUNCH_NOTE, SELECTED_HOOK_NOTE, openLaunchCosts } from '../lib/hooklab-open-launch.mjs'
+import { BURN_DESCRIPTION, OPEN_LAUNCH_NOTE, SELECTED_HOOK_NOTE, openFeeSplit, openLaunchCosts } from '../lib/hooklab-open-launch.mjs'
 import { HookCatalogSelector } from './hooklab-hook-catalog'
 import { HookSelectedEconomics } from './hooklab-coin-form'
 import { HooksOperationError } from './hooks-ui'
@@ -30,6 +30,16 @@ export function feeBreakdown(creatorFeeBps) {
 }
 // A typed percent as the whole basis points the server takes (3 → 300, 2.57 → 257); '' stays empty for validation.
 export const percentToBps = text => text === '' ? '' : Math.round(Number(text) * 100)
+const burnOf = coin => !isSelected(coin) && coin.rules && coin.rules !== 'none' ? coin.rules.burnBuyBps : 0
+
+// With Burn on (owner design 2026-10-27): one total fee and the burn's share of it; the creator takes the rest. What the
+// coin then carries (creatorFeeBps and rules, as the reserve/review path takes them) and why the chain would refuse it.
+export function burnFeeChange(menus, current, next) {
+  const value = { totalBps: current.feeTotalBps ?? current.creatorFeeBps, burnShareBps: current.burnShareBps ?? 0, ...next }
+  const fee = openFeeSplit(menus, value)
+  return { feeTotalBps: value.totalBps, burnShareBps: value.burnShareBps, creatorFeeBps: fee.creatorFeeBps ?? '', rules: fee.rules,
+    problem: fee.problem, lines: fee.lines, maxTotalBps: fee.maxTotalBps }
+}
 
 function ImageTile({ value, onChange, onBusyChange, disabled }) {
   const [uploading, setUploading] = useState(false), [error, setError] = useState('')
@@ -114,12 +124,40 @@ function CreatorFee({ coin, set, disabled, menus }) {
   </>
 }
 
+// The total fee (0 to 10%) and the burn's share of it. The creator's part keeps the 75/25 split; the burn destroys coins.
+function BurnFee({ coin, set, disabled, menus }) {
+  const now = burnFeeChange(menus, coin, {}), totalBps = now.feeTotalBps, burnShareBps = now.burnShareBps
+  const change = next => { const { problem: _, lines: __, maxTotalBps: ___, ...fields } = burnFeeChange(menus, coin, next); set(fields) }
+  const split = feeBreakdown(now.creatorFeeBps), burnBps = now.rules?.burnBuyBps ?? 0, max = now.maxTotalBps
+  const shareOf = text => Math.min(10000, Math.max(0, Math.round(Number(text) * 100)))
+  return <>
+    <div className="hlf-percent"><input id="fee-total-percent" type="number" inputMode="decimal" min={0} max={max / 100} step={0.01} value={totalBps === '' ? '' : totalBps / 100}
+      disabled={disabled} aria-describedby="fee-total-split" onChange={e => change({ totalBps: percentToBps(e.target.value) })}/><span>%</span></div>
+    <div className="hlf-slider"><span>0%</span>
+      <input type="range" min={0} max={max} step={1} value={Number.isInteger(totalBps) ? totalBps : 0} disabled={disabled} aria-label="Total fee slider"
+        aria-valuetext={percent(totalBps || 0)} onChange={e => change({ totalBps: Number(e.target.value) })} style={{ '--fill': `${(Number(totalBps) || 0) / max * 100}%` }}/>
+      <span>{percent(max)}</span></div>
+    <label className="hlf-field hlf-share"><span>Burned share of the fee</span>
+      <div className="hlf-slider"><span>0%</span>
+        <input id="fee-share-burn" type="range" min={0} max={100} step={1} value={burnShareBps / 100} disabled={disabled} aria-label="Burn share of the fee"
+          aria-valuetext={percent(burnShareBps)} onChange={e => change({ burnShareBps: shareOf(e.target.value) })} style={{ '--fill': `${burnShareBps / 100}%` }}/>
+        <span>100%</span></div></label>
+    <dl id="fee-total-split" className="hlf-split">
+      <div><dt>You receive</dt><dd>{split ? share(split.creatorBps) : '—'}</dd></div>
+      <div><dt>repo.ing receives</dt><dd>{split ? share(split.platformBps) : '—'}</dd></div>
+      <div><dt>Burned</dt><dd>{percent(burnBps)}</dd></div>
+    </dl>
+    <p className="hlf-hint">{now.lines && <strong>{now.lines.total}</strong>}<span>You receive 75% and repo.ing 25% of the creator part, in SOL. {BURN_DESCRIPTION}</span></p>
+    {now.problem && <p className="inline-error" role="alert">{now.problem}</p>}
+  </>
+}
+
 function TradingRules({ coin, set, disabled, menus, allowSelectedHook }) {
-  const selected = isSelected(coin), caps = menus?.capBps ?? []
+  const selected = isSelected(coin), caps = menus?.capBps ?? [], burn = !selected && menus?.burnEnabled === true
   return <section className="hlf-section" aria-labelledby="hlf-rules">
     <h2 id="hlf-rules"><span>02</span>Trading rules</h2>
-    <div className="hlf-rule"><label htmlFor={selected ? 'selected-creator-fee' : 'creator-fee-percent'}>Creator fee</label><div>
-      {selected ? <>
+    <div className="hlf-rule"><label htmlFor={selected ? 'selected-creator-fee' : burn ? 'fee-total-percent' : 'creator-fee-percent'}>{burn ? 'Total fee' : 'Creator fee'}</label><div>
+      {burn ? <BurnFee coin={coin} set={set} disabled={disabled} menus={menus}/> : selected ? <>
         <div className="hlf-percent"><input id="selected-creator-fee" aria-label="Creator fee (bps)" type="number" min={0} max={menus?.maxCreatorFeeBps} step={1} required value={coin.creatorFeeBps}
           disabled={disabled || !Number.isInteger(menus?.maxCreatorFeeBps)} onChange={e => set({ creatorFeeBps: e.target.value === '' ? '' : Number(e.target.value) })}/><span>bps</span></div>
         <p className="hlf-hint">Gross fee: repo.ing receives floor(gross / 4); you receive the rest, then any author share you configure.</p>
@@ -131,7 +169,7 @@ function TradingRules({ coin, set, disabled, menus, allowSelectedHook }) {
       <p className="hlf-hint">No wallet can hold more than {percent(coin.capBps)} of the supply until the coin graduates. After graduation the limit lifts.</p>
     </div></div>}
     <div className="hlf-soon" aria-label="Not available yet">
-      <span aria-disabled="true"><i aria-hidden="true"/>Burn<small>Coming soon</small></span>
+      {!burn && <span aria-disabled="true"><i aria-hidden="true"/>Burn<small>Coming soon</small></span>}
       <span aria-disabled="true"><i aria-hidden="true"/>Holders Earn<small>Coming soon</small></span>
     </div>
     {allowSelectedHook && <details className="hlf-more hlf-advanced" open={selected || undefined}>
@@ -151,7 +189,7 @@ function TradingRules({ coin, set, disabled, menus, allowSelectedHook }) {
 
 // The right column: the coin as people will see it, then what launching costs and the one action.
 export function HookLaunchSummary({ coin, openCreation, costs, disabled, busyLabel, error = '', errorRef = null }) {
-  const selected = isSelected(coin), split = selected ? null : feeBreakdown(coin.creatorFeeBps)
+  const selected = isSelected(coin), split = selected ? null : feeBreakdown(coin.creatorFeeBps), burnBps = openCreation?.burnEnabled ? burnOf(coin) : 0
   const { rows, total, need } = openLaunchCosts(selected ? { launchFeeLamports: openCreation?.launchFeeLamports } : openCreation, selected ? {} : costs)
   const [failed, setFailed] = useState(null)
   return <aside className="hlf-summary" aria-label="Coin preview and launch cost">
@@ -162,8 +200,10 @@ export function HookLaunchSummary({ coin, openCreation, costs, disabled, busyLab
         <div><strong>{coin.name.trim() || 'Your coin'}</strong><span>${coin.symbol || 'TICKER'}</span></div>
       </div>
       <dl>
+        {burnBps > 0 && <div><dt>Total fee</dt><dd>{coin.creatorFeeBps === '' ? '—' : percent(coin.creatorFeeBps + burnBps)}</dd></div>}
         <div><dt>Creator fee</dt><dd>{coin.creatorFeeBps === '' ? '—' : selected ? `${coin.creatorFeeBps} bps` : percent(coin.creatorFeeBps)}</dd></div>
         {split && <><div><dt>You receive</dt><dd>{share(split.creatorBps)}</dd></div><div><dt>repo.ing receives</dt><dd>{share(split.platformBps)}</dd></div></>}
+        {burnBps > 0 && <div><dt>Burned</dt><dd>{percent(burnBps)}</dd></div>}
         <div><dt>Max per wallet</dt><dd>{selected ? 'Set by hook' : percent(coin.capBps)}</dd></div>
       </dl>
     </div>

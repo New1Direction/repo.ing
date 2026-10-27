@@ -101,3 +101,45 @@ test('a wallet holding less than the launch needs is told before anything is sig
   assert.equal(await walletShortfall('w', '92800000', async () => { throw Error('offline') }), '')
   assert.equal(await walletShortfall('w', null, reply('1')), '', 'need unknown')
 })
+
+// Burn on (owner design 2026-10-27): one total fee from 0 to 10%, split by shares between the creator and a token burn.
+// The 75/25 platform split applies only inside the creator's part; the coin carries creatorFeeBps and rules exactly as the
+// reserve/review path takes them (mainnet smoke: creator 200 + burn 300).
+const burnMenus = { ...menus, burnEnabled: true, maxBurnBps: 1000, maxRulesFeeBps: 1000, maxHolderFeeBps: 1000 }
+const burnCoin = { ...coin, feeTotalBps: 500, burnShareBps: 6000, creatorFeeBps: 200, rules: { burnBuyBps: 300, burnSellBps: 300 } }
+
+test('with Burn on, the form splits one total fee: what the creator, repo.ing and the burn each take', () => {
+  const markup = text(form({ coin: burnCoin, menus: burnMenus, openCreation: { ...openCreation, burnEnabled: true, maxBurnBps: 1000, maxRulesFeeBps: 1000, maxHolderFeeBps: 1000 } }))
+  assert.match(markup, /Total fee/)
+  assert.match(markup, /You receive 1\.5%/); assert.match(markup, /repo\.ing receives 0\.5%/); assert.match(markup, /Burned 3%/)
+  assert.match(markup, /Every buy and sell pays 5% in total/)
+  assert.doesNotMatch(markup, /Burn Coming soon/); assert.match(markup, /Holders Earn Coming soon/)
+})
+
+test('the burn split arithmetic is the server’s and the programs’: parts add up, rules as the reserve path takes them', async () => {
+  const { burnFeeChange } = await appModule('app/components/hooklab-launch-form.jsx')
+  const { splitFee } = await import('../src/hooklab-fee-split.mjs')
+  const { gateBurnRulesSchema } = await import('../src/hooklab-inclusive-max-wallet-profile.mjs')
+  for (const [totalBps, burnShareBps] of [[500, 6000], [1000, 5000], [300, 0], [1000, 10000], [757, 3333], [0, 5000]]) {
+    const next = burnFeeChange(burnMenus, { feeTotalBps: totalBps, burnShareBps }, {})
+    const split = splitFee({ totalBps, shares: { creator: 10000 - burnShareBps, burn: burnShareBps } })
+    assert.equal(next.creatorFeeBps, split.creatorFeeBps, `${totalBps}/${burnShareBps}`)
+    assert.equal(next.creatorFeeBps + (next.rules?.burnBuyBps ?? 0), totalBps)
+    if (split.burnBps) assert.deepEqual(gateBurnRulesSchema.parse(next.rules), { burnBuyBps: split.burnBps, burnSellBps: split.burnBps })
+    else assert.equal(next.rules, undefined)
+  }
+  assert.match(burnFeeChange(burnMenus, { feeTotalBps: 1000, burnShareBps: 0 }, {}).problem, /creator fee can be at most 5%/)
+  assert.match(burnFeeChange(burnMenus, { feeTotalBps: 1100, burnShareBps: 5000 }, {}).problem, /total fee from 0% to 10%/)
+})
+
+test('with Burn off the form is unchanged and carries no burn', () => {
+  const markup = form({ coin: burnCoin })
+  assert.match(text(markup), /Burn Coming soon/); assert.doesNotMatch(text(markup), /Burned 3%/)
+})
+
+test('the coin card shows the total fee and the burn, not only the creator fee', async () => {
+  const { HookCoinPreview } = await appModule('app/components/hooklab-coin-form.jsx')
+  const card = text(html(h(HookCoinPreview, { name: 'Smoke', symbol: 'SMKBRN', capBps: 100, creatorFeeBps: 200, burnBps: 300 })))
+  assert.match(card, /5% total fee \(2% creator \+ 3% burn\)/)
+  assert.match(text(html(h(HookCoinPreview, { name: 'Plain', symbol: 'P', capBps: 100, creatorFeeBps: 200 }))), /2% creator fee/)
+})

@@ -25,7 +25,7 @@ export function HookCoinPreview({ image, name, symbol, capBps, creatorFeeBps, bu
   return <div className="launch-token-summary hooks-coin-preview" role="group" aria-label="Coin preview">
     <div className="preview-avatar">{shown ? <img src={image} alt="" onError={() => setFailed(image)}/> : <ImageIcon size={24} aria-hidden="true"/>}</div>
     <div><strong>${symbol || 'TICKER'}</strong><span>{name || 'Coin name'}</span>
-      <small>{selectedHook ? 'Custom hook · Wallet limits set by hook' : capLifted ? 'No max per wallet' : `Max ${percent(capBps)} per wallet`} · {percent(creatorFeeBps)} creator fee{burnBps > 0 ? ` · ${percent(burnBps)} burn` : ''}</small>
+      <small>{selectedHook ? 'Custom hook · Wallet limits set by hook' : capLifted ? 'No max per wallet' : `Max ${percent(capBps)} per wallet`} · {burnBps > 0 ? `${percent(creatorFeeBps + burnBps)} total fee (${percent(creatorFeeBps)} creator + ${percent(burnBps)} burn)` : `${percent(creatorFeeBps)} creator fee`}</small>
       {Object.keys(links).length > 0 && <span className="hooks-coin-links">{Object.entries(links).map(([key, href]) => {
         const Icon = LINK_ICONS[key]
         return <a key={key} href={href} target="_blank" rel="noopener noreferrer"><Icon/>{LINK_LABELS[key]}</a>

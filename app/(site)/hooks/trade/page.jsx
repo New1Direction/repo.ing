@@ -26,7 +26,7 @@ export default async function HooksTradePage({ searchParams }) {
     Trade coins launched with Hooks blocks, with SOL. Pick a coin to see its price, its rules and your balance.
   </HooksIntro><HooksNav active="trade"/>
     {coins.length ? <ul className="hooks-coin-list">{coins.map(coin => <li key={coin.mint}><Link href={`/hooks/token/${coin.mint}`} className="hooks-coin-row">
-      <HookCoinPreview image={coin.profile ? coinImageUrl('', coin.id, 128) : null} name={coin.name} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps}/>
+      <HookCoinPreview image={coin.profile ? coinImageUrl('', coin.id, 128) : null} name={coin.name} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} burnBps={coin.burnBps}/>
       <span className="hooks-coin-row-cta">Trade <ArrowRight size={16} aria-hidden="true"/></span></Link></li>)}</ul>
       : <section className="hooks-card hooks-empty"><img src="/hook-icons/max-wallet.webp?v=2" width={72} height={72} alt=""/><h2>No coins yet</h2>
         <p>Coins launched with Hooks blocks show up here as soon as they go live.</p><Link className="button primary" href="/hooks/launch-review">Launch the first one</Link></section>}
