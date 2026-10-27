@@ -50,8 +50,12 @@ const hookBindingNames = ['HOOKS_RECOVERY_ENABLED', 'HOOK_WALLET_IDENTITY_DATABA
   'HOOKLAB_PRODUCTION_RPC_PRIMARY_URL', 'HOOKLAB_PRODUCTION_RPC_SECONDARY_URL', 'HOOKLAB_PRODUCTION_BUNDLE_FILE', 'HOOKLAB_PRODUCTION_BUNDLE_SHA256',
   'HOOKLAB_STACK_BUNDLE_FILE', 'HOOKLAB_STACK_BUNDLE_SHA256', 'HOOK_LAUNCH_ADMIN_ADDRESS', 'HOOK_STACK_ADMIN_ADDRESS', 'HOOKLAB_PRIORITY_MICROLAMPORTS',
   ...hookSwitchNames]
-// Optional: the wallets that may trade before HOOK_TRADING_PUBLIC is 'true'.
-const hookOptionalNames = ['HOOK_TRADING_TESTER_WALLETS']
+// Optional: the wallets that may trade before HOOK_TRADING_PUBLIC is 'true'; the Burn switch (absent is off, so an unset
+// binding leaves the container's identity as it was).
+const hookOptionalNames = ['HOOK_TRADING_TESTER_WALLETS', 'HOOK_BURN_ENABLED']
+// Burn (owner design 2026-10-27): optional, off unless 'true'; on only with open launches (a token burn launches only through
+// open creation).
+const burnSwitch = bindings => bindings.HOOK_BURN_ENABLED === 'true' && bindings.HOOK_OPEN_LAUNCHES === 'true' ? 'true' : 'false'
 const hooksEnabled = bindings => bindings.EXISTING_MARKET_TRADING_STAGE === 'live' && bindings.HOOKS_RECOVERY_ENABLED === 'true'
 const base58Key = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
 const hookPages = new Set(['/hooks/launch-review', '/hooks/mine', '/hooks/trade', '/hooks/blocks', '/hooks/new', '/hooks/wallet-identity'])
@@ -95,7 +99,8 @@ function snapshotBindings(env) {
 function hookBindingProblem(bindings) {
   if (!hooksEnabled(bindings)) return 'Hooks run only on the live stage'
   if (hookBindingNames.some(name => typeof bindings[name] !== 'string' || !bindings[name].trim())) return 'a Hooks binding is missing'
-  if (hookSwitchNames.some(name => !['true', 'false'].includes(bindings[name]))) return 'a Hooks switch is not true or false'
+  if (hookSwitchNames.some(name => !['true', 'false'].includes(bindings[name])) || ![undefined, 'true', 'false'].includes(bindings.HOOK_BURN_ENABLED))
+    return 'a Hooks switch is not true or false'
   if (bindings.HOOK_NATIVE_LAUNCH_ENABLED !== 'true' || bindings.HOOK_WALLET_IDENTITY_ENABLED !== 'true') return 'native launch and wallet identity must be on'
   if (bindings.HOOK_OPEN_LAUNCHES === 'true' && bindings.HOOK_NATIVE_LAUNCHES_ENABLED !== 'true') return 'open launches are native SOL only'
   if (bindings.HOOK_NATIVE_TRADING_ENABLED === 'true' && bindings.HOOK_INCLUSIVE_TRADING_ENABLED !== 'true') return 'native trading rides on the trade runtime'
@@ -124,7 +129,7 @@ function hookBindingProblem(bindings) {
 // The container environment for Hooks: the validated bindings, the bootstrap switch and the fixed origin.
 const hookEnvironment = (bindings, appOrigin) => ({
   ...Object.fromEntries([...hookBindingNames.slice(1), ...hookOptionalNames].filter(name => bindings[name] !== undefined).map(name => [name, bindings[name]])),
-  HOOK_PRODUCTION_BOOTSTRAP: 'true', HOOK_WALLET_IDENTITY_ORIGIN: appOrigin,
+  HOOK_PRODUCTION_BOOTSTRAP: 'true', HOOK_WALLET_IDENTITY_ORIGIN: appOrigin, HOOK_BURN_ENABLED: burnSwitch(bindings),
 })
 
 // A Hooks request: only the two Hooks wallet cookies, and only on the wallet-session routes; same-origin bodies within each
@@ -360,6 +365,7 @@ export class PublicSite extends Container {
         HOOK_INCLUSIVE_TRADING_ENABLED: 'false',
         HOOK_NATIVE_TRADING_ENABLED: 'false',
         HOOK_WALLET_IDENTITY_ENABLED: 'false',
+        HOOK_BURN_ENABLED: 'false',
         ...hooksEnabled(bindings) ? hookEnvironment(bindings, appOrigin) : {},
         // Never on from here: creator-chosen hooks, wallet funding and owner-approved launches.
         HOOK_WALLET_FUNDING_ENABLED: 'false',

@@ -14,7 +14,7 @@ const inputs = { configs, custody: { sha256: '2c31354ba8009acb0da1319b068f479216
     DBC_CONFIG: '3ZESQPHgao8ZyyEU4tJSwDmrVC3nunhGnTFVGdarRDbZ', DBC_LEGACY_CONFIGS: ['Fy2bhQbNPxLPShPxEuTnYzusWgSpSVEgCZ9cbby32TU7', ...configs].join(','),
     TRADING_CUSTODY_RECOVERY_SHA256: '2c31354ba8009acb0da1319b068f479216b0615120328510cba50665f0ecd888' } }
 const mint = '59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be'
-const hookFlags = ['HOOK_PRODUCTION_BOOTSTRAP', 'HOOK_NATIVE_LAUNCH_ENABLED', 'HOOK_NATIVE_LAUNCHES_ENABLED', 'HOOK_INCLUSIVE_TRADING_ENABLED', 'HOOK_NATIVE_TRADING_ENABLED', 'HOOK_WALLET_FUNDING_ENABLED', 'HOOK_WALLET_IDENTITY_ENABLED', 'HOOK_SELECTED_HOOKS_ENABLED']
+const hookFlags = ['HOOK_PRODUCTION_BOOTSTRAP', 'HOOK_NATIVE_LAUNCH_ENABLED', 'HOOK_NATIVE_LAUNCHES_ENABLED', 'HOOK_INCLUSIVE_TRADING_ENABLED', 'HOOK_NATIVE_TRADING_ENABLED', 'HOOK_WALLET_FUNDING_ENABLED', 'HOOK_WALLET_IDENTITY_ENABLED', 'HOOK_SELECTED_HOOKS_ENABLED', 'HOOK_BURN_ENABLED']
 
 async function fixture(bundledManifest = manifest) {
   assert(existsSync(workerUrl), 'deployable review worker must exist')
@@ -686,3 +686,20 @@ test('Hooks on: exactly the open-launch, native trading and claim routes, with t
   assert.equal(f.runtime.calls.at(-1).request.headers.has('cookie'), false)
 })
 
+
+// Burn (owner design 2026-10-27): an optional switch, off unless 'true'. Forwarded only with Hooks and open launches on (a
+// token burn launches only through open creation); a binding that is neither 'true' nor 'false' closes the site.
+test('HOOK_BURN_ENABLED is off by default and forwarded only with Hooks and open launches on', async () => {
+  const f = await fixture()
+  Object.assign(f.env, { EXISTING_MARKET_TRADING_STAGE: 'live' }, hookBindings()); delete f.env.HOOK_BURN_ENABLED
+  const forwarded = async () => { const response = await f.request('/hooks/new'); assert.equal(response.status, 200); return f.runtime.calls.at(-1).env.HOOK_BURN_ENABLED }
+  assert.equal(await forwarded(), 'false', 'absent: off, and Hooks stay on')
+  f.env.HOOK_BURN_ENABLED = 'false'; assert.equal(await forwarded(), 'false')
+  f.env.HOOK_BURN_ENABLED = 'true'; assert.equal(await forwarded(), 'true')
+  f.env.HOOK_OPEN_LAUNCHES = 'false'; assert.equal(await forwarded(), 'false', 'no open launches, no burn')
+  Object.assign(f.env, hookBindings(), { HOOK_BURN_ENABLED: 'yes' })
+  assert.equal((await f.request('/explore')).status, 503)
+  Object.assign(f.env, { HOOK_BURN_ENABLED: 'true', HOOKS_RECOVERY_ENABLED: 'false' })
+  const body = await (await f.request()).json()
+  assert.equal(body.HOOK_BURN_ENABLED, 'false', 'Hooks off: off')
+})
