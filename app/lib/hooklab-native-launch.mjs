@@ -20,6 +20,7 @@ import { selectedHookPreparationRequestSchema as preparationSchema } from '../..
 import { selectedHookEconomics } from './hooklab-native-launch-form.mjs'
 import { isOpenCreatorFeeChoice } from '../../src/hooklab-launch-menus.mjs'
 import { refusalLine } from '../../src/hooklab-refusal-log.mjs'
+import { rpcLabel, withRpcTiming } from '../../src/hooklab-rpc-timing.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 const inputSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('reserve'),operationId:uuid,capBps:z.number().int().min(0).max(9999),selectedHook:selectedHookSchema.optional(),hookPublication:hookPublicationSelectionSchema.optional(),quoteCut:preparationSchema.shape.quoteCut,authorShareBps:preparationSchema.shape.authorShareBps,rules:preparationSchema.shape.rules.optional(),label:text(32).min(1),name:text(32).min(1),symbol:text(10).min(1),uri:text(200),virtualQuote:z.string().regex(/^(0|[1-9][0-9]*)$/).max(20),creatorFeeBps:z.number().int().min(0).max(9999)}).strict().refine(x=>x.selectedHook?x.capBps===0:x.capBps>0&&x.quoteCut===undefined&&x.authorShareBps===undefined&&(x.rules===undefined||gateBurnRulesSchema.safeParse(x.rules).success),'Selected hooks cannot claim a max-wallet cap'),
@@ -41,7 +42,9 @@ const customerWalletRequest=value=>{if(!value?.review)return value;const {accoun
 // never clamped, outside the bounds).
 export function createNativeLaunchHandler({env=process.env,configuration=walletIdentityConfiguration,runtime=nativeLaunchRuntime,
  database=createHookLabDatabasePool,principalStore=walletPrincipalStore,quota=walletIdentityQuota,ownerApprovals=ownerApprovalStore,launchPrice=launchPriceAtInvite}={}){
- return async request=>{
+ // One rpc line per request (src/hooklab-rpc-timing.mjs): where its chain time went.
+ return request=>withRpcTiming(()=>handle(request))
+ async function handle(request){
   if(env.HOOK_NATIVE_LAUNCH_ENABLED!=='true'||env.HOOK_WALLET_IDENTITY_ENABLED!=='true')return reply({status:'blocked',blockers:[{code:'NATIVE_LAUNCH_DISABLED',message:'The native launcher is not enabled.'}]})
   let pool,action='-'
   try{
@@ -52,7 +55,7 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
    if(request.headers.get('content-type')?.split(';')[0].trim()!=='application/json')return reply({error:'JSON required.'},415)
    const token=walletIdentitySessionToken(request);if(!token)return reply({error:'Sign in with your wallet first.'},401)
    let input;try{input=inputSchema.parse(JSON.parse((await readLimitedBody(request,65536)).toString('utf8')))}catch{return reply({error:'Invalid launcher request.'},400)}
-   action=input.action
+   action=input.action;rpcLabel(`native-launch ${action}`)
    pool=database(config)
    const observing=input.action==='get'||input.action==='reconcile'
    if(!await quota(pool,[[`native-launch:${observing?'observe':'action'}:${clientAddress(request)??'unknown'}`,observing?120:30]]))return reply({error:'Too many requests. Try again later.'},429)
