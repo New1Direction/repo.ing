@@ -102,7 +102,7 @@ test('a burn rounds down and is dropped when it is not below the amount; no burn
   const none = modelInclusiveCreatorQuote(input()), zero = modelInclusiveCreatorQuote({ ...input(), rules: burn(0) })
   assert.deepEqual({ ...zero, burned: undefined }, { ...none, burned: undefined })
   assert.equal(none.burned, 0n)
-  for (const bad of [{ burnBuyBps: 600, burnSellBps: 500 }, { burnBuyBps: 1001, burnSellBps: 1001 }, { burnBuyBps: 1.5, burnSellBps: 1.5 },
+  for (const bad of [{ burnBuyBps: 950, burnSellBps: 500 }, { burnBuyBps: 1001, burnSellBps: 1001 }, { burnBuyBps: 1.5, burnSellBps: 1.5 },
     { burnBuyBps: 100, burnSellBps: 100, holderFeeBuyBps: 1 }]) assert.throws(() => modelInclusiveCreatorQuote({ ...input(), rules: bad }), /UNSUPPORTED_INCLUSIVE_ECONOMICS/)
   // The combined ceiling: creator + burn is at most 10% on each side.
   assert.throws(() => modelInclusiveCreatorQuote({ ...input(), creatorFeeBps: 500, policy: { ...input().policy, creatorFeeBps: 500 }, rules: burn(501) }), /UNSUPPORTED_INCLUSIVE_ECONOMICS/)

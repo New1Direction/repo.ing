@@ -1,8 +1,8 @@
 // Source-candidate arithmetic only. No release pin, RPC observation, signing or submission.
 // Mirrors bordrless-core swap_out/creator_and_holder_fees/inclusive_creator_fee/trade_burn,
 // Launch process_inclusive_swap and DEX swap mode 2. Never use for legacy modes 0/1.
-// rules: 'none', or a token burn { burnBuyBps, burnSellBps } (one rate, both sides; owner 2026-10-27): a buy burns from
-// the curve's output before delivery, a sell from its input before the curve. Holder fees are not supported here yet.
+// rules: 'none', or a token burn { burnBuyBps, burnSellBps } (owner 2026-10-27; the site launches one rate for both sides, the
+// programs take each side's own): a buy burns from the curve's output before delivery, a sell from its input before the curve. Holder fees are not supported here yet.
 const U64 = (1n << 64n) - 1n, U128 = (1n << 128n) - 1n
 const check = (ok, code) => { if (!ok) throw Error(code) }
 const amount = n => { check(typeof n === 'bigint' && n >= 0n && n <= U64, 'INVALID_U64'); return n }
@@ -12,13 +12,12 @@ export function tradeBurn(basis, burnBps) {
   const burned = amount(basis) * BigInt(burnBps) / 10000n
   return burned < basis ? burned : 0n
 }
-// The burn rate a quote applies, or a refusal: one whole rate for both sides, and creator + burn within 10% per side.
-function burnRateOf(rules, creatorFeeBps) {
+// The burn rate a quote applies on this side, or a refusal: whole rates, and creator + burn within 10% on each side.
+function burnRateOf(rules, creatorFeeBps, buy) {
   if (rules === 'none') return 0
-  const keys = Object.keys(rules ?? {}).sort().join()
-  check(keys === 'burnBuyBps,burnSellBps' && rules.burnBuyBps === rules.burnSellBps && Number.isInteger(rules.burnBuyBps)
-    && rules.burnBuyBps >= 0 && rules.burnBuyBps + creatorFeeBps <= 1000, 'UNSUPPORTED_INCLUSIVE_ECONOMICS')
-  return rules.burnBuyBps
+  const keys = Object.keys(rules ?? {}).sort().join(), rates = [rules?.burnBuyBps, rules?.burnSellBps]
+  check(keys === 'burnBuyBps,burnSellBps' && rates.every(r => Number.isInteger(r) && r >= 0 && r + creatorFeeBps <= 1000), 'UNSUPPORTED_INCLUSIVE_ECONOMICS')
+  return buy ? rules.burnBuyBps : rules.burnSellBps
 }
 export function inclusiveCreatorFee(basis, creatorFeeBps) {
   amount(basis)
@@ -53,7 +52,7 @@ function inclusiveQuote(input,cap) {
     && input.flatProtocolFeeBps === 0 && input.sniperWindowSecs === 0 && input.sniperStartBps === 0
     && input.quoteHook === 'none' && input.modules === 0 && input.authorShareBps === 0
     && input.rewards === false, 'UNSUPPORTED_INCLUSIVE_ECONOMICS')
-  const burnBps = burnRateOf(input.rules, creatorFeeBps)
+  const burnBps = burnRateOf(input.rules, creatorFeeBps, side === 'buy')
   amount(amountIn); amount(minAmountOut); amount(input.maxInput); amount(input.recipientBaseBalance)
   check(amountIn > 0n && minAmountOut > 0n && amountIn <= input.maxInput, 'INPUT_OR_OUTPUT_BOUND')
   for (const k of ['baseReserve', 'quoteReserve', 'virtualBase', 'virtualQuote', 'protocolFeesQuote']) amount(pool[k])
