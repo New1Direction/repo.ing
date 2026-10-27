@@ -18,6 +18,7 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { Connection } from '@solana/web3.js'
 import { MAINNET_ROLES } from '../src/hooklab-owner-driver/pins.mjs'
+import { MULTISIG_VAULT } from '../src/custody-multisig.mjs'
 import { PRODUCTION_NETWORK } from '../src/hooklab-production-operator-bundle.mjs'
 import { collectStackProductionBundle } from '../src/hooklab-production-stack-bundle.mjs'
 import { stackFromIndependentBuild } from '../src/hooklab-stack-build.mjs'
@@ -43,7 +44,10 @@ async function localInputs() {
     trustDomains: urls.map((url, i) => ({ provider: providers[i], trustDomain: 'single-local-validator', origin: new URL(url).origin })) }
 }
 function mainnetInputs() {
-  if (opt.rpc || opt.rpc2 || opt.reviewer || opt.treasury) die('Mainnet reads its RPC URLs from the environment and pins the owner roles; drop --rpc/--rpc2/--reviewer/--treasury or add --local')
+  if (opt.rpc || opt.rpc2 || opt.treasury) die('Mainnet reads its RPC URLs from the environment and pins the owner roles; drop --rpc/--rpc2/--treasury or add --local')
+  // The admin is DVdd until the owner-approved handover to the custody vault (2026-10-26); after it, --reviewer names the vault.
+  const reviewer = opt.reviewer ?? MAINNET_ROLES.admin
+  if (![MAINNET_ROLES.admin, MULTISIG_VAULT].includes(reviewer)) die(`--reviewer must be the pinned admin or the custody vault ${MULTISIG_VAULT}`)
   if (!opt['approval-reference']) die('Required: --approval-reference TEXT')
   const urls = [process.env.HOOKLAB_PRODUCTION_RPC_PRIMARY_URL, process.env.HOOKLAB_PRODUCTION_RPC_SECONDARY_URL]
   if (!urls.every(u => typeof u === 'string' && u.startsWith('https://'))) die('Set HOOKLAB_PRODUCTION_RPC_PRIMARY_URL and HOOKLAB_PRODUCTION_RPC_SECONDARY_URL (HTTPS) first.')
@@ -54,7 +58,7 @@ function mainnetInputs() {
   })
   if (trustDomains[0].trustDomain === trustDomains[1].trustDomain) die('The two RPC URLs must be independent providers.')
   return { connections: urls.map((url, i) => ({ provider: trustDomains[i].provider, connection: connect(url) })), trustDomains, network: PRODUCTION_NETWORK,
-    reviewer: MAINNET_ROLES.admin, treasury: MAINNET_ROLES.treasury, approvalReference: opt['approval-reference'] }
+    reviewer, treasury: MAINNET_ROLES.treasury, approvalReference: opt['approval-reference'] }
 }
 
 try {
