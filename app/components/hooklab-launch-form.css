@@ -99,6 +99,10 @@
   .hlf-mobile-bar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:40;gap:12px;align-items:center;padding:10px 16px calc(10px + env(safe-area-inset-bottom));background:color-mix(in srgb,#0b0d0e 92%,transparent);backdrop-filter:blur(10px);border-top:1px solid var(--line)}
   .hlf-mobile-bar>div{display:grid;flex:none}.hlf-mobile-bar span{font-size:11px;color:var(--muted)}.hlf-mobile-bar strong{font-size:15px;font-variant-numeric:tabular-nums}
   .hlf-mobile-bar .hlf-primary{margin:0;flex:1;min-height:46px}
+  .hooks-page:has(.hlf-mobile-bar){padding-bottom:96px}
+  .hooks-open-launch .hooks-launch-steps{gap:5px}
+  .hooks-open-launch .hooks-launch-steps li{padding:7px 6px;gap:5px;font-size:11.5px;line-height:1.2;white-space:normal;justify-content:center}
+  .hooks-open-launch .hooks-launch-steps li>span{width:20px;height:20px;font-size:11px}
 }
 @media(max-width:400px){.hlf-coin-grid{grid-template-columns:1fr}.hlf-image{flex-direction:row;align-items:center}.hlf-links span{width:96px}}
 .hlf-error:empty{display:none}.hlf-error .inline-error{margin:12px 0 0}

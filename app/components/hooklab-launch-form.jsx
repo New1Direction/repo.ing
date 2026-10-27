@@ -105,7 +105,7 @@ function CreatorFee({ coin, set, disabled, menus }) {
       disabled={disabled || max === null} aria-describedby="creator-fee-split" onChange={e => change(e.target.value)}/><span>%</span></div>
     <div className="hlf-slider"><span>0%</span>
       <input type="range" min={0} max={max ?? 0} step={1} value={Number.isInteger(coin.creatorFeeBps) ? coin.creatorFeeBps : 0} disabled={disabled || max === null}
-        aria-label="Creator fee" aria-valuetext={percent(coin.creatorFeeBps || 0)} onChange={e => set({ creatorFeeBps: Number(e.target.value) })}
+        aria-label="Creator fee slider" aria-valuetext={percent(coin.creatorFeeBps || 0)} onChange={e => set({ creatorFeeBps: Number(e.target.value) })}
         style={{ '--fill': `${max ? (Number(coin.creatorFeeBps) || 0) / max * 100 : 0}%` }}/>
       <span>{max === null ? '—' : percent(max)}</span></div>
     <p id="creator-fee-split" className="hlf-hint"><strong>You receive 75% · repo.ing receives 25%</strong>
