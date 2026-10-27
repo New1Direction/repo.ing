@@ -1,6 +1,7 @@
 // The self-serve launch flow's pure parts: the review screen's figures and the one guided signing step's next action.
 // No network, wallet or React here, so the server, the client component and the tests share them.
-import { DEFAULT_CREATOR_FEE_BPS, DEFAULT_WALLET_CAP_BPS } from '../../src/hooklab-launch-menus.mjs'
+import { DEFAULT_CREATOR_FEE_BPS, DEFAULT_WALLET_CAP_BPS, percent } from '../../src/hooklab-launch-menus.mjs'
+import { FEE_SHARE_TOTAL, MAX_TOTAL_FEE_BPS, checkFeeSplit, describeFeeSplit, splitFee } from '../../src/hooklab-fee-split.mjs'
 import { formatSol, formatUsd, launchValues } from '../../src/hooklab-launch-pricing.mjs'
 import { launchHookInput } from './hooklab-native-launch-form.mjs'
 
@@ -39,7 +40,26 @@ export function menuChoice(menu, current, fallback) {
   return menu.includes(current) ? current : menu.includes(fallback) ? fallback : menu[0]
 }
 export const openMenus = openCreation => ({ creatorFeeBps: openCreation?.creatorFeeBps ?? [], capBps: openCreation?.capBps ?? [], maxCreatorFeeBps: openCreation?.maxCreatorFeeBps,
-  continuousCreatorFee: openCreation?.continuousCreatorFee === true })
+  continuousCreatorFee: openCreation?.continuousCreatorFee === true, burnEnabled: openCreation?.burnEnabled === true,
+  maxBurnBps: openCreation?.maxBurnBps, maxRulesFeeBps: openCreation?.maxRulesFeeBps, maxHolderFeeBps: openCreation?.maxHolderFeeBps })
+
+// The fee form with Burn on (owner design 2026-10-27): one total fee and the burn's share of it (in basis points of 100%);
+// the creator takes the rest. What the coin carries (creatorFeeBps, rules), the most the total may be, the plain lines the
+// creator reads, and why the chain would refuse the split ('' when it would not).
+export const BURN_DESCRIPTION = 'Burn: a share of every trade’s coins is burned (destroyed), shrinking supply.'
+export function openFeeSplit(openCreation, { totalBps, burnShareBps }) {
+  const maxTotalBps = Math.min(MAX_TOTAL_FEE_BPS, Number.isInteger(openCreation?.maxRulesFeeBps) ? openCreation.maxRulesFeeBps : MAX_TOTAL_FEE_BPS)
+  let split
+  try { split = splitFee({ totalBps, shares: { creator: FEE_SHARE_TOTAL - burnShareBps, burn: burnShareBps } }) }
+  catch { return { maxTotalBps, creatorFeeBps: null, burnBps: null, rules: undefined, lines: null, problem: `Enter a total fee from 0% to ${percent(maxTotalBps)}.` } }
+  return { maxTotalBps, creatorFeeBps: split.creatorFeeBps, burnBps: split.burnBps, rules: split.burnBps ? { burnBuyBps: split.burnBps, burnSellBps: split.burnBps } : undefined,
+    lines: describeFeeSplit(split), problem: checkFeeSplit(split, openCreation ?? {}) }
+}
+// A stored coin back into the fee form: the burn's share is the smallest that rounds down to its burn.
+export function feeFormOf({ creatorFeeBps, rules }) {
+  const burnBps = rules && rules !== 'none' ? rules.burnBuyBps : 0, feeTotalBps = creatorFeeBps + burnBps
+  return { feeTotalBps, burnShareBps: feeTotalBps ? Math.ceil(burnBps * FEE_SHARE_TOTAL / feeTotalBps) : 0 }
+}
 // A continuous fee (no fee menu on chain): the current one when it is within the ceiling, else the ceiling.
 export const continuousFeeChoice = (openCreation, current) => Math.min(Number.isInteger(current) && current >= 0 ? current : DEFAULT_CREATOR_FEE_BPS, openCreation.maxCreatorFeeBps)
 export const defaultOpenChoices = openCreation => ({ creatorFeeBps: openCreation?.continuousCreatorFee ? continuousFeeChoice(openCreation, DEFAULT_CREATOR_FEE_BPS)
@@ -54,6 +74,9 @@ export function openCreationProblem(openCreation, coin = null) {
     if (!Number.isInteger(openCreation.maxCreatorFeeBps) || openCreation.maxCreatorFeeBps < 0) return 'The current chain fee ceiling is unavailable. Try again in a minute.'
     if (openCreation.continuousCreatorFee && !coin?.selectedHook && coin?.hookKind !== 'selected' && !openCreation.capBps?.length) return 'Launching isn’t available right now. Try again in a minute.'
   } else if (!openCreation.creatorFeeBps?.length || !openCreation.capBps?.length) return 'Launching isn’t available right now. Try again in a minute.'
+  const burnBps = !coin?.selectedHook && coin?.rules && coin.rules !== 'none' ? coin.rules.burnBuyBps : 0
+  if (burnBps && !openCreation.burnEnabled) return 'Burn is not available yet. Launch without a burn.'
+  if (burnBps) return checkFeeSplit({ creatorFeeBps: coin.creatorFeeBps, burnBps, holderFeeBps: 0 }, openCreation)
   return ''
 }
 

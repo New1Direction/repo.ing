@@ -4,7 +4,7 @@ import { Check, Globe, Image as ImageIcon, Info, LoaderCircle, Send, Upload } fr
 import { CREATOR_FEE_BPS_CHOICES, WALLET_CAP_BPS_CHOICES, percent } from '../../src/hooklab-launch-menus.mjs'
 import { COIN_DESCRIPTION_MAX, coinLinks } from '../../src/hooklab-coin-profile.mjs'
 import { SOON_BLOCKS, hookBlock } from '../../src/hooklab-blocks.mjs'
-import { SELECTED_HOOK_NOTE } from '../lib/hooklab-open-launch.mjs'
+import { BURN_DESCRIPTION, SELECTED_HOOK_NOTE, openFeeSplit } from '../lib/hooklab-open-launch.mjs'
 import { HookStartingPrice } from './hooklab-launch-price'
 import { HookCatalogSelector } from './hooklab-hook-catalog'
 import '../launch-pair.css'
@@ -18,14 +18,14 @@ const LINK_LABELS = { x: 'X', website: 'Website', telegram: 'Telegram' }
 
 // The coin as people will see it: image, ticker, name, its rules and links.
 // capLifted: the coin has graduated, so its max per wallet no longer applies.
-export function HookCoinPreview({ image, name, symbol, capBps, creatorFeeBps, selectedHook = null, profile = null, note, capLifted = false }) {
+export function HookCoinPreview({ image, name, symbol, capBps, creatorFeeBps, burnBps = 0, selectedHook = null, profile = null, note, capLifted = false }) {
   const links = profile ? coinLinks(profile) : {}
   const [failed, setFailed] = useState(null)
   const shown = image && image !== failed
   return <div className="launch-token-summary hooks-coin-preview" role="group" aria-label="Coin preview">
     <div className="preview-avatar">{shown ? <img src={image} alt="" onError={() => setFailed(image)}/> : <ImageIcon size={24} aria-hidden="true"/>}</div>
     <div><strong>${symbol || 'TICKER'}</strong><span>{name || 'Coin name'}</span>
-      <small>{selectedHook ? 'Custom hook · Wallet limits set by hook' : capLifted ? 'No max per wallet' : `Max ${percent(capBps)} per wallet`} · {percent(creatorFeeBps)} creator fee</small>
+      <small>{selectedHook ? 'Custom hook · Wallet limits set by hook' : capLifted ? 'No max per wallet' : `Max ${percent(capBps)} per wallet`} · {percent(creatorFeeBps)} creator fee{burnBps > 0 ? ` · ${percent(burnBps)} burn` : ''}</small>
       {Object.keys(links).length > 0 && <span className="hooks-coin-links">{Object.entries(links).map(([key, href]) => {
         const Icon = LINK_ICONS[key]
         return <a key={key} href={href} target="_blank" rel="noopener noreferrer"><Icon/>{LINK_LABELS[key]}</a>
@@ -166,11 +166,46 @@ export function HookEconomicsReview({ coin }) {
   </div>
 }
 
+// One total fee split between the creator and a token burn (owner design 2026-10-27), shown when Burn is on. The shares
+// add up to 100%: the burn's share is chosen, the creator takes the rest; Holders Earn is coming and cannot be chosen.
+// form.feeTotalBps and form.burnShareBps drive it; creatorFeeBps and rules are derived for the launch.
+export function HookFeeSplit({ form, set, disabled, menus, state }) {
+  const totalBps = form.feeTotalBps ?? form.creatorFeeBps, burnShareBps = form.burnShareBps ?? 0
+  const fee = openFeeSplit(menus, { totalBps, burnShareBps }), creatorShareBps = 10000 - burnShareBps
+  const change = next => {
+    const value = { totalBps, burnShareBps, ...next }, result = openFeeSplit(menus, value)
+    set({ feeTotalBps: value.totalBps, burnShareBps: value.burnShareBps, creatorFeeBps: result.creatorFeeBps ?? '', rules: result.rules })
+  }
+  const share = value => Math.min(10000, Math.max(0, Math.round(Number(value) * 100)))
+  return <article className="hooks-block is-on hooks-fee-split" aria-label="Fee block">
+    <BlockHeader id="creator-fee" state={state}/>
+    <label className="field-label" htmlFor="fee-total-percent">Total fee (%)</label>
+    <input id="fee-total-percent" className="field-input" type="number" min={0} max={fee.maxTotalBps / 100} step={0.01} required
+      value={totalBps === '' ? '' : totalBps / 100} disabled={disabled} aria-describedby="fee-total-limit"
+      onChange={e => change({ totalBps: e.target.value === '' ? '' : Math.round(Number(e.target.value) * 100) })}/>
+    <p id="fee-total-limit">One fee on every buy and sell, from 0% to {percent(fee.maxTotalBps)}, split between the parts below.</p>
+    <fieldset className="hooks-fee-shares" disabled={disabled}>
+      <legend className="field-label">How the fee is split</legend>
+      <label htmlFor="fee-share-burn">Burn share (% of the fee)</label>
+      <input id="fee-share-burn" type="range" min={0} max={100} step={1} value={burnShareBps / 100} onChange={e => change({ burnShareBps: share(e.target.value) })}/>
+      <input id="fee-share-burn-percent" className="field-input" type="number" min={0} max={100} step={0.01} value={burnShareBps / 100} aria-label="Burn share, percent of the fee"
+        onChange={e => change({ burnShareBps: e.target.value === '' ? 0 : share(e.target.value) })}/>
+      <div className="fee-line"><span>Creator<small>{fee.lines?.creator ?? 'The creator’s part, in SOL (repo.ing keeps a quarter of it).'}</small></span><strong>{percent(creatorShareBps)} of the fee</strong></div>
+      <div className="fee-line"><span>Burn<small>{BURN_DESCRIPTION}{fee.lines?.burn ? ` ${fee.lines.burn}` : ''}</small></span><strong>{percent(burnShareBps)} of the fee</strong></div>
+      <div className="fee-line is-soon"><span>Holders Earn<small>Part of every trade paid to the coin’s holders.</small></span><strong id="fee-share-holders">Coming</strong></div>
+    </fieldset>
+    <p className="launch-buy-hint" aria-live="polite">{fee.lines ? `${fee.lines.total} Worst case: ${percent(totalBps)} of each trade (creator ${percent(fee.creatorFeeBps)}, burn ${percent(fee.burnBps)}).` : ''}</p>
+    {fee.problem && <p className="inline-error" role="alert">{fee.problem}</p>}
+  </article>
+}
+
 // What the coin does, as blocks snapped onto it. Every launch today carries the two live blocks; the rest are coming.
 export function HookBlocks({ form, set, disabled, menus = null, allowSelectedHook = false }) {
   const caps = menus?.capBps?.length ? menus.capBps : WALLET_CAP_BPS_CHOICES, fees = menus?.creatorFeeBps?.length ? menus.creatorFeeBps : CREATOR_FEE_BPS_CHOICES
-  const selected = form.hookKind === 'selected' || !!form.selectedHook
+  const selected = form.hookKind === 'selected' || !!form.selectedHook, burn = !selected && menus?.burnEnabled === true
   const on = <span className="hooks-block-state"><Check size={13} aria-hidden="true"/>On</span>
+  // With Burn on, burns are part of the fee block, not a block on the way.
+  const soon = burn ? SOON_BLOCKS.filter(block => block.id !== 'burns') : SOON_BLOCKS
   return <section className="hooks-blocks" aria-labelledby="hooks-blocks-title">
     <div className="hooks-blocks-head"><h3 id="hooks-blocks-title" className="field-label">Blocks</h3><span>Snap on what your coin does.</span></div>
     {allowSelectedHook && <>
@@ -187,7 +222,7 @@ export function HookBlocks({ form, set, disabled, menus = null, allowSelectedHoo
       <Presets label="Max per wallet" choices={caps} value={form.capBps} onChange={capBps => set({ capBps })} disabled={disabled} format={percent}/>
       <p className="launch-buy-hint">No wallet can hold more than {percent(form.capBps)} of the supply until your coin graduates, so early buyers can’t corner it.</p>
     </article>}
-    <article className="hooks-block is-on" aria-label="Creator fee block">
+    {burn ? <HookFeeSplit form={form} set={set} disabled={disabled} menus={menus} state={on}/> : <article className="hooks-block is-on" aria-label="Creator fee block">
       <BlockHeader id="creator-fee" state={on}/>
       {selected ? <>
         <label className="field-label" htmlFor="selected-creator-fee">Creator fee (bps)</label>
@@ -203,9 +238,9 @@ export function HookBlocks({ form, set, disabled, menus = null, allowSelectedHoo
         <p id="creator-fee-limit">Choose any fee from 0% to {percent(menus.maxCreatorFeeBps)}, in steps of 0.01%.</p>
       </> : <Presets label="Creator fee" choices={fees} value={form.creatorFeeBps} onChange={creatorFeeBps => set({ creatorFeeBps })} disabled={disabled} format={percent}/>}
       <p className="launch-buy-hint">{selected ? 'The settled creator fee is the gross fee: repo.ing receives floor(gross / 4); the creator receives the remainder, then any configured author share is deducted. Custom SOL cuts join the same quote fee budget, not an additional SOL charge. The token tax split is unchanged. Amounts are checked before each approval.' : `Every buy and sell pays ${percent(form.creatorFeeBps)}. You earn ${creatorCut(form.creatorFeeBps)} of each trade in SOL; repo.ing keeps ${platformCut(form.creatorFeeBps)}.`}</p>
-    </article>
+    </article>}
     <p className="hooks-blocks-soon-title">More blocks are on the way</p>
-    <ul className="hooks-blocks-soon">{SOON_BLOCKS.map(block => <li key={block.id} className="hooks-block is-soon">
+    <ul className="hooks-blocks-soon">{soon.map(block => <li key={block.id} className="hooks-block is-soon">
       <BlockHeader id={block.id} state={<span className="hooks-block-state is-soon">Soon</span>}/></li>)}</ul>
   </section>
 }

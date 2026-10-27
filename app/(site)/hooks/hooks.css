@@ -82,6 +82,10 @@
 .hooks-block-state{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:700;color:#101713;background:var(--green)}
 .hooks-block-state.is-soon{color:var(--muted);background:none;border:1px solid var(--border-strong)}
 .hooks-block .launch-buy-presets{margin-bottom:8px}
+/* One total fee split between the creator and a burn: the share slider, its exact value, and Holders Earn still coming. */
+.hooks-fee-shares{margin:4px 0 0;padding:0;border:0;min-width:0}.hooks-fee-shares>label{display:block;color:var(--muted);font-size:13px;margin:4px 0 6px}
+.hooks-fee-shares input[type=range]{width:100%;accent-color:var(--green);margin:0 0 8px}.hooks-fee-shares .field-input{margin-bottom:6px}
+.hooks-fee-shares .fee-line.is-soon{color:var(--muted)}.hooks-fee-split .inline-error{margin:4px 0 0}
 .hooks-blocks-soon-title{margin:22px 0 2px!important;font-size:13px;font-weight:600;color:var(--muted)}
 .hooks-blocks-soon{list-style:none;margin:10px 0 0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px}
 .hooks-block.is-soon{border-style:dashed;padding:12px 14px;background:none}.hooks-block.is-soon header{margin:0;gap:10px}.hooks-block.is-soon header img{width:32px;height:32px;opacity:.6}

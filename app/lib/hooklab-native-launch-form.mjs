@@ -3,6 +3,7 @@
 
 import { STANDARD_VIRTUAL_QUOTE } from '../../src/hooklab-launch-pricing.mjs'
 import bs58 from 'bs58'
+import { MAX_TOTAL_FEE_BPS } from '../../src/hooklab-fee-split.mjs'
 
 // The reviewed curve input every unpriced launch uses: 1,000,000,000 raw is curve math, not deposited SOL.
 export { STANDARD_VIRTUAL_QUOTE }
@@ -32,8 +33,11 @@ export function launchHookInput(form) {
   if (form.hookKind === 'max-wallet' && form.selectedHook) throw Error('Custom hook configuration conflicts with the max-wallet gate.')
   const economics = selectedHookEconomics(form)
   if (form.hookKind !== 'selected' && !form.selectedHook) {
-    if (Object.keys(economics).length) throw Error('Economics require a selected hook.')
-    return { capBps: Number(form.capBps) }
+    // A gate coin's only economics: its token burn (owner design 2026-10-27), the same rate on both sides, up to 10%.
+    const { rules, ...rest } = economics, burnBps = rules === undefined || rules === 'none' ? 0 : rules.burnBuyBps
+    if (Object.keys(rest).length) throw Error('Economics require a selected hook.')
+    if (burnBps && (rules.burnSellBps !== burnBps || burnBps > MAX_TOTAL_FEE_BPS)) throw Error('A burn is the same on buys and sells, at most 10%.')
+    return { capBps: Number(form.capBps), ...(burnBps ? { rules: { burnBuyBps: burnBps, burnSellBps: burnBps } } : {}) }
   }
   const hook = form.selectedHook ?? {}, program = hook.program
   try {
