@@ -18,7 +18,7 @@ const swapCoder = stack.idlDir ? coders.swap : new BorshCoder({ ...idl('hooklab-
 const EMIT_CPI = Buffer.from('e445a52e51cb9a1d', 'hex')
 const configAddress = (program: string) => PublicKey.findProgramAddressSync([Buffer.from('config')], new PublicKey(program))[0]
 
-export interface OpenCreationState { native: boolean; open: boolean; feeMenu: number[]; capMenu: number[]; launchFeeLamports: bigint; paused: boolean; poolCreationFeeLamports: bigint; treasury: string; revision: bigint }
+export interface OpenCreationState { native: boolean; open: boolean; feeMenu: number[]; capMenu: number[]; maxCreatorFeeBps: number; launchFeeLamports: bigint; paused: boolean; poolCreationFeeLamports: bigint; treasury: string; revision: bigint }
 
 /** The launch Config's open-creation bytes and fees, plus the swap Config's pool creation fee, at finalized. */
 export async function openCreationState(): Promise<OpenCreationState> {
@@ -27,7 +27,7 @@ export async function openCreationState(): Promise<OpenCreationState> {
   const config = openCoder.accounts.decode('Config', raw), swap = swapCoder.accounts.decode('Config', Buffer.from(swapInfo!.data))
   const governance = await connection.getAccountInfo(PublicKey.findProgramAddressSync([Buffer.from('governance')], new PublicKey(PROGRAMS.launch))[0], 'finalized')
   const gov = openCoder.accounts.decode('Governance', Buffer.from(governance!.data))
-  return { native: raw[186] === 1, open: raw[187] === 1, feeMenu: menu(188), capMenu: menu(196), launchFeeLamports: BigInt(config.launch_fee_lamports.toString()),
+  return { native: raw[186] === 1, open: raw[187] === 1, feeMenu: menu(188), capMenu: menu(196), maxCreatorFeeBps: Number(config.max_creator_fee_bps), launchFeeLamports: BigInt(config.launch_fee_lamports.toString()),
     // Creation is paused by the Config's flag or by the guardian's emergency pause (the launch governance's creation gate).
     paused: !!config.paused || !!gov.state.gates.creation, poolCreationFeeLamports: BigInt(swap.pool_creation_fee_lamports.toString()), treasury: config.treasury.toBase58(),
     revision: BigInt(gov.state.revision.toString()) }
@@ -59,7 +59,8 @@ export function expectOpenLaunch(tx: VersionedTransactionResponse, { creator, mi
   expect(events.map(e => e.name)).toEqual(['OpenLaunchCreated', 'LaunchCreated', 'NativeLaunchCreated'])
   const opened = events[0].data, created = events[1].data
   expect([opened.creator.toBase58(), opened.mint.toBase58(), opened.creator_fee_bps, opened.cap_bps]).toEqual([creator, mint, feeBps, capBps])
-  expect(state.feeMenu.includes(feeBps) && state.capMenu.includes(capBps)).toBe(true) // fee and cap only from the chain's menus
+  // Fee and cap only from the chain's menus; with no fee menu (open creation after Step 8), any whole fee up to the ceiling.
+  expect((state.feeMenu.length ? state.feeMenu.includes(feeBps) : Number.isInteger(feeBps) && feeBps >= 0 && feeBps <= state.maxCreatorFeeBps) && state.capMenu.includes(capBps)).toBe(true)
   expect(BigInt(created.launch_fee_lamports.toString())).toBe(state.launchFeeLamports)
   // The treasury receives the creation fee and the pool creation fee, exactly.
   expect(lamportDelta(tx, state.treasury)).toBe(state.launchFeeLamports + state.poolCreationFeeLamports)
