@@ -32,6 +32,10 @@ const SLOT_LAG=16
 // about 7 s). 140 keeps the deadline within the 150-slot ceiling the lifetime check allows from the snapshot
 // (src/hooklab-max-wallet-launch.mjs) with a 10-slot margin for finality lag; a larger lag refuses the review safely.
 export const REVIEW_LEASE_SLOTS=140
+// The lease counts from the finalized slot, the same commitment the lifetime check's snapshot reads, so it never exceeds
+// the 150-slot ceiling whatever the finality lag (a local validator's finalized slot trails confirmed by ~32 slots, which
+// refused every local launch). On mainnet's ~1-slot lag the deadline is unchanged; a longer lag only shortens it.
+export const reviewLease=(finalizedSlot,now)=>({nowMs:now,validUntilSlot:finalizedSlot+REVIEW_LEASE_SLOTS,reviewExpiresAtMs:now+60000})
 // The most rent an owner-invited (legacy) launch may lock, as the program's debit guard counts it. An open launch's bound
 // is exact instead: computed from the chain's rent when the launch is reserved (openLaunchRent).
 const LEGACY_LAUNCH_MAX_RENT_LAMPORTS=45000000n
@@ -108,8 +112,7 @@ export async function productionSettings({env=process.env,readBundle=path=>readF
  const connections=bundle.profile.providers.map((provider,i)=>({provider,connection:connectionFor(urls[i])}))
  const observers=chainObservers(connections)
  async function reviewTiming(){
-  const slot=await connections[0].connection.getSlot('confirmed'),now=Date.now()
-  return {nowMs:now,validUntilSlot:slot+REVIEW_LEASE_SLOTS,reviewExpiresAtMs:now+60000}
+  return reviewLease(await connections[0].connection.getSlot('finalized'),Date.now())
  }
  const priority=env.HOOKLAB_PRIORITY_MICROLAMPORTS??'0'
  need(/^(0|[1-9][0-9]{0,6})$/.test(priority),'HOOKLAB_PRIORITY_MICROLAMPORTS must be a small integer')
