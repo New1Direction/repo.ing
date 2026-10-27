@@ -10,6 +10,7 @@ import { PublicKey, VersionedMessage } from '@solana/web3.js'
 import { compileOpenLaunchReview, compileMaxWalletLaunchReview, openLaunchInventory, openLaunchTableAddresses, OPEN_LAUNCH_DISCRIMINATOR } from '../src/hooklab-max-wallet-launch.mjs'
 import { openState, openInput, openConnections, sharedTable, OWNER_MENUS, withLocalAcceptance } from './fixtures/hooklab-open-launch.mjs'
 import { readOpenCreation } from '../src/hooklab-open-creation.mjs'
+import { deriveInclusiveMaxWalletPreparedAccounts } from '../src/hooklab-inclusive-max-wallet-preparation.mjs'
 import { missingArtifactEnv } from './fixtures/hooklab-generated-artifact.mjs'
 
 const skip = missingArtifactEnv(['HOOKLAB_NATIVE_ELF_DIR'], 'the reviewed native ELFs')
@@ -88,4 +89,21 @@ test('an empty on-chain fee menu means a continuous creator fee from 0 to the ce
   const filtered = openState({ ceiling: 40 }), old = await readOpenCreation(openConnections(filtered), filtered.programs)
   assert.deepEqual({ fees: [...old.creatorFeeBps], continuous: old.continuousCreatorFee }, { fees: [], continuous: false })
   assert.throws(() => compileOpenLaunchReview(openInput(filtered)), /not on the on-chain menu/)
+}))
+
+// Regression (local burn e2e, 2026-10-27): with open creation on and no fee menu on chain, the creator's fee is any whole
+// fee up to the chain's ceiling. The gate preparation refused every fee off the reviewed profile's menu, so a 3% fee (or
+// any creator part of a burn split) could not launch.
+test('an open-creation Config without a fee menu prepares any creator fee up to the ceiling; with a menu, only the menu', { skip }, () => withLocalAcceptance(() => {
+  const derive = (world, creatorFeeBps) => {
+    const { state } = world, { swap, ...idls } = Object.fromEntries(Object.entries(state.profile.idls))
+    return deriveInclusiveMaxWalletPreparedAccounts({ profile: { json: state.profile.json, expectedSha256: state.profile.expectedSha256, idls },
+      request: { ...state.preparationRequest, creatorFeeBps }, launchConfig: (({ address, owner, executable, dataBase64, lamports }) => ({ address, owner, executable, dataBase64, lamports }))(state.accounts.get(world.configAddress)),
+      observedCreatedAtUnixSeconds: '1800000000' })
+  }
+  const continuous = openState({ reserved: { native: true, open: true, creatorFeeBps: [], capBps: OWNER_MENUS.capBps }, ceiling: 500, rulesCeiling: 1000 })
+  for (const fee of [0, 300, 500]) assert.ok(derive(continuous, fee).accounts.selectedConfig, `${fee} bps`)
+  assert.throws(() => derive(continuous, 501), /economics/, 'over the ceiling')
+  assert.throws(() => derive(openState({ ceiling: 500, rulesCeiling: 1000 }), 300), /economics/, 'a fee menu on chain still binds')
+  assert.ok(derive(openState({ ceiling: 500, rulesCeiling: 1000 }), 100).accounts.selectedConfig)
 }))

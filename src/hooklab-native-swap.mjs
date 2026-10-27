@@ -17,7 +17,7 @@ import { modelInclusiveCreatorQuote, inclusiveCreatorFee } from './hooklab-inclu
 import { shareNativeQuote } from './hooklab-share-fee-quote.mjs'
 import { readInclusiveFeePolicy } from './hooklab-inclusive-fee-abi.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
-import { approvedCreatorFees } from './hooklab-launch-menus.mjs'
+import { isTradableCreatorFee } from './hooklab-launch-menus.mjs'
 import { hookCoinAddresses, swapAccountEvidence } from './hooklab-inclusive-max-wallet-swap.mjs'
 import { NATIVE_BUILDS, NATIVE_FLAGS, loadNativeArtifacts, nativeBuildOf } from './hooklab-native-pins.mjs'
 import { STATUS_GRADUATED, finalFillLamports, isReady } from './hooklab-graduation.mjs'
@@ -295,7 +295,7 @@ export function compileNativeSwapReview(input) {
     policy = decoded(gate, 'PolicyV2', owned(accounts, a.policy, G, 90))
     const registry = owned(accounts, a.registry, G, 81)
     check(policy.version === 2 && policy.fee_model === 2 && policy.protocol_share_bps === 2500
-      && policy.creator_fee_bps === r.creatorFeeBps && approvedCreatorFees(profile).includes(r.creatorFeeBps) && str(policy.mint) === r.mint && policy.cap_bps === r.capBps && n(policy.initial_supply) > 0n
+      && policy.creator_fee_bps === r.creatorFeeBps && isTradableCreatorFee(profile, r.creatorFeeBps) && str(policy.mint) === r.mint && policy.cap_bps === r.capBps && n(policy.initial_supply) > 0n
       && str(policy.quote_mint) === profile.quoteMint && policy.lp_fee_bps === 0, 'Max-wallet policy binding differs')
     cap = n(policy.initial_supply) * BigInt(r.capBps) / 10000n
     check(cap > 0n && registry.equals(Buffer.concat([Buffer.from('02daf6662c38c0cd01020000000000', 'hex'), kb(a.policy), Buffer.from([0, 0]), kb(a.launch)])), 'Cap or exact max-wallet registry differs')

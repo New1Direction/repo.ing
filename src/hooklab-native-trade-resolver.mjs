@@ -8,7 +8,7 @@ import {validateMaxWalletOperatorBindings,validateSelectedHookReleaseBindings,ob
 import {inspectProductionEvidence,tradeEvidenceAddresses} from './hooklab-production-observer.mjs'
 import {compileNativeSwapReview,selectedNativeMeasuredQuote,nativeSwapInventory,nativeSwapRequestSchema,selectedNativeHookPinSchema,selectedNativeHookEvidence} from './hooklab-native-swap.mjs'
 import {collectNativeTradeSettlement} from './hooklab-native-trade-settlement.mjs'
-import {approvedCreatorFees} from './hooklab-launch-menus.mjs'
+import {isTradableCreatorFee} from './hooklab-launch-menus.mjs'
 import {canonicalObservation} from './hooklab-canonical-observation.mjs'
 import {provenLatestBlockhash} from './hooklab-blockhash-proof.mjs'
 import {REVIEWED_PROFILE_SHA256,reviewedEnvelope} from './hooklab-reviewed-profiles.mjs'
@@ -54,7 +54,7 @@ export function nativeTradeResolver({config,profile,dossierJson,connections,limi
   const selected=raw.policyKind==='selected-hook'
   if((raw.selectedHook||raw.policyKind&&raw.policyKind!=='max-wallet')&&(!selected||!selectedOpen))refuseUnsupportedSelectedHook()
   const request=nativeSwapRequestSchema.parse({...raw,schema:'repoing/native-swap-request/1',policyKind:selected?'selected-hook':'max-wallet',policyVersion:2,feeModel:selected?(originalContext?.compilationInput.request.feeModel??raw.feeModel??1):2,protocolShareBps:2500,trader:owner})
-  check(stage===`native-${request.side}`&&(selected||approvedCreatorFees(bound.profile).includes(request.creatorFeeBps)))
+  check(stage===`native-${request.side}`&&(selected||isTradableCreatorFee(bound.profile,request.creatorFeeBps)))
   if(originalContext)check(originalContext.configurationSha256===configurationSha256&&isDeepStrictEqual(originalContext.compilationInput.request,request))
   const started=integer(clock())
   let hookEvidence=null,selectedAuthorityEvidence=null

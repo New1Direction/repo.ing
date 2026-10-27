@@ -1,6 +1,6 @@
 // Explicit inclusive-model V3 preparation. Legacy zero-fee planner is untouched.
 // Offline stage-one byte planner. No RPC, key generation, signatures, sends or adoption.
-import { isApprovedLaunchChoice } from './hooklab-launch-menus.mjs'
+import { isPreparableLaunchChoice } from './hooklab-launch-menus.mjs'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import BN from 'bn.js'
@@ -9,7 +9,7 @@ import { AddressLookupTableAccount, ComputeBudgetProgram, PublicKey, Transaction
 import { z } from 'zod'
 import { hookAddress as key, hookDigest as hash, hookRawAmount as u64 } from './hooklab-execution-contract.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
-import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
+import { launchConfigReservedValid, parseLaunchConfigReserved } from './hooklab-launch-config-reserved.mjs'
 import { otherPrograms, profileRolesDistinct } from './hooklab-stack.mjs'
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const check = (ok, message) => { if (!ok) throw Error(message) }
@@ -211,7 +211,7 @@ function readLaunchConfig(launch, profile, request, account) {
     && launchConfigReservedValid(c.reserved), 'Launch configuration layout differs')
   check(c.quote_mint.toBase58() === profile.quoteMint && profile.quoteMint !== request.mint
     && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0
-    && isApprovedLaunchChoice(profile, request) && request.creatorFeeBps <= c.max_creator_fee_bps && request.creatorFeeBps <= c.rule_bounds.max_rules_fee_bps
+    && isPreparableLaunchChoice(profile, request, parseLaunchConfigReserved(Buffer.from(c.reserved))) && request.creatorFeeBps <= c.max_creator_fee_bps && request.creatorFeeBps <= c.rule_bounds.max_rules_fee_bps
     && BigInt(c.supply.toString(10)) > 0n
     && BigInt(c.supply.toString(10)) * BigInt(request.capBps) / 10000n > 0n, 'Max-wallet launch economics or rounded cap invalid')
   return c

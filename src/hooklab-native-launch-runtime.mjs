@@ -102,7 +102,8 @@ export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustod
    try{
     // Creator rate is an explicit immutable approved profile/configuration input; an open launch's comes from the chain.
     const reviewedProfile=JSON.parse(profile.json)
-    if(openLaunches){const chain=await openCreation();if(!chain.native||!chain.open||chain.paused||!isOpenCreatorFeeChoice(input,chain)||(input.selectedHook?input.capBps!==0:!chain.capBps.includes(input.capBps)))throw Error()}
+    let chain=null
+     if(openLaunches){chain=await openCreation();if(!chain.native||!chain.open||chain.paused||!isOpenCreatorFeeChoice(input,chain)||(input.selectedHook?input.capBps!==0:!chain.capBps.includes(input.capBps)))throw Error()}
     else if(reviewedProfile.capability.creatorFeeBpsChoices?!isApprovedLaunchChoice(reviewedProfile,input):input.creatorFeeBps!==config.economics.creatorFeeBps)throw Error()
     let publication
     if(input.selectedHook){
@@ -115,7 +116,7 @@ export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustod
     }
     const result=await (input.selectedHook?reserveNewMintSelectedHookPreparationIntent:reviewNewMintPreparationCandidate)({custody:input.selectedHook?selectedCustody:custody,sessionToken,
      input:{operationId:input.operationId,...(input.selectedHook?{selectedHook:input.selectedHook,...selectedHookEconomics(input)}:{capBps:input.capBps}),label:input.label,creatorFeeBps:input.creatorFeeBps},
-     profile:preparationProfile,hookPin:config.selectedHookPin,observeSelectedHook,connections,limits:input.selectedHook?undefined:{...preparationLimits,...(reviewTiming?await reviewTiming({stage:'preparation'}):{})},clock})
+     profile:preparationProfile,openCreation:chain,hookPin:config.selectedHookPin,observeSelectedHook,connections,limits:input.selectedHook?undefined:{...preparationLimits,...(reviewTiming?await reviewTiming({stage:'preparation'}):{})},clock})
     if(result.custody.owner!==owner)throw Error()
     const setup=input.selectedHook?await bindSelectedHookSetupIntent(pool,{custodyOperationId:input.operationId,owner,profileSha256:profile.expectedSha256,mint:result.custody.mint,selectedConfig:result.custody.selectedConfig,selectedHook:input.selectedHook,hookPublication:publication}):null
     const {schema:_,...prepared}=result.request

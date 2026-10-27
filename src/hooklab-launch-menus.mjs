@@ -28,3 +28,15 @@ export function isApprovedLaunchChoice(profile,{creatorFeeBps,capBps}){
  const caps=approvedWalletCaps(profile)
  return approvedCreatorFees(profile).includes(creatorFeeBps)&&(caps===null||caps.includes(capBps))
 }
+// A launched coin's creator fee, for trading: on the reviewed menu, or any whole fee the open route allows (the one total
+// of 10%; the program checked it against the chain's ceiling at launch, and every trade binds it to the coin's accounts).
+export const isTradableCreatorFee=(profile,creatorFeeBps)=>approvedCreatorFees(profile).includes(creatorFeeBps)
+ ||Number.isInteger(creatorFeeBps)&&creatorFeeBps>=0&&creatorFeeBps<=1000
+// The fee and cap a gate preparation may take. chainMenus: the launch Config's open-creation state (parseLaunchConfigReserved).
+// With open creation on and no fee menu on chain, the chain governs the fee: any whole fee (the compiler checks the chain's
+// ceiling) with an approved cap. Otherwise the reviewed profile's menus.
+export function isPreparableLaunchChoice(profile,{creatorFeeBps,capBps},chainMenus=null){
+ if(!(chainMenus?.open===true&&chainMenus.creatorFeeBps.length===0))return isApprovedLaunchChoice(profile,{creatorFeeBps,capBps})
+ const caps=approvedWalletCaps(profile)
+ return Number.isInteger(creatorFeeBps)&&creatorFeeBps>=0&&(caps===null||caps.includes(capBps))
+}

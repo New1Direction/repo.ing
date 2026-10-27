@@ -67,3 +67,12 @@ test('preparation accepts menu choices only within the on-chain launch-config ce
  for(const choice of [{creatorFeeBps:75,capBps:200},{creatorFeeBps:100,capBps:250}])
   assert.throws(()=>planInclusiveMaxWalletPreparation(withMenus(inclusiveMaxWalletPreparationFixture(),{...choice,ceiling:200})),/economics/,JSON.stringify(choice))
 })
+
+// Regression (local burn e2e, 2026-10-27): a coin launched through open creation with a continuous fee (e.g. 3%, or the
+// creator part of a burn split) carries that fee on chain; trades must accept it, not only the reviewed profile's menu.
+test('a launched coin trades at any creator fee the open route allows, menu or not', async () => {
+  const { isTradableCreatorFee } = await import('../src/hooklab-launch-menus.mjs')
+  const profile = { capability: { creatorFeeBps: 100, creatorFeeBpsChoices: [50, 100, 200] } }
+  for (const fee of [0, 50, 300, 500, 1000]) assert.equal(isTradableCreatorFee(profile, fee), true, String(fee))
+  for (const fee of [1001, -1, 1.5, '300']) assert.equal(isTradableCreatorFee(profile, fee), false, String(fee))
+})
