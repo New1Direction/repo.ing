@@ -25,6 +25,10 @@ export async function custodyBalance(db, repoId, { phase = null } = {}) {
   return totals
 }
 
+// Whether a market still has collected fees held in custody (not yet paid to its beneficiary); only then does its
+// reconciliation depend on the vault holding them.
+export const holdsCustodyFunds = funds => !!funds && (funds.creator.held > 0n || funds.partner.held > 0n)
+
 export async function verifyCustodySolvency(db, connection) {
   const { rows: [row] } = await db.query(`select
     (select coalesce(sum(amount),0) from custody_fee_collections) -

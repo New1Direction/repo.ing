@@ -10,7 +10,7 @@ import { markets } from './db/schema.mjs'
 
 import { createGraduatedFees } from './graduated-fees.mjs'
 import { createCustodyRecovery } from './custody-recovery.mjs'
-import { custodyBalance, verifyCustodySolvency } from './custody-ledger.mjs'
+import { custodyBalance, holdsCustodyFunds, verifyCustodySolvency } from './custody-ledger.mjs'
 
 export const PARTNER_CAPTURE_MISMATCH = 'Partner fee capture differs from chain evidence'
 export const GRADUATED_WITHDRAWAL_MISMATCH = 'Graduated fee withdrawals differ from proven payouts'
@@ -178,7 +178,7 @@ export function createReconciler({ pool, connection, config, earlyAccess = null,
         const graduated = await graduatedFees.read(market, state)
         const custodyFunds = custodyRecovery ? await custodyBalance(client, repoId, { phase: 'all' }) : null
         const dammCustody = custodyRecovery && graduated ? await custodyBalance(client, repoId, { phase: 'DAMM' }) : null
-        if (custodyFunds) await verifyCustodySolvency(client, connection)
+        if (holdsCustodyFunds(custodyFunds)) await verifyCustodySolvency(client, connection)
         // Moving earned fees into the vault does not pay the beneficiary or erase their entitlement.
         const onchainCreatorFee = BigInt(state.poolState.creatorQuoteFee.toString()) + (graduated?.available ?? 0n) + (custodyFunds?.creator.held ?? 0n)
         let platform = null

@@ -227,3 +227,15 @@ test('PostgreSQL DBC batch: atomic item accounting, replay, rollback, concurrent
         values('not-addressable',$1,$2,1,51,'{}')`, [receipt.signature, recipient])), /custody_payout_collection_item_fk/)
     } finally { await pool.end() }
   })
+
+// 2026-10-27: the vault's WSOL moved to the team wallet (owner decision, STATUS 2026-10-26), so the vault check failed and every
+// market's builder fees read "verifying", including markets with nothing in custody. Only a market holding custody funds depends on it.
+test('only a market with funds still held in custody depends on the vault holding them', async () => {
+  const { holdsCustodyFunds } = await import('../src/custody-ledger.mjs')
+  const role = held => ({ collected: held, paid: 0n, held })
+  assert.equal(holdsCustodyFunds(null), false)
+  assert.equal(holdsCustodyFunds({ creator: role(0n), partner: role(0n) }), false)
+  assert.equal(holdsCustodyFunds({ creator: { collected: 50n, paid: 50n, held: 0n }, partner: role(0n) }), false, 'fully paid out')
+  assert.equal(holdsCustodyFunds({ creator: role(1n), partner: role(0n) }), true)
+  assert.equal(holdsCustodyFunds({ creator: role(0n), partner: role(7n) }), true)
+})
