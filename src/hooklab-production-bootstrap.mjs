@@ -26,6 +26,10 @@ const BEHIND=/Minimum context slot has not been reached|-32016/
 // Snapshot-to-blockhash slack across two real providers (the second waits to catch up): ~6 s. The
 // on-chain guards (deadline slot, minimum output, price impact) are unchanged.
 const SLOT_LAG=16
+// A review's slot lease. Mainnet slots run about 210 ms (2026-10-27), so 96 slots left about 20 s for the wallet, the
+// server's co-signature and the send. 112 is the most the checks allow: the deadline stays within 150 slots of the
+// snapshot (src/hooklab-max-wallet-launch.mjs) even when finalized trails confirmed by up to 32 slots.
+export const REVIEW_LEASE_SLOTS=112
 // The most rent an owner-invited (legacy) launch may lock, as the program's debit guard counts it. An open launch's bound
 // is exact instead: computed from the chain's rent when the launch is reserved (openLaunchRent).
 const LEGACY_LAUNCH_MAX_RENT_LAMPORTS=45000000n
@@ -103,7 +107,7 @@ export async function productionSettings({env=process.env,readBundle=path=>readF
  const observers=chainObservers(connections)
  async function reviewTiming(){
   const slot=await connections[0].connection.getSlot('confirmed'),now=Date.now()
-  return {nowMs:now,validUntilSlot:slot+96,reviewExpiresAtMs:now+60000}
+  return {nowMs:now,validUntilSlot:slot+REVIEW_LEASE_SLOTS,reviewExpiresAtMs:now+60000}
  }
  const priority=env.HOOKLAB_PRIORITY_MICROLAMPORTS??'0'
  need(/^(0|[1-9][0-9]{0,6})$/.test(priority),'HOOKLAB_PRIORITY_MICROLAMPORTS must be a small integer')
