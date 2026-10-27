@@ -23,11 +23,15 @@ import { withStockStats } from './stock-market-stats.mjs'
 import { RECOVERED_LAUNCH_CONFIG, assertLaunchBootstrapSigner } from '../../src/launch-custody.mjs'
 import { verificationBonusLamports } from '../../src/verification-bonus.mjs'
 
+// A connection the database dropped without closing must fail, not hang: page reads share single-flight memos, so one
+// stuck query held every market list until the process restarted (2026-10-27, after Neon restarted its compute).
+export const SITE_POOL_LIMITS = Object.freeze({ keepAlive: true, connectionTimeoutMillis: 10_000, query_timeout: 30_000 })
+
 export function database() {
   if (!process.env.DATABASE_URL) return null
   // Reuse healthy TLS sessions between page visits instead of reopening them after pg's 10 s default.
   // This retains connections, not query results; financial and freshness checks still execute unchanged.
-  if (!globalThis.__gitfunPool) globalThis.__gitfunPool = createDatabasePool({ connectionString: process.env.DATABASE_URL, idleTimeoutMillis: 60_000 })
+  if (!globalThis.__gitfunPool) globalThis.__gitfunPool = createDatabasePool({ connectionString: process.env.DATABASE_URL, idleTimeoutMillis: 60_000, ...SITE_POOL_LIMITS })
   return globalThis.__gitfunPool
 }
 
@@ -38,7 +42,7 @@ export function claimsDatabase() {
   try { url = new URL(process.env.CLAIMS_DATABASE_URL) } catch { return null }
   if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.username !== 'repoing_builder_claims' ||
       url.searchParams.get('sslmode') !== 'verify-full') return null
-  if (!globalThis.__repoingClaimsPool) globalThis.__repoingClaimsPool = createDatabasePool({ connectionString: url.toString(), max: 5, idleTimeoutMillis: 60_000 })
+  if (!globalThis.__repoingClaimsPool) globalThis.__repoingClaimsPool = createDatabasePool({ connectionString: url.toString(), max: 5, idleTimeoutMillis: 60_000, ...SITE_POOL_LIMITS })
   return globalThis.__repoingClaimsPool
 }
 
