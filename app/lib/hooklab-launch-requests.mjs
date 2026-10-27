@@ -39,14 +39,16 @@ const enabled=env=>siteLaunchesEnabled(env)&&env.HOOK_WALLET_IDENTITY_ENABLED===
 const PUBLIC_OPEN_CREATION=['native','open','paused','creatorFeeBps','continuousCreatorFee','capBps','maxCreatorFeeBps','maxBurnBps','maxRulesFeeBps','maxHolderFeeBps','burnEnabled','launchFeeLamports','poolCreationFeeLamports','rentLamports','preparationRentLamports','launchRentLamports','guardRentLamports','minVirtualQuote','maxVirtualQuote','selectedHooksEnabled']
 export const publicOpenCreation=chain=>chain?Object.fromEntries(PUBLIC_OPEN_CREATION.filter(key=>chain[key]!==undefined).map(key=>[key,chain[key]])):null
 const chainOpenCreation=async()=>{const service=nativeLaunchRuntime();if(!service?.openLaunches)return null;return service.openCreation()}
+// Proves a stale open launch landed or never can (src/hooklab-owner-approval.mjs settleStaleLaunches); none, none settled.
+const chainLaunchObserver=()=>{const service=nativeLaunchRuntime();return service?.openLaunches&&service.observeLaunch?service.observeLaunch:null}
 export function createLaunchRequestsHandler({env=process.env,configuration=walletIdentityConfiguration,database=createHookLabDatabasePool,
- store=ownerApprovalStore,principalStore=walletPrincipalStore,quota=walletIdentityQuota,launchPriceEstimate:estimate=launchPriceEstimate,openCreation=chainOpenCreation}={}){
+ store=ownerApprovalStore,principalStore=walletPrincipalStore,quota=walletIdentityQuota,launchPriceEstimate:estimate=launchPriceEstimate,openCreation=chainOpenCreation,launchObserver=chainLaunchObserver}={}){
  return async request=>{
   if(!enabled(env))return reply({status:'blocked',online:false,error:'Launch requests are not open yet.'})
   let pool
   try{
    const config=configuration(env);pool=database(config)
-   const open=openLaunchesEnabled(env),usdPricing=open||usdLaunchPricingEnabled(env),approvals=store(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing,openLaunches:open,burnEnabled:burnEnabled(env)})
+   const open=openLaunchesEnabled(env),usdPricing=open||usdLaunchPricingEnabled(env),approvals=store(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing,openLaunches:open,burnEnabled:burnEnabled(env),launchObserver:launchObserver()})
    // Open launches: what the chain offers now (menus, creation fee, opening-price bounds, paused or not).
    const observed=open?await openCreation().catch(()=>null):undefined,chain=observed&&{...observed,burnEnabled:burnEnabled(env)}
    if(request.method==='GET'){

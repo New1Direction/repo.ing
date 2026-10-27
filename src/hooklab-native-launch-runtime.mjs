@@ -1,4 +1,5 @@
 // Complete server composition, opt-in only. No credentials or endpoint discovery.
+import { PublicKey } from '@solana/web3.js'
 import { isApprovedLaunchChoice,isOpenCreatorFeeChoice } from './hooklab-launch-menus.mjs'
 import { nativeSignerCustodyStore } from './hooklab-native-signer-custody-store.mjs'
 import { nativeCustodySigningAdapter } from './hooklab-native-custody-signing.mjs'
@@ -95,9 +96,17 @@ export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustod
  const preparationProfile={json:profile.json,expectedSha256:profile.expectedSha256,providers:profile.providers,
   idls:{launch:profile.idls.launch,gate:profile.idls.gate},elfLengths:{launch:profile.elfLengths.launch,gate:profile.elfLengths.gate}}
  const openCreation=async()=>({...await readOpenCreation(connections,JSON.parse(profile.json).programs),selectedHooksEnabled})
+ // For settling a stale open launch (ownerApprovalStore launchObserver): progress first, so a launch that landed before
+ // it is already visible in the mint reads that follow. Only the launch creates the mint.
+ const observeLaunch=async({mint})=>{
+  if(typeof expiryObserver!=='function'||!Array.isArray(connections)||connections.length!==2)throw Error('Two providers are required')
+  const progress=await expiryObserver(),key=new PublicKey(mint)
+  const mintExists=await Promise.all(connections.map(async({connection})=>(await connection.getAccountInfo(key,'finalized'))!==null))
+  return {slot:progress.slot,blockHeight:progress.blockHeight,mintExists}
+ }
  return Object.freeze({ownerCustodyApproved,operatorDeploymentApproved,economicsApproved,lifecycle,openLaunches,selectedHooksEnabled,
   // The chain's open-creation state and menus, from both providers (identical bytes), for the creator's form.
-  openCreation,observeSelectedHook,observeSelectedHookCompatibility,
+  openCreation,observeSelectedHook,observeSelectedHookCompatibility,observeLaunch,
   async reserve({sessionToken,owner,input}){
    if(input.selectedHook&&!selectedHooksEnabled)refuseUnsupportedSelectedHook()
    try{

@@ -82,8 +82,10 @@ const publicSignRequest=row=>Object.freeze({id:row.id,signer:row.signer_address,
 // Off, nothing reads the price table (it may not exist yet) and every launch binds the standard 1 SOL quote.
 // openLaunches (HOOK_OPEN_LAUNCHES, after the open-launches migration): creators' own requests launch without an invite,
 // launched coins can be delisted by the owner, and discovery leaves delisted coins out.
+// launchObserver (the launch runtime's observeLaunch): both providers' finalized progress {slot,blockHeight} and whether
+// each holds a coin's mint ({mintExists:[a,b]}). Without it no stale launch is ever settled.
 // burnEnabled (HOOK_BURN_ENABLED, after the open-launch-burn migration): open gate coins may carry a token burn.
-export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,maxInviteMs=3_600_000,usdPricing=false,openLaunches=false,selectedHooksEnabled=false,burnEnabled=false,publicationSelection=resolveHookPublicationSelection}={}){
+export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,maxInviteMs=3_600_000,usdPricing=false,openLaunches=false,selectedHooksEnabled=false,burnEnabled=false,publicationSelection=resolveHookPublicationSelection,launchObserver=null}={}){
  // The chain's bounds for one total fee (creator plus burn), as readOpenCreation reports them.
  const checkBurn=(value,menus)=>{
   check(burnEnabled&&['maxBurnBps','maxRulesFeeBps','maxHolderFeeBps'].every(k=>Number.isInteger(menus?.[k])),'Burn is not available yet')
@@ -92,6 +94,40 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
  if(!openLaunches)address.parse(adminAddress)
  const withProfile=requestQuery(usdPricing)
  const expireInvites=db=>db.query("update hook_lab_launch_requests set status='invite-expired',updated_at=clock_timestamp() where status='invited' and invite_expires_at<=clock_timestamp()")
+ const settle=(id,status)=>pool.query("update hook_lab_launch_requests set status=$2,updated_at=clock_timestamp() where id=$1 and status='launching' returning id",[id,status]).then(r=>r.rowCount)
+ // An open launch still 'launching' a day after binding (owner 2026-10-27: two smoke wallets were locked out for good).
+ // Its coin is launched if the launch finalized, or if both providers hold the mint (only the launch creates it). It is
+ // closed as 'invite-expired' (kept forever, the creator free to start another coin) only when both providers see no
+ // mint and every never-sent signing operation is past its deadline and blockhash on both. Anything sent, claimed,
+ // unknown or under reconciliation, a provider that fails or disagrees, or no observer at all: left alone.
+ async function settleStaleLaunch(row){
+  const {rows:operations}=await pool.query('select stage,status,signature,review from hook_lab_native_signing_operations where custody_operation_id=$1',[row.custody_operation_id])
+  if(operations.some(o=>['submission-claimed','submitted','outcome-unknown','review-required'].includes(o.status)))return null
+  if(operations.some(o=>o.stage==='launch'&&o.status==='finalized-success'))return await settle(row.id,'launched')?'launched':null
+  const {rows:[custody]}=await pool.query('select mint from hook_lab_native_signer_custody where operation_id=$1',[row.custody_operation_id])
+  if(!custody||typeof launchObserver!=='function')return null
+  let observed;try{observed=await launchObserver({mint:custody.mint})}catch{return null}
+  const exists=observed?.mintExists
+  if(!Array.isArray(exists)||exists.length!==2||!exists.every(x=>typeof x==='boolean'))return null
+  if(exists[0]&&exists[1])return await settle(row.id,'launched')?'launched':null
+  if(exists[0]||exists[1]||!Number.isSafeInteger(observed.slot)||!Number.isSafeInteger(observed.blockHeight))return null
+  const live=operations.filter(o=>['reviewed','partial','signed','signing-claimed','signing-unknown'].includes(o.status))
+  if(!live.every(o=>observed.blockHeight>o.review?.lastValidBlockHeight&&observed.slot>o.review?.validUntilSlot))return null
+  // Re-checked in the same statement: an operation reviewed, signed or sent since the reads above keeps the request.
+  const {rowCount}=await pool.query(`update hook_lab_launch_requests r set status='invite-expired',updated_at=clock_timestamp() where r.id=$1 and r.status='launching'
+   and not exists(select 1 from hook_lab_native_signing_operations o where o.custody_operation_id=r.custody_operation_id and ((o.status not in ('expired','finalized-failure','reviewed','partial','signed','signing-claimed','signing-unknown')
+    and not (o.stage='preparation' and o.status='finalized-success'))
+    or (o.status<>'expired' and o.status<>'finalized-failure' and ((o.review->>'lastValidBlockHeight')::bigint>=$2 or (o.review->>'validUntilSlot')::bigint>=$3))))`,[row.id,observed.blockHeight,observed.slot])
+  return rowCount?'expired':null
+ }
+ // Open requests a day past binding, all of them or one creator's: {expired,launched} counts. Safe to run any time.
+ async function settleStaleLaunches({creator=null,limit=20}={}){
+  if(creator!==null)address.parse(creator)
+  const {rows}=await pool.query(`select id,custody_operation_id from hook_lab_launch_requests where source='open' and status='launching'
+   and invite_expires_at<=clock_timestamp() and ($1::text is null or creator_wallet=$1) order by invite_expires_at limit $2`,[creator,limit])
+  const outcomes=[];for(const row of rows)outcomes.push(await settleStaleLaunch(row))
+  return {expired:outcomes.filter(x=>x==='expired').length,launched:outcomes.filter(x=>x==='launched').length}
+ }
  return Object.freeze({
   async availability(){
    const {rows:[p]}=await pool.query('select accepting,last_seen_at,(last_seen_at>clock_timestamp()-make_interval(secs=>$1)) as fresh from hook_lab_owner_presence where id=1',[presenceWindowMs/1000])
@@ -110,12 +146,14 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
     return Object.freeze({requests:requests.map(publicRequest),signRequests:signs.map(publicSignRequest),tableRequests:tables.map(publicTableRequest)})
    })
   },
+  settleStaleLaunches,
   // profile: { image, description, x, website, telegram } as the server validated it (image: src/token-image.mjs
   // validateTokenImage); written in the same transaction as the request and never changed afterwards.
   // source 'open': the creator's own launch, no invite. menus: the chain's {creatorFeeBps,capBps} it must choose from.
   async createRequest(creator,{id,...intent},profile=null,{source='owner-invite',menus=null}={}){
    address.parse(creator);z.uuid().parse(id)
    const open=source==='open';check(open?openLaunches&&menus:source==='owner-invite','Launch requests are not open')
+   if(open)await settleStaleLaunches({creator})
    const value=open?parseOpenIntent(intent,menus):parseIntent(intent),burnBps=gateBurnBps(value)
    check(!value.hookPublication||value.selectedHook,'Hook publication requires a selected hook')
    if(burnBps)checkBurn(value,menus)
@@ -139,6 +177,7 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
   async requestFor(creator){
    address.parse(creator)
    await expireInvites(pool)
+   if(openLaunches)await settleStaleLaunches({creator})
    const {rows:[row]}=await pool.query(`${withProfile} where r.creator_wallet=$1 order by r.created_at desc limit 1`,[creator])
    return publicRequest(row)??null
   },
