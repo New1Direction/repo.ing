@@ -57,11 +57,11 @@ async function fixture(bundledManifest = manifest) {
       return new Response(notice, response)
     }
   }
-  const context = createContext({ Request, Response, Headers, URL, TextEncoder, TextDecoder, Uint8Array, crypto: webcrypto, HTMLRewriter, Container, custodyManifest: bundledManifest })
+  const context = createContext({ Request, Response, Headers, URL, TextEncoder, TextDecoder, Uint8Array, crypto: webcrypto, HTMLRewriter, Container, custodyManifest: bundledManifest, caches: globalThis.__edgeCaches })
   const source = readFileSync(workerUrl, 'utf8')
   const module = new Script(source.replace("import { Container } from '@cloudflare/containers'", '')
     .replace("import custodyManifest from '../config/existing-market-custody.json'", '')
-    .replaceAll('export class PublicSite', 'class PublicSite').replace('export default {', 'const worker = {')
+    .replaceAll('export class PublicSite', 'class PublicSite').replace('export default {', 'const worker = {').replace('\nexport default worker\n', '\n')
     + '\n;({ PublicSite, PublicSiteB, worker })').runInContext(context)
   const env = {
     ...inputs.proposedEnvironment,
@@ -930,4 +930,79 @@ test('read-only public data the pages link to: GET/HEAD reach the site with thei
     assert.equal((await f.request(path)).status, 403, path)
   for (const method of ['POST', 'PUT', 'DELETE']) assert.equal((await f.request('/launches/manage', { method })).status, 403, `${method} /launches/manage`)
   assert.equal(f.runtime.calls.length, before, 'nothing refused reaches the container')
+})
+
+// An in-memory Cache API: what the edge would keep (body, headers, the stored-at time) per key URL.
+function fakeEdgeCache() {
+  const entries = new Map()
+  return { entries, default: {
+    async match(key) { const e = entries.get(key.url); return e ? new Response(e.body, { status: e.status, headers: e.headers }) : undefined },
+    async put(key, response) { entries.set(key.url, { body: await response.text(), status: response.status, headers: Object.fromEntries(response.headers) }) },
+  } }
+}
+async function edgeFixture() {
+  globalThis.__edgeCaches = fakeEdgeCache()
+  try { const f = await fixture(); f.env.EXISTING_MARKET_TRADING_STAGE = 'live'; return { ...f, cache: globalThis.__edgeCaches } }
+  finally { delete globalThis.__edgeCaches }
+}
+const age = (cache, url, seconds) => { const e = cache.entries.get(url); e.headers['x-edge-stored-at'] = String(Date.now() - seconds * 1000) }
+
+test('edge cache: public pages and build assets answer from the edge after the first view; the browser still never caches pages', async () => {
+  const f = await edgeFixture()
+  const first = await f.request('/explore'), calls = f.runtime.calls.length, firstBody = await first.clone().text()
+  assert.equal(first.status, 200); assert.equal(first.headers.get('x-edge-cache'), 'MISS'); assert.equal(first.headers.get('cache-control'), 'no-store')
+  const second = await f.request('/explore')
+  assert.equal(second.headers.get('x-edge-cache'), 'HIT'); assert.equal(second.headers.get('cache-control'), 'no-store')
+  assert.equal(await second.text(), firstBody)
+  assert.equal(f.runtime.calls.length, calls, 'a hit never reaches the container')
+  assert.equal(second.headers.get('x-repoing-slot'), 'a'); assert.equal(second.headers.get('set-cookie'), null)
+  const head = await f.request('/explore', { method: 'HEAD' })
+  assert.equal(head.headers.get('x-edge-cache'), 'HIT'); assert.equal(await head.text(), '')
+  await f.request('/_next/static/chunks/app-1a2b.js')
+  const asset = await f.request('/_next/static/chunks/app-1a2b.js')
+  assert.equal(asset.headers.get('x-edge-cache'), 'HIT'); assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable')
+  assert.ok([...f.cache.entries.keys()].includes('https://repo.ing/__edge/a/explore'))
+  assert.ok([...f.cache.entries.keys()].includes('https://repo.ing/__edge/any/_next/static/chunks/app-1a2b.js'))
+})
+
+test('edge cache: live, private and navigation requests are never stored or served from the edge', async () => {
+  const f = await edgeFixture()
+  for (const [path, options] of [['/api/health', {}], [`/api/market/${mint}/curve`, {}], ['/api/wallet/overview', {}], ['/explore', { headers: { rsc: '1' } }],
+    ['/explore?_rsc=abc', {}], ['/explore', { headers: { range: 'bytes=0-10' } }], ['/api/repo-search?q=x', {}]]) {
+    await f.request(path, options); await f.request(path, options)
+  }
+  assert.deepEqual([...f.cache.entries.keys()], [])
+  const before = f.runtime.calls.length
+  await f.request('/stats'); await f.request('/stats')
+  assert.equal(f.runtime.calls.length, before + 1)
+  const posted = await f.request('/stats', { method: 'POST' })
+  assert.notEqual(posted.headers.get('x-edge-cache'), 'HIT')
+})
+
+test('edge cache: a stale copy answers at once while one request refreshes it; an old copy covers a site error', async () => {
+  const f = await edgeFixture()
+  await f.request('/stats')
+  age(f.cache, 'https://repo.ing/__edge/a/stats', 30)
+  const calls = f.runtime.calls.length
+  const stale = await f.request('/stats')
+  assert.equal(stale.headers.get('x-edge-cache'), 'STALE'); assert.equal(f.runtime.calls.length, calls + 1, 'one background refresh')
+  assert.ok(Number(f.cache.entries.get('https://repo.ing/__edge/a/stats').headers['x-edge-stored-at']) > Date.now() - 5000, 'refreshed copy stored')
+  age(f.cache, 'https://repo.ing/__edge/a/stats', 300)
+  f.env.PUBLIC_SITE = { getByName() { return { async fetchWithReviewBindings() { throw Error('container down') } } } }
+  const covered = await f.request('/stats')
+  assert.equal(covered.status, 200); assert.equal(covered.headers.get('x-edge-cache'), 'STALE-IF-ERROR')
+  age(f.cache, 'https://repo.ing/__edge/a/stats', 3600)
+  assert.equal((await f.request('/stats')).status, 503, 'too old: the error shows')
+})
+
+test('edge cache: pages are kept per slot, so a flip never serves the other build; probes always reach their slot', async () => {
+  const f = await edgeFixture()
+  await f.request('/explore')
+  f.env.PUBLIC_SITE_B = { getByName() { return { async fetchWithReviewBindings() { return new Response('slot b page') } } } }
+  f.env.ACTIVE_SLOT = 'b'
+  const flipped = await f.request('/explore')
+  assert.equal(flipped.headers.get('x-edge-cache'), 'MISS'); assert.equal(await flipped.text(), 'slot b page')
+  f.env.SLOT_PROBE_TOKEN = 's'.repeat(40)
+  const probed = await f.request('/explore', { headers: { 'x-repoing-slot': 'a', 'x-repoing-slot-token': 's'.repeat(40) } })
+  assert.equal(probed.headers.get('x-edge-cache'), null); assert.equal(probed.headers.get('x-repoing-slot'), 'a')
 })

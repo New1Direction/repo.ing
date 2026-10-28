@@ -493,8 +493,54 @@ export class PublicSite extends Container {
 // Slot b: the same container under its own name, so it is its own container application with its own image.
 export class PublicSiteB extends PublicSite {}
 
-export default {
-  async fetch(request, env) {
+// Edge cache (owner, 2026-10-28: site speed). Only anonymous public reads that reach the site through the policy fallback
+// (no cookies are forwarded there): build assets, images, public pages and public JSON. Never probes, client navigations
+// (RSC), ranges, health, live market or wallet routes, claims, Hooks sessions, errors or responses that set a cookie.
+// Pages and JSON are keyed by the slot that served them, so a slot release never shows the other build's pages.
+// fresh: served from the edge; then for `stale` more seconds served while one background request refreshes it; and for up
+// to EDGE_ERROR_GRACE_S a stored copy answers instead of a site error (stale-if-error). On *.workers.dev the Cache API
+// stores nothing, so the test site behaves exactly as before.
+const EDGE_REFRESH = 'x-repoing-edge-refresh'
+const EDGE_ERROR_GRACE_S = 600
+const EDGE_SKIP_HEADERS = ['rsc', 'next-router-state-tree', 'next-router-prefetch', 'next-url', 'range', 'upgrade']
+const EDGE_STATIC = /^\/_next\/static\/[a-zA-Z0-9_./-]+\.(js|css|woff2?)$/
+const EDGE_IMAGE = new RegExp(`^(/api/token-image/${mint}|/api/repo-logo/\\d+|/(art|badges|launch-icons|hook-icons|credits)/[a-z0-9-]+\\.(webp|png)|/favicon\\.ico|/brand-cat\\.webp|/gitcat\\.png|/launch-on-repoing\\.svg|/opengraph-image\\.png|/video/repoing-flywheel-poster\\.jpg)$`)
+function edgePolicy(url, request, slot) {
+  if (!['GET', 'HEAD'].includes(request.method) || url.searchParams.has('_rsc')) return null
+  if ([...EDGE_SKIP_HEADERS, SLOT_HEADER, SLOT_TOKEN_HEADER].some(name => request.headers.has(name))) return null
+  const path = url.pathname
+  let rule = null
+  if (EDGE_STATIC.test(path)) rule = { fresh: 31_536_000, stale: 0, keyed: false, client: 'public, max-age=31536000, immutable' }
+  else if (EDGE_IMAGE.test(path)) rule = { fresh: 600, stale: 3600, keyed: false, client: 'public, max-age=300' }
+  else if (path === '/launches.atom' || path === '/launches.ics') rule = { fresh: 300, stale: 600, keyed: true }
+  else if (path === '/api/v1/launches/events') rule = { fresh: 5, stale: 10, keyed: true }
+  else if (/\/liquidity$/.test(path) && publicDataApi.test(path)) rule = { fresh: 10, stale: 20, keyed: true }
+  else if (pages.has(path) || jaPage.test(path) || tokenPage.test(path) || /^\/m\/[1-9]\d{0,15}$/.test(path) || path === '/api/growth'
+    || (/\/transparency$/.test(path) && publicDataApi.test(path))) rule = { fresh: 15, stale: 60, keyed: true }
+  if (!rule) return null
+  return { ...rule, client: rule.client ?? 'no-store', key: new Request(`${url.origin}/__edge/${rule.keyed ? slot : 'any'}${path}${url.search}`) }
+}
+async function edgeMatch(policy) {
+  try { return typeof caches === 'undefined' ? null : await caches.default.match(policy.key) ?? null } catch { return null }
+}
+const edgeAge = cached => (Date.now() - Number(cached.headers.get('X-Edge-Stored-At') || 0)) / 1000
+function edgeServe(cached, state, request, policy) {
+  const served = new Response(request.method === 'HEAD' ? null : cached.body, cached)
+  served.headers.set('Cache-Control', policy.client); served.headers.set('X-Edge-Cache', state); served.headers.delete('X-Edge-Stored-At')
+  return served
+}
+async function edgePut(policy, response, ctx) {
+  if (typeof caches === 'undefined') return
+  const stored = new Response(response.body, response)
+  stored.headers.set('Cache-Control', `public, max-age=${policy.fresh + Math.max(policy.stale, EDGE_ERROR_GRACE_S)}`)
+  stored.headers.set('X-Edge-Stored-At', String(Date.now()))
+  const put = caches.default.put(policy.key, stored).catch(() => {})
+  if (ctx?.waitUntil) ctx.waitUntil(put); else await put
+}
+const background = (ctx, work) => { const done = work.catch(() => {}); if (ctx?.waitUntil) ctx.waitUntil(done); else return done }
+
+const worker = {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url)
     // During recovery the legacy MCP path is an alias, never the launch-review handler.
     if (url.pathname === '/api/mcp') {
@@ -526,7 +572,7 @@ export default {
       for (const [key, value] of Object.entries(headers)) boundary.headers.set(key, value)
       return boundary
     }
-    let upstream = boundary
+    let upstream = boundary, edge = null, fallback = null
     if (boundary === null) {
       const allowed = pages.has(url.pathname) || jaPage.test(url.pathname) || tokenPage.test(url.pathname)
         || (ordinaryLaunchEnabled(bindings) && (ordinaryRepoPath(url.pathname) || url.pathname === '/api/launch'))
@@ -540,6 +586,20 @@ export default {
         || ['/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4'].includes(url.pathname)
         || url.pathname.startsWith('/_next/static/')
       if (!allowed || (url.pathname === '/builders' && url.searchParams.has('owner'))) return refusedPage(request, headers)
+      if (bindings.EXISTING_MARKET_TRADING_STAGE === 'live') edge = edgePolicy(url, request, slot)
+      if (edge && !request.headers.has(EDGE_REFRESH)) {
+        const cached = await edgeMatch(edge)
+        if (cached) {
+          const age = edgeAge(cached)
+          if (age <= edge.fresh) return edgeServe(cached, 'HIT', request, edge)
+          if (age <= edge.fresh + edge.stale) {
+            const refresh = worker.fetch(new Request(request.url, { headers: { [EDGE_REFRESH]: '1', accept: request.headers.get('accept') ?? '*/*' } }), env, ctx)
+            await background(ctx, refresh)
+            return edgeServe(cached, 'STALE', request, edge)
+          }
+          if (age <= edge.fresh + Math.max(edge.stale, EDGE_ERROR_GRACE_S)) fallback = cached
+        }
+      }
       const upstreamHeaders = new Headers()
       for (const name of ['accept', 'accept-language', 'rsc', 'next-router-state-tree', 'next-router-prefetch', 'next-url', 'range', 'if-none-match', 'if-modified-since']) {
         if (request.headers.has(name)) upstreamHeaders.set(name, request.headers.get(name))
@@ -556,6 +616,7 @@ export default {
       // Includes missing RPC during propagation, invalid bindings and failed
       // restart/storage/boot. Never fall back to raw fetch or the old DB-only RPC.
       // Only fixed categories are public; never expose exception text or bindings.
+      if (fallback) return edgeServe(fallback, 'STALE-IF-ERROR', request, edge)
       const reason = error?.message?.includes('RPC receiver does not implement') ? 'rpc-version' : failureStage
       return Response.json({ error: 'TRADING_REVIEW_UNAVAILABLE', reason }, { status: 503, headers: { ...headers, 'Retry-After': '5' } })
     }
@@ -574,6 +635,11 @@ export default {
         safe.headers.set('Cache-Control', 'public, max-age=300')
       }
     }
+    if (edge && safe.status >= 500 && fallback) return edgeServe(fallback, 'STALE-IF-ERROR', request, edge)
+    if (edge && request.method === 'GET' && safe.status === 200 && !safe.headers.has('set-cookie')) {
+      await edgePut(edge, safe.clone(), ctx)
+      safe.headers.set('X-Edge-Cache', 'MISS')
+    }
     // Live recovery notices belong to the React root and survive hydration.
     if (bindings.EXISTING_MARKET_TRADING_STAGE !== 'live' && safe.headers.get('Content-Type')?.includes('text/html')) {
       return new HTMLRewriter().on('body', {
@@ -589,3 +655,4 @@ export default {
     return safe
   },
 }
+export default worker
