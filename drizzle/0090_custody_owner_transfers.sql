@@ -34,3 +34,11 @@ DO $$ BEGIN
     GRANT SELECT ON custody_owner_transfers TO repoing_custody_recorder;
   END IF;
 END $$;
+
+--> statement-breakpoint
+-- The site reads these through its public role.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'repoing_account_web') THEN
+    GRANT SELECT ON custody_owner_transfers TO repoing_account_web;
+  END IF;
+END $$;

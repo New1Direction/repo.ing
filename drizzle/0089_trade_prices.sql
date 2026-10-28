@@ -121,3 +121,11 @@ DO $$ BEGIN
     END IF;
   END IF;
 END $$;
+
+--> statement-breakpoint
+-- The site reads these through its public role.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'repoing_account_web') THEN
+    GRANT SELECT ON mint_facts, sol_usd_minutes, trade_prices TO repoing_account_web;
+  END IF;
+END $$;
