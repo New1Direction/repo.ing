@@ -97,3 +97,7 @@
 .hlf-limit.is-over{color:#f2a1a3}.hlf-limit.is-over .hlf-limit-bar i{background:#f28485}
 .hlf-block-reason{margin:10px 0 0;padding:10px 12px;border-radius:10px;font-size:13px;color:#f6babc;background:#2a1c1f;border:1px solid #6c3c40}
 .hlf-preview-fee{margin:12px 0 0;font-size:14px;font-weight:650}
+
+/* Desktop: the sticky trade column never runs past the screen, so the preview and the button stay reachable. */
+@media(min-width:1001px){.hooks-coin-side{max-height:calc(100vh - 106px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;border-radius:12px}}
+/* Between the phone sheet and the desktop column (641–1000 px) the panel is in the page flow; nothing to pin. */

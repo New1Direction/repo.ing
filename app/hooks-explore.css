@@ -12,3 +12,12 @@
 .hooks-strip-figures{text-align:right;flex:none;max-width:45%}
 @media(max-width:640px){.hooks-strip .section-heading{align-items:flex-start;gap:12px}.hooks-strip .section-heading p{font-size:14px}.hooks-strip ul{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.hooks-strip-card{transition:none}}
+/* Phones: the site's market cards (globals.css at 700px), not the desktop table's fixed width (overflowed sideways). */
+@media(max-width:700px){
+  .hook-coin-table .market-head{display:none}
+  .hook-coin-table .market-row{min-width:0;grid-template-columns:minmax(0,1fr) auto auto;gap:10px 14px;padding:14px 16px}
+  .hook-coin-table .market-row .row-index,.hook-coin-table .market-row>span:nth-child(5){display:none}
+  .hook-coin-table .market-row .table-repo{grid-column:1/-1}
+  .hook-coin-table .table-actions{padding-right:0}
+  .hook-coin-table .table-actions .table-action{min-height:44px}
+}

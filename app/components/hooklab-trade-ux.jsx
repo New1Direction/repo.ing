@@ -24,7 +24,7 @@ export function HookTradePreview({ market, estimate, side, amount }) {
   return <dl className="hooks-preview" aria-label="Before you sign">
     <div><dt>You pay</dt><dd>{amountOf(preview.pay)}</dd></div>
     <div><dt>Fee <small>({preview.fee.bps / 100}%, in SOL)</small></dt><dd>{formatUnits(preview.fee.lamports, 9, 6)} SOL</dd></div>
-    {preview.burned.raw > 0n && <div className="is-burn"><dt>Burned <small>({preview.burned.bps / 100}%)</small></dt><dd>{amountOf(preview.burned, preview.burned.decimals)}</dd></div>}
+    {preview.burned.raw > 0n && <div className="is-burn"><dt>Burned <small>({preview.burned.bps / 100}%)</small></dt><dd>{amountOf(preview.burned, 2)}</dd></div>}
     <div className="is-receive"><dt>You receive</dt><dd>{amountOf(preview.receive)}</dd></div>
     {preview.minimum.raw !== null && <div className="is-minimum"><dt>At least, after slippage</dt><dd>{amountOf(preview.minimum)}</dd></div>}
   </dl>
