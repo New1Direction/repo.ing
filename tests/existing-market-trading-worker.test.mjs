@@ -95,10 +95,10 @@ test('only the five explicit review actions and two balance routes reach the con
 
 test('policy fallback serves public discovery and wallet reads but rejects private/mutation routes', async () => {
   const f = await fixture()
-  const allowed = ['/', '/launch', '/explore', '/find-repos', '/discoverers', '/referrals', '/agents', '/wallet', '/api/repo-search', '/api/wallet/overview', '/builders', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks', `/token/${mint}`, ...['trades', 'metrics', 'curve', 'traders', 'activity', 'pulse', 'events'].map(s => `/api/market/${mint}/${s}`), `/api/token-image/${mint}`, '/api/repo-logo/123', '/api/growth', '/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png', ...['art', 'badges', 'launch-icons', 'hook-icons', 'credits'].map(s => `/${s}/test-image.webp`), '/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4', '/_next/static/chunks/test.js']
+  const allowed = ['/', '/launch', '/explore', '/find-repos', '/discoverers', '/referrals', '/agents', '/wallet', '/api/repo-search', '/api/wallet/overview', '/builders', '/ja', '/ja/faq', '/waiting', '/launches', '/opt-out', '/api/v1/launches', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks', `/token/${mint}`, ...['trades', 'metrics', 'curve', 'traders', 'activity', 'pulse', 'events'].map(s => `/api/market/${mint}/${s}`), `/api/token-image/${mint}`, '/api/repo-logo/123', '/api/growth', '/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png', ...['art', 'badges', 'launch-icons', 'hook-icons', 'credits'].map(s => `/${s}/test-image.webp`), '/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4', '/_next/static/chunks/test.js']
   for (const path of allowed) for (const method of ['GET', 'HEAD']) assert.equal((await f.request(path, { method })).status, 200, `${method} ${path}`)
   const before = f.runtime.calls.length
-  for (const path of ['/api/trade', '/api/trade/', '/api/auth/session', '/api/launch', '/api/hook-lab/native-launch', '/api/hook-lab/inclusive-trade', '/api/builders/claim', '/api/bundles', '/api/replay', '/api/actions/trade', '/api/mcp/', '/builders?owner=x', '/admin/restart', '/api/market/not-a-mint/balance', `/api/market/${mint}/balance/`, '/stats/', '/art/image.svg']) {
+  for (const path of ['/api/trade', '/api/trade/', '/api/auth/session', '/api/launch', '/api/hook-lab/native-launch', '/api/hook-lab/inclusive-trade', '/api/builders/claim', '/api/bundles', '/api/replay', '/api/actions/trade', '/api/mcp/', '/builders?owner=x', '/ja/', '/japan', '/ja/a/b/c/d', '/api/v1/launches/events', '/api/opt-out', '/launches/manage', '/api/builders', '/api/discovery/1', '/api/x/connect', '/api/x/callback', '/admin/restart', '/api/market/not-a-mint/balance', `/api/market/${mint}/balance/`, '/stats/', '/art/image.svg']) {
     for (const method of ['GET', 'HEAD', 'POST', 'OPTIONS', 'PUT', 'DELETE']) assert.equal((await f.request(path, { method })).status, 403, `${method} ${path}`)
   }
   assert.equal(f.runtime.calls.length, before)
@@ -702,4 +702,52 @@ test('HOOK_BURN_ENABLED is off by default and forwarded only with Hooks and open
   Object.assign(f.env, { HOOK_BURN_ENABLED: 'true', HOOKS_RECOVERY_ENABLED: 'false' })
   const body = await (await f.request()).json()
   assert.equal(body.HOOK_BURN_ENABLED, 'false', 'Hooks off: off')
+})
+
+test('reopened pages (owner, 2026-10-28): launch pages redirect to the live page, refused pages are a page for browsers', async () => {
+  const f = await fixture()
+  for (const [from, to] of [['/coins/new', '/hooks'], ['/launches/new', '/launch']]) for (const method of ['GET', 'HEAD']) {
+    const response = await f.request(from, { method })
+    assert.equal(response.status, 302, `${method} ${from}`); assert.equal(response.headers.get('location'), to)
+  }
+  assert.equal((await f.request('/coins/new', { method: 'POST' })).status, 403, 'only GET/HEAD redirect')
+  const before = f.runtime.calls.length
+  const page = await f.request('/launches/manage', { headers: { accept: 'text/html,application/xhtml+xml' } })
+  assert.equal(page.status, 403); assert.match(page.headers.get('content-type'), /text\/html/)
+  assert.match(await page.text(), /isn\u2019t open yet[\s\S]*href="\/"/)
+  assert.equal((await f.request('/launches/manage', { method: 'HEAD', headers: { accept: 'text/html' } })).status, 403)
+  const api = await f.request('/builders/reminders')
+  assert.deepEqual([api.status, await api.json()], [403, { error: 'RECOVERY_ROUTE_DISABLED' }], 'non-browser callers keep the JSON refusal')
+  assert.equal(f.runtime.calls.length, before, 'nothing refused reaches the container')
+  await f.request('/ja', { headers: { cookie: 'repoing_github=session' } })
+  assert.equal(f.runtime.calls.at(-1).request.headers.has('cookie'), false, 'read-only pages carry no cookies')
+})
+
+test('the opt-out record route opens with claims (session cookie, same-origin JSON); every payout, bind, dashboard and X route stays closed', async () => {
+  const f = await fixture()
+  f.env.EXISTING_MARKET_TRADING_STAGE = 'live'
+  const send = (method, path, extra = {}) => f.request(path, { method, headers: { cookie: '__Host-repoing_github=s; repoing_x=other; __Host-hook-wallet-session=h', origin: 'https://repo.ing', 'content-type': 'application/json', ...extra },
+    ...(method === 'POST' ? { body: '{"action":"decline","repoId":"1"}' } : {}) })
+  for (const method of ['GET', 'POST']) assert.equal((await send(method, '/api/opt-out')).status, 403, `${method} closed without claims`)
+  await send('GET', '/opt-out')
+  assert.equal(f.runtime.calls.at(-1).request.headers.has('cookie'), false, 'without claims the page renders signed out')
+  Object.assign(f.env, { ORDINARY_LAUNCH_RECOVERY_ENABLED: 'false', GITHUB_APP_CLIENT_ID: 'Iv1.claims-test', CLAIMS_RECOVERY_ENABLED: 'true', GITHUB_APP_CLIENT_SECRET: 'client-secret',
+    CLAIMS_DATABASE_URL: 'postgres://repoing_builder_claims:x@db.example/repoing_operational?sslmode=verify-full',
+    BUILDER_PAYOUT_SECRET_KEY: JSON.stringify(Array.from({ length: 64 }, (_, i) => i)) })
+  for (const [method, path] of [['GET', '/opt-out'], ['GET', '/api/opt-out'], ['POST', '/api/opt-out']]) {
+    const response = await send(method, path)
+    assert.equal(response.status, 200, `${method} ${path}`)
+    assert.equal(response.headers.get('set-cookie'), null, `${path} sets no cookie`)
+    const call = f.runtime.calls.at(-1)
+    assert.equal(call.request.headers.get('cookie'), '__Host-repoing_github=s', `${path} gets only the GitHub session`)
+    if (method === 'POST') assert.equal(call.body, '{"action":"decline","repoId":"1"}')
+  }
+  assert.equal((await send('PUT', '/api/opt-out')).status, 403)
+  assert.equal((await send('POST', '/api/opt-out', { origin: 'https://evil.example' })).status, 403)
+  assert.equal((await send('POST', '/api/opt-out', { 'content-type': 'text/plain' })).status, 403)
+  for (const [method, path] of [['GET', '/api/builders'], ['POST', '/api/builders/claim'], ['POST', '/api/builders/bind'], ['POST', '/api/claim'], ['POST', '/api/hf/claim'],
+    ['POST', '/api/participation/1'], ['GET', '/api/participation/1'], ['POST', '/api/contributor-wallet/link'], ['GET', '/api/contributor-wallet'], ['POST', '/api/discovery/1'],
+    ['GET', '/api/discovery/1'], ['POST', '/api/x/connect'], ['GET', '/api/x/callback'], ['GET', '/api/x/link'], ['POST', '/api/payout-address'], ['GET', '/builders?owner=x']]) {
+    assert.equal((await send(method, path)).status, 403, `${method} ${path} stays closed`)
+  }
 })

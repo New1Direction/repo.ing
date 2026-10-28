@@ -4,7 +4,13 @@ import custodyManifest from '../config/existing-market-custody.json'
 
 // Existing-market recovery wrapper. Keep PublicSite/PUBLIC_SITE/public-readonly
 // identity and the closed launch/claim/replay boundaries in every stage.
-const pages = new Set(['/', '/launch', '/explore', '/find-repos', '/discoverers', '/referrals', '/agents', '/wallet', '/builders', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks'])
+// /ja (and its sub-pages), /waiting, /launches and /opt-out (owner, 2026-10-28): read-only pages, with the launch calendar's
+// own read-only JSON. /opt-out's record route rides with the claim routes (it needs the GitHub session cookie).
+const pages = new Set(['/', '/launch', '/explore', '/find-repos', '/discoverers', '/referrals', '/agents', '/wallet', '/builders', '/stats', '/how-it-works', '/about',
+  '/programmable-coins', '/hooks', '/ja', '/waiting', '/launches', '/opt-out', '/api/v1/launches'])
+const jaPage = /^\/ja(\/[a-z0-9-]{1,64}){1,3}$/
+// Pages that start a launch through a route that is not open: sent to the live launch page instead of a refusal.
+const redirects = { '/coins/new': '/hooks', '/launches/new': '/launch' }
 const mint = '[1-9A-HJ-NP-Za-km-z]{32,44}'
 const tokenPage = new RegExp(`^/token/${mint}$`)
 // events: the read-only live hint stream (app/api/market/[mint]/events) that tells an open chart a trade was indexed.
@@ -40,6 +46,12 @@ const claimPage = /^\/claim\/[1-9]\d{0,15}$/
 const claimRoute = (url, method) => ['GET', 'HEAD'].includes(method)
   ? claimPage.test(url.pathname) || ['/api/github/start', '/api/github/callback'].includes(url.pathname)
   : method === 'POST' && ['/api/bind', '/api/claim/payout'].includes(url.pathname)
+// A maintainer's opt-out or decline (owner, 2026-10-28): a decision record, never a payment. The page and its route get the
+// GitHub session cookie only (the page renders signed in from it), never set a cookie, and the POST keeps the claim routes'
+// same-origin JSON bound.
+const GITHUB_SESSION_COOKIES = new Set(['__Host-repoing_github'])
+const optOutRoute = (url, method) => (url.pathname === '/opt-out' && ['GET', 'HEAD'].includes(method))
+  || (url.pathname === '/api/opt-out' && ['GET', 'HEAD', 'POST'].includes(method))
 // Hooks on our own stack (owner, 2026-10-26): self-serve open launches, native-SOL trading and creator claims. Off unless
 // HOOKS_RECOVERY_ENABLED is 'true' on the live stage with every binding below valid; off, none of them is read or forwarded.
 // Creator-chosen (selected) hooks, wallet funding, owner-approved launches and the retired bridged stack stay off whatever
@@ -290,17 +302,33 @@ async function tradeBoundary(request, bindings) {
 }
 
 // A claim route request: the session cookie in, same-origin JSON bodies of at most 16 KB for the two POSTs. null refuses it.
-async function claimRequest(request, url) {
+// cookies: only these cookie names cross; null forwards the claim routes' cookies as before.
+async function claimRequest(request, url, cookies = null) {
   const headers = new Headers()
-  for (const name of ['accept', 'accept-language', 'cookie', 'content-type', 'origin', 'rsc', 'next-router-state-tree',
+  for (const name of ['accept', 'accept-language', 'content-type', 'origin', 'rsc', 'next-router-state-tree',
     'next-router-prefetch', 'next-url', 'cf-connecting-ip']) {
     if (request.headers.has(name)) headers.set(name, request.headers.get(name))
   }
+  const cookie = request.headers.get('cookie')
+  const kept = cookie && cookies ? cookie.split(';').map(part => part.trim()).filter(part => cookies.has(part.split('=')[0])).join('; ') : cookie
+  if (kept) headers.set('cookie', kept)
   if (request.method !== 'POST') return new Request(request.url, { method: request.method, headers, redirect: 'manual' })
   if (request.headers.get('origin') !== url.origin || request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') return null
   const body = await request.arrayBuffer().catch(() => null)
   if (!body || body.byteLength > 16384) return null
   return new Request(request.url, { method: 'POST', headers, body, redirect: 'manual' })
+}
+
+// A refused page shows a short page with a way home; API callers keep the JSON refusal.
+const REFUSED_HTML = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+  '<title>Not available · repo.ing</title><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#101213;color:#f4f6fa;' +
+  'font:16px/1.5 system-ui,sans-serif;text-align:center;padding:24px"><main><h1 style="font-size:28px;margin:0 0 8px">This page isn\u2019t open yet</h1>' +
+  '<p style="color:#aeb6c1;margin:0 0 20px">It\u2019s switched off while repo.ing finishes its recovery.</p>' +
+  '<a href="/" style="color:#101713;background:#81e6ad;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:700">Go to repo.ing</a></main></body></html>'
+function refusedPage(request, headers) {
+  const page = ['GET', 'HEAD'].includes(request.method) && (request.headers.get('accept') ?? '').includes('text/html')
+  return page ? new Response(request.method === 'HEAD' ? null : REFUSED_HTML, { status: 403, headers: { ...headers, 'Content-Type': 'text/html; charset=utf-8' } })
+    : Response.json({ error: 'RECOVERY_ROUTE_DISABLED' }, { status: 403, headers })
 }
 
 const STALE_CONTAINER = /^(Error proxying request to container|Container suddenly disconnected)/
@@ -420,9 +448,13 @@ export default {
     }
     if (url.hostname.endsWith('.workers.dev')) headers['X-Robots-Tag'] = 'noindex, nofollow, noarchive'
     const bindings = snapshotBindings({ ...env, TRADING_CUSTODY_RECOVERY_JSON: custodyManifest })
-    const claim = claimsEnabled(bindings) && claimRoute(url, request.method) && !request.headers.has('upgrade')
+    if (Object.hasOwn(redirects, url.pathname) && ['GET', 'HEAD'].includes(request.method)) {
+      return new Response(null, { status: 302, headers: { ...headers, Location: redirects[url.pathname] } })
+    }
+    const optOut = claimsEnabled(bindings) && optOutRoute(url, request.method) && !request.headers.has('upgrade')
+    const claim = optOut || (claimsEnabled(bindings) && claimRoute(url, request.method) && !request.headers.has('upgrade'))
     const hook = !claim && hooksEnabled(bindings) && hookRoute(url, request.method) && !request.headers.has('upgrade')
-    const boundary = claim ? (await claimRequest(request, url) ?? Response.json({ error: 'CLAIM_REQUEST_REFUSED' }, { status: 403 }))
+    const boundary = claim ? (await claimRequest(request, url, optOut ? GITHUB_SESSION_COOKIES : null) ?? Response.json({ error: 'CLAIM_REQUEST_REFUSED' }, { status: 403 }))
       : hook ? (await hookRequest(request, url) ?? Response.json({ error: 'HOOKS_REQUEST_REFUSED' }, { status: 403 }))
       : await tradeBoundary(request, bindings)
     if (boundary instanceof Response) {
@@ -431,7 +463,7 @@ export default {
     }
     let upstream = boundary
     if (boundary === null) {
-      const allowed = pages.has(url.pathname) || tokenPage.test(url.pathname)
+      const allowed = pages.has(url.pathname) || jaPage.test(url.pathname) || tokenPage.test(url.pathname)
         || (ordinaryLaunchEnabled(bindings) && (ordinaryRepoPath(url.pathname) || url.pathname === '/api/launch'))
         || publicMarketApi.test(url.pathname) || tokenImage.test(url.pathname) || tokenMetadata.test(url.pathname)
         || /^\/m\/[1-9]\d{0,15}$/.test(url.pathname)
@@ -441,9 +473,7 @@ export default {
         || /^\/(art|badges|launch-icons|hook-icons|credits)\/[a-z0-9-]+\.(webp|png)$/.test(url.pathname)
         || ['/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4'].includes(url.pathname)
         || url.pathname.startsWith('/_next/static/')
-      if (!allowed || (url.pathname === '/builders' && url.searchParams.has('owner'))) {
-        return Response.json({ error: 'RECOVERY_ROUTE_DISABLED' }, { status: 403, headers })
-      }
+      if (!allowed || (url.pathname === '/builders' && url.searchParams.has('owner'))) return refusedPage(request, headers)
       const upstreamHeaders = new Headers()
       for (const name of ['accept', 'accept-language', 'rsc', 'next-router-state-tree', 'next-router-prefetch', 'next-url', 'range', 'if-none-match', 'if-modified-since']) {
         if (request.headers.has(name)) upstreamHeaders.set(name, request.headers.get(name))
@@ -465,7 +495,7 @@ export default {
     }
     const safe = new Response(response.body, response)
     // Only the claim routes may set the GitHub session cookies, and only wallet-identity the Hooks wallet cookies.
-    if (!claim && !(hook && hookSessionRoutes[url.pathname]?.setsCookie)) safe.headers.delete('set-cookie')
+    if (optOut || (!claim && !(hook && hookSessionRoutes[url.pathname]?.setsCookie))) safe.headers.delete('set-cookie')
     for (const [key, value] of Object.entries(headers)) safe.headers.set(key, value)
     // Only build assets and explicit public illustrations are cacheable. Pages,
     // APIs (including token images), errors and financial responses stay no-store.
