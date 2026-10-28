@@ -12,7 +12,7 @@ import { ClaimPageTips } from '../../../components/repo-tips'
 import { PackSharesClaim } from '../../../components/pack-shares-claim'
 import { ClaimPageDecision } from '../../../components/maintainer-declined'
 import { ClaimBuilderTools } from '../../../components/builder-tools'
-import { githubAppConfigurationUrl, githubInstallationForRepository } from '../../../../src/github-app-auth.mjs'
+import { cachedAppSettingsUrl, cachedInstallationStatus } from '../../../lib/claim-github-cache.mjs'
 import { marketByRepo, feeStatus, database, claimsDatabase, chain, creatorSigner } from '../../../lib/server.mjs'
 import { claimWindow, owedLamports, payoutControls } from '../../../../src/builder-payouts.mjs'
 import { displayRepository } from '../../../lib/repository-display.mjs'
@@ -77,7 +77,7 @@ async function ClaimContent({ market, repo, query }) {
   const repoId = market.repoId, pool = database()
   const [fees, access, destination, receipt, usdPerSol, funded, cookieStore] = await Promise.all([
     feeStatus(repoId),
-    githubInstallationForRepository({ owner: repo.owner, name: repo.name }).then(value => value ? 'installed' : 'missing').catch(() => 'unknown'),
+    cachedInstallationStatus({ owner: repo.owner, name: repo.name }).catch(() => 'unknown'),
     // The active binding (only it is ever paid) and a pasted address waiting out its hold.
     currentPayoutDestinations(pool, [repoId]).then(destinations => destinations.get(String(repoId)) ?? { active: null, pending: null }),
     pool.query(`select amount_base_units::text as amount, beneficiary_wallet as wallet, claim_signature as signature
@@ -90,7 +90,7 @@ async function ClaimContent({ market, repo, query }) {
   ])
   let appSettingsUrl = 'https://github.com/apps/repo-ing/installations/new'
   if (access === 'missing') {
-    try { appSettingsUrl = await githubAppConfigurationUrl({ owner: repo.owner }) } catch {}
+    try { appSettingsUrl = await cachedAppSettingsUrl({ owner: repo.owner }) } catch {}
   }
   const session = readGithubSession(cookieStore.get(githubSessionCookie)?.value)
   // Only the public identity is passed to the UI; the GitHub credential stays encrypted and HttpOnly.
