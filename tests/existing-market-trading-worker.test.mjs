@@ -85,7 +85,8 @@ function slotB(f) {
   const calls = []
   f.env.PUBLIC_SITE_B = { getByName(name) {
     assert.equal(name, 'public-readonly')
-    return { async fetchWithReviewBindings(request) { calls.push({ url: request.url, headers: Object.fromEntries(request.headers) }); return new Response('slot b') } }
+    return { async fetchWithReviewBindings(request) { calls.push({ url: request.url, headers: Object.fromEntries(request.headers) }); return new Response('slot b') },
+      async restartForSlotDeploy() { calls.push({ restart: true }); return true } }
   } }
   return calls
 }
@@ -830,4 +831,26 @@ test('slots: flipping ACTIVE_SLOT or the probe secret never restarts a container
 test('slots: slot b is the same container class under its own name', async () => {
   const f = await fixture()
   assert.equal(Object.getPrototypeOf(f.module.PublicSiteB), f.module.PublicSite)
+})
+
+test('slots: only a probe may restart a slot, only the inactive one, and only by POST', async () => {
+  const f = await fixture(), b = slotB(f)
+  f.env.SLOT_PROBE_TOKEN = PROBE_TOKEN
+  const restart = (slot, options = {}) => f.request('/__slot/restart', { method: 'POST', headers: probe(slot), ...options })
+  const done = await restart('b')
+  assert.equal(done.status, 200); assert.deepEqual(await done.json(), { restarted: 'b' }); assert.deepEqual(b.at(-1), { restart: true })
+  const live = await restart('a')
+  assert.equal(live.status, 409); assert.deepEqual(await live.json(), { error: 'SLOT_IS_LIVE' })
+  assert.equal((await f.request('/__slot/restart', { method: 'POST' })).status, 403, 'no probe headers')
+  assert.equal((await restart('b', { method: 'GET' })).status, 403, 'GET')
+  assert.equal((await restart('b', { headers: probe('b', 'q'.repeat(40)) })).status, 403, 'wrong secret')
+  assert.equal(b.filter(call => call.restart).length, 1)
+  // Slot a restarts for real when b is live: the next request starts a fresh container with the same environment.
+  await f.request('/stats', { headers: probe('a') })
+  const starts = f.runtime.starts
+  f.env.ACTIVE_SLOT = 'b'
+  assert.equal((await restart('a')).status, 200)
+  assert.equal(f.runtime.env, null)
+  await f.request('/stats', { headers: probe('a') })
+  assert.equal(f.runtime.starts, starts + 1)
 })

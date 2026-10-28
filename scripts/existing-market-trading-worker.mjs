@@ -357,6 +357,15 @@ async function requestSlot(request, env) {
   return named === 'b' && !env.PUBLIC_SITE_B ? null : named
 }
 const slotSite = (env, slot) => slot === 'b' ? env.PUBLIC_SITE_B : env.PUBLIC_SITE
+// POST /__slot/restart with the probe: stops the INACTIVE slot's container so its next start runs the slot's current
+// image (a completed rollout can leave the old process answering). The live slot is never restarted from here.
+async function slotRestart(request, env, slot) {
+  const headers = { 'Cache-Control': 'no-store' }
+  if (request.method !== 'POST' || !request.headers.has(SLOT_HEADER)) return Response.json({ error: 'SLOT_PROBE_REFUSED' }, { status: 403, headers })
+  if (slot === activeSlot(env)) return Response.json({ error: 'SLOT_IS_LIVE' }, { status: 409, headers })
+  await slotSite(env, slot).getByName('public-readonly').restartForSlotDeploy()
+  return Response.json({ restarted: slot }, { headers })
+}
 // </container-slots>
 
 export class PublicSite extends Container {
@@ -365,6 +374,16 @@ export class PublicSite extends Container {
   enableInternet = true
   pendingDispatches = new Set()
   generation = 0
+
+  // Slot deploys only (POST /__slot/restart on the inactive slot): drain, stop; the next request starts the current image.
+  async restartForSlotDeploy() {
+    await this.ctx.blockConcurrencyWhile(async () => {
+      await Promise.allSettled([...this.pendingDispatches])
+      try { await this.destroy() } catch { /* Not running: the next start uses the current image anyway. */ }
+      this.generation++
+    })
+    return true
+  }
 
   // Do not let accidental raw binding fetches bypass environment validation.
   async fetch() {
@@ -478,6 +497,7 @@ export default {
     if (url.hostname.endsWith('.workers.dev')) headers['X-Robots-Tag'] = 'noindex, nofollow, noarchive'
     const slot = await requestSlot(request, env)
     if (slot === null) return Response.json({ error: 'SLOT_PROBE_REFUSED' }, { status: 403, headers })
+    if (url.pathname === '/__slot/restart') return slotRestart(request, env, slot)
     const bindings = snapshotBindings({ ...env, TRADING_CUSTODY_RECOVERY_JSON: custodyManifest })
     if (Object.hasOwn(redirects, url.pathname) && ['GET', 'HEAD'].includes(request.method)) {
       return new Response(null, { status: 302, headers: { ...headers, Location: redirects[url.pathname] } })
