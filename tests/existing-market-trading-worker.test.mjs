@@ -61,8 +61,8 @@ async function fixture(bundledManifest = manifest) {
   const source = readFileSync(workerUrl, 'utf8')
   const module = new Script(source.replace("import { Container } from '@cloudflare/containers'", '')
     .replace("import custodyManifest from '../config/existing-market-custody.json'", '')
-    .replace('export class PublicSite', 'class PublicSite').replace('export default {', 'const worker = {')
-    + '\n;({ PublicSite, worker })').runInContext(context)
+    .replaceAll('export class PublicSite', 'class PublicSite').replace('export default {', 'const worker = {')
+    + '\n;({ PublicSite, PublicSiteB, worker })').runInContext(context)
   const env = {
     ...inputs.proposedEnvironment,
     PUBLIC_DATABASE_URL: 'public-reader', TRADING_DATABASE_URL: 'trade-only',
@@ -77,8 +77,20 @@ async function fixture(bundledManifest = manifest) {
   const trade = (action = 'quote', headers = {}) => request('/api/trade', {
     method: 'POST', headers: { origin: 'https://repo.ing', 'content-type': 'application/json', ...headers }, body: JSON.stringify({ action }),
   })
-  return { env, runtime, storage, request, trade, fetch, instance }
+  return { env, runtime, storage, request, trade, fetch, instance, module }
 }
+
+// Slot b as the Worker sees it: its own Durable Object namespace; every call is recorded with the request's headers.
+function slotB(f) {
+  const calls = []
+  f.env.PUBLIC_SITE_B = { getByName(name) {
+    assert.equal(name, 'public-readonly')
+    return { async fetchWithReviewBindings(request) { calls.push({ url: request.url, headers: Object.fromEntries(request.headers) }); return new Response('slot b') } }
+  } }
+  return calls
+}
+const PROBE_TOKEN = 'p'.repeat(40)
+const probe = (slot, token = PROBE_TOKEN) => ({ 'x-repoing-slot': slot, 'x-repoing-slot-token': token })
 
 test('only the five explicit review actions and two balance routes reach the container', async () => {
   const f = await fixture()
@@ -750,4 +762,72 @@ test('the opt-out record route opens with claims (session cookie, same-origin JS
     ['GET', '/api/discovery/1'], ['POST', '/api/x/connect'], ['GET', '/api/x/callback'], ['GET', '/api/x/link'], ['POST', '/api/payout-address'], ['GET', '/builders?owner=x']]) {
     assert.equal((await send(method, path)).status, 403, `${method} ${path} stays closed`)
   }
+})
+
+test('slots: the public reaches slot a unless ACTIVE_SLOT is b and slot b is bound', async () => {
+  const f = await fixture(), b = slotB(f)
+  const a = await f.request('/stats')
+  assert.equal(a.headers.get('x-repoing-slot'), 'a'); assert.equal(b.length, 0)
+  f.env.ACTIVE_SLOT = 'b'
+  const viaB = await f.request('/stats')
+  assert.equal(await viaB.text(), 'slot b'); assert.equal(viaB.headers.get('x-repoing-slot'), 'b'); assert.equal(b.length, 1)
+  for (const value of ['B', 'c', '', ' b']) {
+    f.env.ACTIVE_SLOT = value
+    assert.equal((await f.request('/stats')).headers.get('x-repoing-slot'), 'a', `ACTIVE_SLOT=${JSON.stringify(value)}`)
+  }
+  f.env.ACTIVE_SLOT = 'b'; delete f.env.PUBLIC_SITE_B
+  assert.equal((await f.request('/stats')).headers.get('x-repoing-slot'), 'a', 'slot b without its binding falls back to a')
+})
+
+test('slots: a probe with the secret reaches the named slot, never the public route, and its headers never reach a container', async () => {
+  const f = await fixture(), b = slotB(f)
+  f.env.SLOT_PROBE_TOKEN = PROBE_TOKEN
+  const viaB = await f.request('/api/health', { headers: probe('b') })
+  assert.equal(viaB.headers.get('x-repoing-slot'), 'b'); assert.equal(b.length, 1)
+  assert.equal(b[0].headers['x-repoing-slot'], undefined); assert.equal(b[0].headers['x-repoing-slot-token'], undefined)
+  assert.equal((await f.request('/api/health')).headers.get('x-repoing-slot'), 'a', 'the public still reaches the active slot')
+  f.env.ACTIVE_SLOT = 'b'
+  const viaA = await f.request('/stats', { headers: probe('a') })
+  assert.equal(viaA.headers.get('x-repoing-slot'), 'a')
+  const forwarded = f.runtime.calls.at(-1).request.headers
+  assert.equal(forwarded.get('x-repoing-slot'), null); assert.equal(forwarded.get('x-repoing-slot-token'), null)
+  // The Worker's own rules still apply to probes: a refused route stays refused.
+  assert.equal((await f.request('/api/builders/claim', { method: 'POST', headers: probe('b') })).status, 403)
+})
+
+test('slots: a probe without the right secret, slot or binding is refused before any container', async () => {
+  const f = await fixture(), b = slotB(f)
+  f.env.SLOT_PROBE_TOKEN = PROBE_TOKEN
+  const before = f.runtime.calls.length
+  const refused = [probe('b', 'q'.repeat(40)), probe('b', PROBE_TOKEN.slice(1)), probe('c'), probe(''), { 'x-repoing-slot': 'b' },
+    { 'x-repoing-slot-token': PROBE_TOKEN }, probe('B')]
+  for (const headers of refused) {
+    const response = await f.request('/api/health', { headers })
+    assert.equal(response.status, 403, JSON.stringify(Object.keys(headers)))
+    assert.deepEqual(await response.json(), { error: 'SLOT_PROBE_REFUSED' })
+  }
+  f.env.SLOT_PROBE_TOKEN = 'short'
+  assert.equal((await f.request('/api/health', { headers: probe('b', 'short') })).status, 403, 'a secret under 32 characters disables probes')
+  delete f.env.SLOT_PROBE_TOKEN
+  assert.equal((await f.request('/api/health', { headers: probe('b') })).status, 403, 'no secret, no probes')
+  f.env.SLOT_PROBE_TOKEN = PROBE_TOKEN; delete f.env.PUBLIC_SITE_B
+  assert.equal((await f.request('/api/health', { headers: probe('b') })).status, 403, 'probing an unbound slot b')
+  assert.equal(f.runtime.calls.length, before); assert.equal(b.length, 0)
+})
+
+test('slots: flipping ACTIVE_SLOT or the probe secret never restarts a container', async () => {
+  const f = await fixture(); slotB(f)
+  await f.request('/stats')
+  const starts = f.runtime.starts, destroys = f.runtime.destroys ?? 0, identity = f.storage.get('review-bindings-sha256')
+  for (const [key, value] of [['ACTIVE_SLOT', 'b'], ['ACTIVE_SLOT', 'a'], ['SLOT_PROBE_TOKEN', PROBE_TOKEN]]) {
+    f.env[key] = value
+    await f.request('/stats', { headers: key === 'SLOT_PROBE_TOKEN' ? probe('a') : {} })
+  }
+  assert.equal(f.runtime.starts, starts); assert.equal(f.runtime.destroys ?? 0, destroys)
+  assert.equal(f.storage.get('review-bindings-sha256'), identity)
+})
+
+test('slots: slot b is the same container class under its own name', async () => {
+  const f = await fixture()
+  assert.equal(Object.getPrototypeOf(f.module.PublicSiteB), f.module.PublicSite)
 })

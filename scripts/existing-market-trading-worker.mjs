@@ -2,7 +2,7 @@ import { Container } from '@cloudflare/containers'
 // Wrangler Text module: preserve exact bytes without a >5KB environment binding.
 import custodyManifest from '../config/existing-market-custody.json'
 
-// Existing-market recovery wrapper. Keep PublicSite/PUBLIC_SITE/public-readonly
+// Existing-market recovery wrapper. Keep PublicSite/PUBLIC_SITE/public-readonly (slot b: PublicSiteB/PUBLIC_SITE_B)
 // identity and the closed launch/claim/replay boundaries in every stage.
 // /ja (and its sub-pages), /waiting, /launches and /opt-out (owner, 2026-10-28): read-only pages, with the launch calendar's
 // own read-only JSON. /opt-out's record route rides with the claim routes (it needs the GitHub session cookie).
@@ -333,6 +333,32 @@ function refusedPage(request, headers) {
 
 const STALE_CONTAINER = /^(Error proxying request to container|Container suddenly disconnected)/
 
+// <container-slots> Blue/green container slots (owner, 2026-10-28): two container applications, PublicSite (slot a) and
+// PublicSiteB (slot b). ACTIVE_SLOT picks the slot the public reaches; a deploy puts a new image on the other slot only,
+// checks it through the probe, then flips ACTIVE_SLOT with a Worker-only deploy (no container rollout); rollback flips
+// back. Neither ACTIVE_SLOT nor SLOT_PROBE_TOKEN is a container binding, so a flip never restarts a container.
+// The probe: x-repoing-slot (a|b) with x-repoing-slot-token equal to the SLOT_PROBE_TOKEN secret (32+ characters).
+const SLOT_HEADER = 'x-repoing-slot', SLOT_TOKEN_HEADER = 'x-repoing-slot-token', MIN_PROBE_TOKEN = 32
+const activeSlot = env => env.ACTIVE_SLOT === 'b' && env.PUBLIC_SITE_B ? 'b' : 'a'
+async function sameSecret(given, secret) {
+  const [x, y] = await Promise.all([given, secret].map(value => crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))))
+  const p = new Uint8Array(x), q = new Uint8Array(y)
+  let diff = 0
+  for (let i = 0; i < p.length; i++) diff |= p[i] ^ q[i]
+  return diff === 0
+}
+// The slot a request goes to, or null to refuse it: a probe needs both headers, a bound slot and the right secret.
+async function requestSlot(request, env) {
+  const named = request.headers.get(SLOT_HEADER), token = request.headers.get(SLOT_TOKEN_HEADER)
+  if (named === null && token === null) return activeSlot(env)
+  const secret = env.SLOT_PROBE_TOKEN
+  if (!['a', 'b'].includes(named) || typeof token !== 'string' || typeof secret !== 'string' || secret.length < MIN_PROBE_TOKEN) return null
+  if (!await sameSecret(token, secret)) return null
+  return named === 'b' && !env.PUBLIC_SITE_B ? null : named
+}
+const slotSite = (env, slot) => slot === 'b' ? env.PUBLIC_SITE_B : env.PUBLIC_SITE
+// </container-slots>
+
 export class PublicSite extends Container {
   defaultPort = 3000
   sleepAfter = '2m'
@@ -431,6 +457,9 @@ export class PublicSite extends Container {
   }
 }
 
+// Slot b: the same container under its own name, so it is its own container application with its own image.
+export class PublicSiteB extends PublicSite {}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
@@ -447,6 +476,8 @@ export default {
       'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'",
     }
     if (url.hostname.endsWith('.workers.dev')) headers['X-Robots-Tag'] = 'noindex, nofollow, noarchive'
+    const slot = await requestSlot(request, env)
+    if (slot === null) return Response.json({ error: 'SLOT_PROBE_REFUSED' }, { status: 403, headers })
     const bindings = snapshotBindings({ ...env, TRADING_CUSTODY_RECOVERY_JSON: custodyManifest })
     if (Object.hasOwn(redirects, url.pathname) && ['GET', 'HEAD'].includes(request.method)) {
       return new Response(null, { status: 302, headers: { ...headers, Location: redirects[url.pathname] } })
@@ -485,7 +516,7 @@ export default {
     try {
       await validateBindings(bindings)
       failureStage = 'dispatch'
-      response = await env.PUBLIC_SITE.getByName('public-readonly').fetchWithReviewBindings(upstream, bindings)
+      response = await slotSite(env, slot).getByName('public-readonly').fetchWithReviewBindings(upstream, bindings)
     } catch (error) {
       // Includes missing RPC during propagation, invalid bindings and failed
       // restart/storage/boot. Never fall back to raw fetch or the old DB-only RPC.
@@ -497,6 +528,7 @@ export default {
     // Only the claim routes may set the GitHub session cookies, and only wallet-identity the Hooks wallet cookies.
     if (optOut || (!claim && !(hook && hookSessionRoutes[url.pathname]?.setsCookie))) safe.headers.delete('set-cookie')
     for (const [key, value] of Object.entries(headers)) safe.headers.set(key, value)
+    safe.headers.set('X-Repoing-Slot', slot)
     // Only build assets and explicit public illustrations are cacheable. Pages,
     // APIs (including token images), errors and financial responses stay no-store.
     if (request.method === 'GET' && safe.status === 200) {
