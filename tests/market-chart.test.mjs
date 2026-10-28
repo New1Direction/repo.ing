@@ -293,6 +293,8 @@ test('real PostgreSQL: candles open, close, high and low at the prices trades pa
     await client.query(`delete from sol_usd_minutes where minute >= '2026-09-27T03:00:00Z'`)
     await trade('unpriced', 13, 2, 'buy', null)
     const second = await readMarketChart(client, market, '1h', end)
+    await client.query(`update sol_usd_minutes set minute = '2026-09-27T02:30:00Z', usd = 175 where minute = '2026-09-27T02:59:00Z'`)
+    const afterGap = await readMarketChart(client, market, '1h', end)
     // Assert
     assert.deepEqual(first.candles, [{ time: Date.UTC(2026, 8, 27, 3, 0) / 1000, open: 0.000000772994682822333098, high: 0.000000772994682822333098,
       low: 0.000000770513239952588184, close: 0.000000770513239952588184, solUsd: 190.5, volumeLamports: String(133581983 + 2970000000), count: 2 }])
@@ -302,6 +304,8 @@ test('real PostgreSQL: candles open, close, high and low at the prices trades pa
       [[0.000000770513239952588184, 180, false], [0.000000770513239952588184, 180, false], [null, null, true]],
       'each candle at the newest SOL price at or before its close; the unpriced trade\'s bucket withholds its prices')
     assert.equal(second.candles.at(-1).volumeLamports, REAL.buy.lamports, 'its volume is kept')
+    assert.deepEqual(afterGap.candles.slice(0, 2).map(bar => bar.solUsd), [175, 175],
+      'a feed gap longer than the recent window still finds the newest SOL price before it, never none')
     assert.equal(second.latest, null, 'the newest trade is not priced yet, so no latest price is claimed')
     assert.equal((await readMarketChart(client, { pool: 'no-facts', mint: 'UnknownMint' }, '1h', end)).supply, null)
   } finally { await client.query('rollback'); await client.end() }

@@ -27,7 +27,13 @@ export function storedPrice(raw) {
 const chartPrice = raw => storedPrice(raw) ?? (() => { throw Error('Invalid chart price evidence') })()
 
 // SOL/USD at a moment (sol_usd_minutes): the newest minute at or before it, so USD uses the SOL price of the trade's own time.
-export const solUsdAt = at => `(select s.usd::text from sol_usd_minutes s where s.minute <= date_trunc('minute', ${at}) order by s.minute desc limit 1)`
+// The site reads it through a security_barrier view (site_public), where an unbounded "newest at or before" sorts the whole
+// history on every row (~2 ms each, growing daily: 4.5 s charts). The 15-minute window is an index range; the unbounded
+// lookup runs only when that window is empty (a feed gap), so the answer is the same either way.
+export const SOL_USD_RECENT_WINDOW = '15 minutes'
+const solUsdBefore = (at, window) => `(select s.usd::text from sol_usd_minutes s where s.minute <= date_trunc('minute', ${at})${window
+  ? ` and s.minute > date_trunc('minute', ${at}) - interval '${window}'` : ''} order by s.minute desc limit 1)`
+export const solUsdAt = at => `coalesce(${solUsdBefore(at, SOL_USD_RECENT_WINDOW)}, ${solUsdBefore(at)})`
 
 export function chartBar(row) {
   const time = Number(row.time)
