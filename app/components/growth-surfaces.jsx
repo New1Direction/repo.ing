@@ -29,10 +29,12 @@ export function TrendReasons({candidate}){
     {candidate.latestObservation&&<p><a href={candidate.latestObservation.sources.identity} target="_blank" rel="noreferrer">GitHub identity ↗</a> · <a href={candidate.latestObservation.sources.commits} target="_blank" rel="noreferrer">Commit evidence ↗</a></p>}
   </details>
 }
+// A market with linked:false (a Hugging Face model market while model markets are off) is named without a link: its
+// token page is not served.
 export function DiscovererTable({leaders,compact=false,handles={}}){
   if(!leaders.length)return <p className="subtle-notice">No verified discoverer activity yet.</p>
   return <div className="growth-table-wrap"><table className="growth-table"><thead><tr><th>Discoverer</th><th>Fees earned</th><th>Reward-period volume</th><th>Launched</th><th>Graduated</th></tr></thead><tbody>{leaders.slice(0,compact?3:100).map(row=><tr key={row.wallet}>
-    <td><WalletIdentity wallet={row.wallet} link={handles[row.wallet]} label="discoverer wallet"/>{!compact&&<details><summary>Markets & attribution</summary><ul className="discoverer-markets">{row.markets.map(m=><li key={m.repoId}><Link href={`/token/${m.mint}`}>{m.fullName}</Link><p>{m.enrolled?`Earned ${sol(m.earned)} · cap ${sol(m.cap)} · paid ${sol(m.paid)}`:'Launched before discovery enrollment'}</p><p>{m.enrolled?`Reward window: ${utcDateTime(m.launchedAt)} — ${utcDateTime(m.expiresAt)} (ends earlier at graduation or cap)`:`Launched ${utcDateTime(m.launchedAt)}`}</p><a href={`https://explorer.solana.com/tx/${m.signature}`} target="_blank" rel="noreferrer">Finalized launch ↗</a></li>)}</ul></details>}</td>
+    <td><WalletIdentity wallet={row.wallet} link={handles[row.wallet]} label="discoverer wallet"/>{!compact&&<details><summary>Markets & attribution</summary><ul className="discoverer-markets">{row.markets.map(m=><li key={m.repoId}>{m.linked===false?<span>{m.fullName}</span>:<Link href={`/token/${m.mint}`}>{m.fullName}</Link>}<p>{m.enrolled?`Earned ${sol(m.earned)} · cap ${sol(m.cap)} · paid ${sol(m.paid)}`:'Launched before discovery enrollment'}</p><p>{m.enrolled?`Reward window: ${utcDateTime(m.launchedAt)} — ${utcDateTime(m.expiresAt)} (ends earlier at graduation or cap)`:`Launched ${utcDateTime(m.launchedAt)}`}</p><a href={`https://explorer.solana.com/tx/${m.signature}`} target="_blank" rel="noreferrer">Finalized launch ↗</a></li>)}</ul></details>}</td>
     <td>{sol(row.earned)}</td><td>{sol(row.volume)}</td><td>{row.launched}</td><td>{row.graduated}</td>
   </tr>)}</tbody></table></div>
 }
