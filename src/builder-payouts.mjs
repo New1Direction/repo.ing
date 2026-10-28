@@ -26,7 +26,9 @@ export const UNCLAIMED_AFTER_MONTHS = 12
 export const NEVER_SWEPT_REPOS = Object.freeze(['1250276806', '1332056763'])
 // Closed even when claims are open for all (owner, 2026-10-26): the never-swept repositories and those whose owed fees the
 // vault does not cover yet. claim_closed_repos holds the same list; either one keeps a repository closed.
-export const CLOSED_CLAIM_REPOS = Object.freeze([...NEVER_SWEPT_REPOS, '1388219884', '1391948723'])
+// repo.ing (1388219884) and jumper (1391948723) reopened 2026-10-28 (owner: "get claims unpaused"): both reconcile, their
+// vault-held fees booked (custody_owner_transfers / historical receipts).
+export const CLOSED_CLAIM_REPOS = Object.freeze([...NEVER_SWEPT_REPOS])
 // Below this a claim waits for more fees: the payout wallet pays the network fee, so dust payouts only drain it.
 export const MIN_PAYOUT_LAMPORTS = 1_000_000n
 // At most this many unused, unexpired challenges per repository.

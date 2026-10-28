@@ -212,8 +212,12 @@ test('builder payouts on real PostgreSQL', { skip: !url && 'BUILDER_PAYOUT_TEST_
       assert.equal(opened.unclaimedAfter.toISOString(), '2027-10-26T18:00:00.000Z', 'the 12-month clock starts at the opening')
       assert.notEqual((await claimWindow(pool, REPO)).openedAt.toISOString(), all.toISOString(), 'an own window keeps its date')
       for (const closed of [1250276806n, 1332056763n, 1388219884n, 1391948723n]) assert.equal(await claimWindow(pool, closed), null, `${closed} closed`)
+      await pool.query('delete from claim_closed_repos where github_repo_id = 1250276806')
+      assert.equal(await claimWindow(pool, 1250276806n), null, 'the code list keeps a never-swept repository closed without its row')
+      await pool.query("insert into claim_closed_repos (github_repo_id, reason) values (1250276806, 'restored by test')")
+      // Reopened 2026-10-28: repo.ing is closed only by its row; without it, claims open for all reach it.
       await pool.query('delete from claim_closed_repos where github_repo_id = 1388219884')
-      assert.equal(await claimWindow(pool, 1388219884n), null, 'the code list keeps it closed without its row')
+      assert.equal((await claimWindow(pool, 1388219884n)).openedAt.toISOString(), all.toISOString(), 'repo.ing opens without its row')
       await pool.query("insert into claim_closed_repos (github_repo_id, reason) values ($1, 'test')", [String(OTHER)])
       assert.equal(await claimWindow(pool, OTHER), null, 'a row alone closes a repository')
       await pool.query('delete from claim_closed_repos where github_repo_id = $1', [String(OTHER)])
