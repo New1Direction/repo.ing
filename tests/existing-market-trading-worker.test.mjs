@@ -199,7 +199,7 @@ test('strips legacy credentials and spoofed forwarding headers, keeps trusted IP
   for (const key of Object.keys(unsafe).filter(key => key !== 'cf-connecting-ip')) assert.equal(upstream.headers.has(key), false)
   assert.equal(response.headers.has('set-cookie'), false)
   assert.equal(response.headers.get('cache-control'), 'no-store')
-  assert.match(response.headers.get('content-security-policy'), /connect-src 'self'; frame-src 'none'/)
+  assert.match(response.headers.get('content-security-policy'), /connect-src 'self' https:\/\/cloudflareinsights\.com; frame-src 'none'/)
   assert.equal(response.headers.get('referrer-policy'), 'no-referrer')
   await f.request('/stats', { headers: { ...unsafe, rsc: '1', range: 'bytes=0-10' } })
   const pageHeaders = f.runtime.calls.at(-1).request.headers
@@ -1005,4 +1005,23 @@ test('edge cache: pages are kept per slot, so a flip never serves the other buil
   f.env.SLOT_PROBE_TOKEN = 's'.repeat(40)
   const probed = await f.request('/explore', { headers: { 'x-repoing-slot': 'a', 'x-repoing-slot-token': 's'.repeat(40) } })
   assert.equal(probed.headers.get('x-edge-cache'), null); assert.equal(probed.headers.get('x-repoing-slot'), 'a')
+})
+
+test('read-only views the pages poll answer GET/HEAD without cookies; their writes stay closed; beacons are dropped', async () => {
+  const f = await fixture()
+  const reads = ['/api/allocation/1278009399', `/api/holder-notes/${mint}`, `/api/holder-notes/${mint}?wallet=${mint}`, `/api/holder-notes/${mint}?offset=20`]
+  for (const path of reads) for (const method of ['GET', 'HEAD']) {
+    assert.equal((await f.request(path, { method, headers: { cookie: 'repoing_github=session' } })).status, 200, `${method} ${path}`)
+    const upstream = f.runtime.calls.at(-1).request
+    assert.equal(upstream.headers.get('cookie'), null); assert.equal(upstream.method, method)
+  }
+  const before = f.runtime.calls.length
+  for (const path of reads.slice(0, 2)) for (const method of ['POST', 'PUT', 'DELETE']) assert.equal((await f.request(path, { method, headers: { origin: 'https://repo.ing', 'content-type': 'application/json' }, body: method === 'DELETE' ? undefined : '{}' })).status, 403, `${method} ${path}`)
+  for (const path of ['/api/participation/1278009399', '/api/allocation/0', '/api/discovery/1265419522', '/api/holder-notes/x']) assert.equal((await f.request(path)).status, 403, path)
+  const beacon = await f.request('/api/funnel', { method: 'POST', body: '{"step":"view"}' })
+  assert.equal(beacon.status, 204)
+  assert.equal((await f.request('/api/funnel')).status, 403)
+  assert.equal(f.runtime.calls.length, before, 'no write, refusal or beacon reaches the container')
+  const csp = (await f.request('/')).headers.get('content-security-policy')
+  assert.match(csp, /script-src 'self' 'unsafe-inline' https:\/\/static\.cloudflareinsights\.com;/); assert.match(csp, /connect-src 'self' https:\/\/cloudflareinsights\.com;/)
 })

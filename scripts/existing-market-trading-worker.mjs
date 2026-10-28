@@ -19,6 +19,10 @@ const publicMarketApi = new RegExp(`^/api/market/${mint}/(trades|metrics|curve|t
 // Read-only public data the pages link to (docs/MARKET_DATA_API.md): a market's liquidity and transparency JSON, the launch
 // calendar's event feed, Atom and iCalendar. GET and HEAD only, no cookies; each route keeps its own rate limits and caching.
 const publicDataApi = new RegExp(`^(/api/v1/markets/${mint}/(liquidity|transparency)|/api/v1/launches/events|/launches\\.atom|/launches\\.ics)$`)
+// Read-only public views the token and claim pages poll (GET/HEAD, no cookies, so the anonymous view): a repository's
+// allocation status and the holder notes. Their POSTs stay closed. The discovery ledger (/api/discovery) stays closed
+// with its claims: it advertises payouts the legacy partner key would sign.
+const publicReadApi = new RegExp(`^(/api/allocation/[1-9]\\d{0,17}|/api/holder-notes/${mint})$`)
 const tokenImage = new RegExp(`^/api/token-image/${mint}$`)
 const tokenMetadata = new RegExp(`^/api/token-metadata/${mint}$`)
 const marketBalance = new RegExp(`^/api/market/${mint}/balance$`)
@@ -552,13 +556,16 @@ const worker = {
       'X-Repoing-Mode': env.EXISTING_MARKET_TRADING_STAGE === 'live' ? 'existing-market-trading-live' : 'existing-market-trading-review',
       'X-Repoing-Snapshot': '2026-10-22T14:48:06Z',
       'Referrer-Policy': 'no-referrer',
-      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'",
+      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'",
     }
     if (url.hostname.endsWith('.workers.dev')) headers['X-Robots-Tag'] = 'noindex, nofollow, noarchive'
     const slot = await requestSlot(request, env)
     if (slot === null) return Response.json({ error: 'SLOT_PROBE_REFUSED' }, { status: 403, headers })
     if (url.pathname === '/__slot/restart') return slotRestart(request, env, slot)
     const bindings = snapshotBindings(slotEnv({ ...env, TRADING_CUSTODY_RECOVERY_JSON: custodyManifest }, slot))
+    // Page analytics beacons: the funnel store is closed while the site runs on the read-only role, so they are accepted
+    // and dropped here rather than failing in every visitor's console.
+    if (url.pathname === '/api/funnel' && request.method === 'POST') return new Response(null, { status: 204, headers })
     if (Object.hasOwn(redirects, url.pathname) && ['GET', 'HEAD'].includes(request.method)) {
       return new Response(null, { status: 302, headers: { ...headers, Location: redirects[url.pathname] } })
     }
@@ -577,7 +584,7 @@ const worker = {
       const allowed = pages.has(url.pathname) || jaPage.test(url.pathname) || tokenPage.test(url.pathname)
         || (ordinaryLaunchEnabled(bindings) && (ordinaryRepoPath(url.pathname) || url.pathname === '/api/launch'))
         || publicMarketApi.test(url.pathname) || tokenImage.test(url.pathname) || tokenMetadata.test(url.pathname)
-        || (['GET', 'HEAD'].includes(request.method) && publicDataApi.test(url.pathname))
+        || (['GET', 'HEAD'].includes(request.method) && (publicDataApi.test(url.pathname) || publicReadApi.test(url.pathname)))
         || /^\/m\/[1-9]\d{0,15}$/.test(url.pathname)
         || /^\/api\/repo-logo\/\d+$/.test(url.pathname)
         || ['/api/health', '/api/mcp/readonly', '/api/growth', '/api/repo-search', '/api/wallet/overview'].includes(url.pathname)
