@@ -17,7 +17,11 @@ export function liveChart(payload) {
   return {
     interval: payload.interval,
     volume24hLamports: DIGITS.test(String(payload.volume24hLamports ?? '')) ? String(payload.volume24hLamports) : null,
-    latest: Number.isFinite(payload.latest?.priceSol) && payload.latest.priceSol > 0 ? { priceSol: payload.latest.priceSol } : null,
+    latest: Number.isFinite(payload.latest?.priceSol) && payload.latest.priceSol > 0 ? { priceSol: payload.latest.priceSol,
+      ...Number.isFinite(payload.latest.solUsd) && payload.latest.solUsd > 0 ? { solUsd: payload.latest.solUsd } : {} } : null,
+    // The mint's on-chain supply (mint_facts): market cap = price × supply × SOL/USD (phone-market-summary.mjs).
+    supply: DIGITS.test(String(payload.supply?.baseUnits ?? '')) && Number.isInteger(payload.supply?.decimals)
+      ? { baseUnits: String(payload.supply.baseUnits), decimals: payload.supply.decimals } : null,
     candles: payload.candles.filter(bar => Number.isFinite(bar?.time)).map(({ time, open, close, orderingPending }) =>
       ({ time, open, close, ...orderingPending ? { orderingPending: true } : {} })),
     trades: recentTrades(payload.trades, LIVE_TRADE_ROWS).map(({ signature, eventIndex, direction, tradedAt, solLamports, pending }) =>

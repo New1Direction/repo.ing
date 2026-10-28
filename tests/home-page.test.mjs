@@ -21,9 +21,9 @@ const payload = (latest = 1.3e-6) => ({
 const market = { mint: 'MintRepoing', repoId: '1388219884', symbol: 'REPOING', fullName: 'New1Direction/repo.ing', source: 'github',
   priceSol: 1.3e-6, volume24hLamports: '255564891086', earned: '31880000000' }
 
-test('the live card keeps only what it draws: bars, the newest swaps newest first, the latest price and 24h volume', () => {
+test('the live card keeps only what it draws: bars, the newest swaps newest first, the latest price, 24h volume and supply', () => {
   const chart = liveChart(payload())
-  assert.deepEqual(Object.keys(chart).sort(), ['candles', 'interval', 'latest', 'trades', 'volume24hLamports'])
+  assert.deepEqual(Object.keys(chart).sort(), ['candles', 'interval', 'latest', 'supply', 'trades', 'volume24hLamports'])
   assert.deepEqual(chart.candles[0], { time: NOW_S - 30 * 3600, open: 1e-6, close: 1e-6 })
   assert.deepEqual(chart.latest, { priceSol: 1.3e-6 })
   assert.equal(chart.trades.length, LIVE_TRADE_ROWS)

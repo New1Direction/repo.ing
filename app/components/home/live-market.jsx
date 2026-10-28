@@ -50,7 +50,7 @@ export function LiveMarket({ market, initial, usdPerSol = null, renderedAt }) {
   }, [market.mint])
   // A confirming swap's trader handle is read again once it is finalized (the /traders read holds finalized swaps only).
   const handles = useTraderHandles(market.mint, chart.trades[0] ? `${tradeKey(chart.trades[0])}${chart.trades[0].pending ? ':pending' : ''}` : '')
-  const summary = phoneMarketSummary({ priceSol: market.priceSol, volume24hLamports: market.volume24hLamports, chart,
+  const summary = phoneMarketSummary({ priceSol: market.priceSol, volume24hLamports: market.volume24hLamports, supply: market.supply, chart,
     metrics: usdPerSol ? { solUsd: usdPerSol } : null, now })
   const line = sparklinePath(summary.spark, W, H, PAD)
   const dot = lastPoint(line, W, H)
