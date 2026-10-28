@@ -8,7 +8,7 @@ import { ArrowRight, ChevronDown, Globe, Image as ImageIcon, Info, LoaderCircle,
 import { percent } from '../../src/hooklab-launch-menus.mjs'
 import { COIN_DESCRIPTION_MAX } from '../../src/hooklab-coin-profile.mjs'
 import { inclusiveCreatorFee } from '../../src/hooklab-inclusive-fee-quote.mjs'
-import { BURN_DESCRIPTION, OPEN_LAUNCH_NOTE, SELECTED_HOOK_NOTE, openFeeSplit, openLaunchCosts } from '../lib/hooklab-open-launch.mjs'
+import { OPEN_LAUNCH_NOTE, SELECTED_HOOK_NOTE, openFeeSplit, openLaunchCosts } from '../lib/hooklab-open-launch.mjs'
 import { HookCatalogSelector } from './hooklab-hook-catalog'
 import { HookSelectedEconomics } from './hooklab-coin-form'
 import { HooksOperationError } from './hooks-ui'
@@ -143,11 +143,12 @@ function BurnFee({ coin, set, disabled, menus }) {
           aria-valuetext={percent(burnShareBps)} onChange={e => change({ burnShareBps: shareOf(e.target.value) })} style={{ '--fill': `${burnShareBps / 100}%` }}/>
         <span>100%</span></div></label>
     <dl id="fee-total-split" className="hlf-split">
-      <div><dt>You receive</dt><dd>{split ? share(split.creatorBps) : '—'}</dd></div>
+      <div className="is-yours"><dt>You receive</dt><dd>{split ? share(split.creatorBps) : '—'}</dd></div>
       <div><dt>repo.ing receives</dt><dd>{split ? share(split.platformBps) : '—'}</dd></div>
       <div><dt>Burned</dt><dd>{percent(burnBps)}</dd></div>
     </dl>
-    <p className="hlf-hint">{now.lines && <strong>{now.lines.total}</strong>}<span>You receive 75% and repo.ing 25% of the creator part, in SOL. {BURN_DESCRIPTION}</span></p>
+    <p className="hlf-fee-note">{now.lines && <strong>{now.lines.total}</strong>}
+      Your part is paid in SOL: you keep 75% and repo.ing takes 25%. {burnBps > 0 ? 'The burned part destroys coins on every trade, so the supply shrinks.' : 'Slide the burn up to destroy coins on every trade and shrink the supply.'}</p>
     {now.problem && <p className="inline-error" role="alert">{now.problem}</p>}
   </>
 }
