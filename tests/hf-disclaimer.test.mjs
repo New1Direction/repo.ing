@@ -196,6 +196,7 @@ const EXEMPT = {
   'app/(site)/token/[mint]/opengraph-image/route.jsx': 'flag gate; the card is og-market-card',
   'app/(site)/token/[mint]/return/[pct]/image/route.jsx': 'flag gate; the card is og-return-card',
   'app/api/repo-logo/[repo]/route.js': 'images only',
+  'app/(site)/discoverers/page.jsx': 'only stops linking to a model market while model markets are off (names it, no link); shows no model page',
   'app/(site)/page.jsx': 'flag and filtering; lists render through MarketTable, the race board and ModelsStrip',
   'app/(site)/explore/page.jsx': 'flag and filtering; the list renders through MarketTable',
   'app/(site)/stats/page.jsx': 'flag only',
