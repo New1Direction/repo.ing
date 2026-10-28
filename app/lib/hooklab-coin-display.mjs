@@ -1,5 +1,6 @@
 // Client-safe pieces of a Hooks coin's chart, trades and holders: intervals, URLs and readable amounts.
 import { formatSolDisplay, formatUnits } from './format.mjs'
+import { percent } from '../../src/hooklab-launch-menus.mjs'
 
 // [key, seconds, button label]. The chart opens on DEFAULT_HOOK_INTERVAL.
 export const HOOK_CHART_INTERVALS = Object.freeze([['1m', 60, '1m'], ['5m', 300, '5m'], ['15m', 900, '15m'], ['1h', 3600, '1H'], ['4h', 14400, '4H'], ['1d', 86400, '1D']])
@@ -48,3 +49,11 @@ export function mergeTradePage(shown, page) {
   return { trades: newestFirst([...page.trades, ...shown.trades]), next: shown.next }
 }
 export const appendOlderTrades = (shown, page) => ({ trades: newestFirst([...shown.trades, ...page.trades]), next: page.next })
+
+// A coin's rules in one line: its max per wallet and its fee (with Burn, the total and its split).
+// capLifted: the coin has graduated, so its max per wallet no longer applies.
+export function hookCoinRules({ capBps, creatorFeeBps, burnBps = 0, selectedHook = null, capLifted = false }) {
+  const wallet = selectedHook ? 'Custom hook · Wallet limits set by hook' : capLifted ? 'No max per wallet' : `Max ${percent(capBps)} per wallet`
+  const fee = burnBps > 0 ? `${percent(creatorFeeBps + burnBps)} total fee (${percent(creatorFeeBps)} creator + ${percent(burnBps)} burn)` : `${percent(creatorFeeBps)} creator fee`
+  return `${wallet} · ${fee}`
+}

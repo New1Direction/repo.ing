@@ -156,6 +156,18 @@ test('candles: open and close follow the swap counter; volume is the SOL traders
   assert.deepEqual(await store.candles('11111111111111111111111111111111', { seconds: 60, decimals: 6 }), [])
 }))
 
+test('the Explore overview gives each indexed coin its last price, 24h volume and trade count in one read', () => withDatabase(async pool => {
+  const store = hookCoinTradeStore(pool), unknown = '11111111111111111111111111111111'
+  assert.equal((await store.overview([coin.mint])).size, 0)
+  await indexHookCoinTrades({ rpc: rpcWith().rpc, store, coin })
+  const overview = await store.overview([coin.mint, unknown], { now: Date.parse('2026-10-19T12:00:00Z') })
+  assert.deepEqual([...overview.keys()], [coin.mint])
+  const summary = await store.summary(coin.pool, { now: Date.parse('2026-10-19T12:00:00Z') })
+  assert.deepEqual(overview.get(coin.mint), { priceSol: summary.latest.priceSol, volume24hLamports: '1980495', totalTrades: 2, lastTradeAt: '2026-10-18T20:49:37.000Z' })
+  assert.equal((await store.overview([coin.mint], { now: Date.parse('2026-10-20T12:00:00Z') })).get(coin.mint).volume24hLamports, '0')
+  assert.equal((await store.overview([])).size, 0)
+}))
+
 test('the table refuses rows a decoder could never produce', () => withDatabase(async pool => {
   const row = ['x'.repeat(64), 0, 'Swapped', 'bridged-sol', coin.pool, coin.mint, 1, new Date(), '1', 'buy', coin.mint, '1', '1', '0', '1', '1']
   const insert = values => pool.query(`insert into hook_lab_coin_trades(signature,event_index,event,quote_asset,pool,mint,slot,traded_at,swap_count,side,trader,

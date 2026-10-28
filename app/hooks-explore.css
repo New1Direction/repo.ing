@@ -1,0 +1,14 @@
+/* Explore → Hooks coins (app/components/hooks-explore.jsx): the repository table's look with a coin's own columns. */
+.hook-coin-table .market-head,.hook-coin-table .market-row{grid-template-columns:55px minmax(260px,3fr) minmax(110px,1fr) minmax(120px,1fr) minmax(76px,.7fr) 140px;min-width:760px}
+.hook-coin-avatar{width:44px;height:44px;border-radius:50%;color:var(--dim)}
+.hooks-strip{margin:8px 0 30px}
+.hooks-strip ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.hooks-strip-card{display:flex;align-items:center;gap:12px;min-height:72px;padding:12px 14px;border:1px solid var(--border);border-radius:9px;background:rgba(255,255,255,.012);transition:border-color .15s,background .15s}
+@media(hover:hover){.hooks-strip-card:hover{border-color:var(--green);background:var(--surface2)}}
+.hooks-strip-card:active{background:var(--surface2)}
+.hooks-strip-copy{flex:1;min-width:0}
+.hooks-strip-copy strong,.hooks-strip-figures>span{display:block;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hooks-strip-copy small,.hooks-strip-figures small{display:block;margin-top:3px;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hooks-strip-figures{text-align:right;flex:none;max-width:45%}
+@media(max-width:640px){.hooks-strip .section-heading{align-items:flex-start;gap:12px}.hooks-strip .section-heading p{font-size:14px}.hooks-strip ul{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){.hooks-strip-card{transition:none}}

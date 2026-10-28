@@ -14,10 +14,12 @@ import { exploreGrowthView } from '../../lib/growth-view.mjs'
 import { withPulse } from '../../lib/pulse-index.mjs'
 import { labeledRacers } from '../../lib/repo-quality.mjs'
 import { hfMarketsEnabled, shownMarkets, withModelFacts } from '../../lib/hf-markets.mjs'
+import { HookCoinStrip } from '../../components/hooks-explore'
+import { exploreHookCoins, hookCoinRow } from '../../lib/hooklab-explore.mjs'
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Explore markets · repo.ing', description: 'Browse live markets for open source repositories. Real repositories, real communities — every trade pays the builders.' }
 export default function Explore() {
-  return <><AppHeader active="explore"/><main className="section-wrap explore-page"><div className="page-intro"><div className="eyebrow">EXPLORE</div><h1>Discover open source markets.</h1><p>Real repositories. Real communities. Real earnings.</p><Link href="/launch" className="button primary">Launch a repository</Link></div><ExploreNavigation active="markets"/><GraduationRace><Suspense fallback={<GraduationRaceFallback/>}><Graduating/></Suspense></GraduationRace><h2 id="all-markets">All markets</h2>
+  return <><AppHeader active="explore"/><main className="section-wrap explore-page"><div className="page-intro"><div className="eyebrow">EXPLORE</div><h1>Discover open source markets.</h1><p>Real repositories. Real communities. Real earnings.</p><Link href="/launch" className="button primary">Launch a repository</Link></div><ExploreNavigation active="markets"/><GraduationRace><Suspense fallback={<GraduationRaceFallback/>}><Graduating/></Suspense></GraduationRace><Suspense fallback={null}><HooksStrip/></Suspense><h2 id="all-markets">All markets</h2>
     <Suspense fallback={<ContentSkeleton label="Loading markets"/>}><Markets/></Suspense>
     <div id="growth"><Suspense fallback={<ContentSkeleton label="Loading market highlights" rows={2}/>}><Highlights/></Suspense></div>
   </main><Footer/></>
@@ -25,6 +27,11 @@ export default function Explore() {
 async function Markets() {
   const [{ markets, unavailable }, usdPerSol] = await Promise.all([listMarkets(), solUsdPrice()])
   return <>{unavailable && <p className="subtle-notice">{unavailable}</p>}<ExploreList markets={withModelFacts(await withPulse(shownMarkets(markets)), { schedule: after })} usdPerSol={usdPerSol} modelsEnabled={hfMarketsEnabled()}/></>
+}
+// The busiest Hooks coins, linked to Explore → Hooks coins; nothing before the first coin (or while the listing is unavailable).
+async function HooksStrip() {
+  const [coins, usdPerSol] = await Promise.all([exploreHookCoins(), solUsdPrice()])
+  return <HookCoinStrip coins={coins.map(hookCoinRow)} usdPerSol={usdPerSol}/>
 }
 // The race features markets, so new repositories wait until 10% of their target (repo-quality.mjs); the list below has all.
 async function Graduating() {

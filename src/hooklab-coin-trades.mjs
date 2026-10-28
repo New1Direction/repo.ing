@@ -171,6 +171,19 @@ export function hookCoinTradeStore(db) {
         lastTradeAt: row.last?.toISOString() ?? null,
         latest: latest ? { ...tradeRow(latest), priceSol: priceSol(latest.curveQuote, latest.curveBase, decimals) } : null }
     },
+    // Explore's list: per mint, the last trade's price, 24h volume and trade count, in one read. Pools come from the cursors
+    // (one row per indexed coin); both reads per pool are index-backed (pool, swap counter / time). Mints never indexed are absent.
+    async overview(mints, { now = Date.now(), decimals = 6 } = {}) {
+      if (!mints.length) return new Map()
+      const { rows } = await db.query(`select c.mint, l.curve_base::text as "curveBase", l.curve_quote::text as "curveQuote",
+          l.swap_count::text as "swapCount", l.traded_at as "tradedAt",
+          (select coalesce(sum(v.quote_amount),0)::text from hook_lab_coin_trades v where v.pool=c.pool and v.traded_at>$2::timestamptz-interval '24 hours') as volume
+        from hook_lab_coin_trade_cursors c
+        join lateral (select curve_base, curve_quote, swap_count, traded_at from hook_lab_coin_trades t where t.pool=c.pool order by swap_count desc limit 1) l on true
+        where c.mint=any($1::text[])`, [mints, new Date(now)])
+      return new Map(rows.map(row => [row.mint, Object.freeze({ priceSol: priceSol(row.curveQuote, row.curveBase, decimals),
+        volume24hLamports: row.volume, totalTrades: Number(row.swapCount), lastTradeAt: row.tradedAt.toISOString() })]))
+    },
     // Price bars of `seconds` each, at most `bars` of them, ending at the last trade: SOL per whole coin after each swap,
     // opened and closed in swap order; volume in lamports.
     async candles(pool, { seconds, decimals, bars = 500 }) {

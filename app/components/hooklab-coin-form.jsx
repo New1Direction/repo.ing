@@ -6,6 +6,7 @@ import { COIN_DESCRIPTION_MAX, coinLinks } from '../../src/hooklab-coin-profile.
 import { SOON_BLOCKS, hookBlock } from '../../src/hooklab-blocks.mjs'
 import { BURN_DESCRIPTION, SELECTED_HOOK_NOTE, openFeeSplit } from '../lib/hooklab-open-launch.mjs'
 import { HookStartingPrice } from './hooklab-launch-price'
+import { hookCoinRules } from '../lib/hooklab-coin-display.mjs'
 import { HookCatalogSelector } from './hooklab-hook-catalog'
 import '../launch-pair.css'
 
@@ -25,7 +26,7 @@ export function HookCoinPreview({ image, name, symbol, capBps, creatorFeeBps, bu
   return <div className="launch-token-summary hooks-coin-preview" role="group" aria-label="Coin preview">
     <div className="preview-avatar">{shown ? <img src={image} alt="" onError={() => setFailed(image)}/> : <ImageIcon size={24} aria-hidden="true"/>}</div>
     <div><strong>${symbol || 'TICKER'}</strong><span>{name || 'Coin name'}</span>
-      <small>{selectedHook ? 'Custom hook · Wallet limits set by hook' : capLifted ? 'No max per wallet' : `Max ${percent(capBps)} per wallet`} · {burnBps > 0 ? `${percent(creatorFeeBps + burnBps)} total fee (${percent(creatorFeeBps)} creator + ${percent(burnBps)} burn)` : `${percent(creatorFeeBps)} creator fee`}</small>
+      <small>{hookCoinRules({ capBps, creatorFeeBps, burnBps, selectedHook, capLifted })}</small>
       {Object.keys(links).length > 0 && <span className="hooks-coin-links">{Object.entries(links).map(([key, href]) => {
         const Icon = LINK_ICONS[key]
         return <a key={key} href={href} target="_blank" rel="noopener noreferrer"><Icon/>{LINK_LABELS[key]}</a>

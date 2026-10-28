@@ -5,6 +5,7 @@ export function ExploreNavigation({ active }) {
     <Link href="/explore" aria-current={active === 'markets' ? 'page' : undefined}>Markets</Link>
     <Link href="/find-repos" aria-current={active === 'repos' ? 'page' : undefined}>Find repos</Link>
     <Link href="/waiting" aria-current={active === 'waiting' ? 'page' : undefined}>Waiting<span className="explore-nav-long">{"\u00a0"}for maintainers</span></Link>
+    <Link href="/explore/hooks" aria-current={active === 'hooks' ? 'page' : undefined}>Hooks coins</Link>
     <Link href="/launches" aria-current={active === 'launches' ? 'page' : undefined}>Launches</Link>
   </nav>
 }
