@@ -58,7 +58,8 @@ const hookOptionalNames = ['HOOK_TRADING_TESTER_WALLETS', 'HOOK_BURN_ENABLED']
 const burnSwitch = bindings => bindings.HOOK_BURN_ENABLED === 'true' && bindings.HOOK_OPEN_LAUNCHES === 'true' ? 'true' : 'false'
 const hooksEnabled = bindings => bindings.EXISTING_MARKET_TRADING_STAGE === 'live' && bindings.HOOKS_RECOVERY_ENABLED === 'true'
 const base58Key = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
-const hookPages = new Set(['/hooks/launch-review', '/hooks/mine', '/hooks/trade', '/hooks/blocks', '/hooks/new', '/hooks/wallet-identity'])
+// /explore/hooks: Explore's Hooks coins tab (the listed coins and their trade figures, read only).
+const hookPages = new Set(['/hooks/launch-review', '/hooks/mine', '/hooks/trade', '/hooks/blocks', '/hooks/new', '/hooks/wallet-identity', '/explore/hooks'])
 const hookReadRoute = new RegExp(`^(/hooks/token/${mint}|/api/hook-lab/market/${mint}(/(candles|holders|trades))?|/api/hook-lab/wallet/${mint}` +
   '|/api/hook-lab/coins/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(image|metadata))$')
 // The wallet-session routes: the only Hooks routes that receive the two wallet cookies, each with its POST actions and body

@@ -589,7 +589,7 @@ const hookBindings = () => ({
   HOOK_WALLET_IDENTITY_ENABLED: 'true', HOOK_INCLUSIVE_TRADING_ENABLED: 'true', HOOK_NATIVE_TRADING_ENABLED: 'true', HOOK_TRADING_PUBLIC: 'false',
 })
 const coinId = '0f8e3a2c-1b4d-4e5f-8a9b-0c1d2e3f4a5b'
-const hookReads = ['/hooks/launch-review', '/hooks/mine', '/hooks/trade', '/hooks/blocks', '/hooks/new', '/hooks/wallet-identity', `/hooks/token/${mint}`,
+const hookReads = ['/hooks/launch-review', '/hooks/mine', '/hooks/trade', '/hooks/blocks', '/hooks/new', '/hooks/wallet-identity', '/explore/hooks', `/hooks/token/${mint}`,
   `/api/hook-lab/market/${mint}`, `/api/hook-lab/market/${mint}/candles`, `/api/hook-lab/market/${mint}/holders`, `/api/hook-lab/market/${mint}/trades`,
   `/api/hook-lab/wallet/${mint}`, `/api/hook-lab/coins/${coinId}/image`, `/api/hook-lab/coins/${coinId}/metadata`]
 const hookPosts = [['/api/hook-lab/wallet-identity', 'challenge'], ['/api/hook-lab/launch-requests', 'create'], ['/api/hook-lab/native-launch', 'reserve'],
