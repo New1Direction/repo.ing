@@ -1025,3 +1025,10 @@ test('read-only views the pages poll answer GET/HEAD without cookies; their writ
   const csp = (await f.request('/')).headers.get('content-security-policy')
   assert.match(csp, /script-src 'self' 'unsafe-inline' https:\/\/static\.cloudflareinsights\.com;/); assert.match(csp, /connect-src 'self' https:\/\/cloudflareinsights\.com;/)
 })
+
+test('the browser tab and home-screen icons every page links answer, and are kept at the edge as images', async () => {
+  const f = await fixture()
+  for (const path of ['/icon.png?icon.2hpvt1fxt-cib.png', '/apple-icon.png?apple-icon.172--m10t-r9q.png']) for (const method of ['GET', 'HEAD'])
+    assert.equal((await f.request(path, { method })).status, 200, `${method} ${path}`)
+  assert.equal((await f.request('/icon.png', { method: 'POST' })).status, 403)
+})

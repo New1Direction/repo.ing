@@ -508,7 +508,7 @@ const EDGE_REFRESH = 'x-repoing-edge-refresh'
 const EDGE_ERROR_GRACE_S = 600
 const EDGE_SKIP_HEADERS = ['rsc', 'next-router-state-tree', 'next-router-prefetch', 'next-url', 'range', 'upgrade']
 const EDGE_STATIC = /^\/_next\/static\/[a-zA-Z0-9_./-]+\.(js|css|woff2?)$/
-const EDGE_IMAGE = new RegExp(`^(/api/token-image/${mint}|/api/repo-logo/\\d+|/(art|badges|launch-icons|hook-icons|credits)/[a-z0-9-]+\\.(webp|png)|/favicon\\.ico|/brand-cat\\.webp|/gitcat\\.png|/launch-on-repoing\\.svg|/opengraph-image\\.png|/video/repoing-flywheel-poster\\.jpg)$`)
+const EDGE_IMAGE = new RegExp(`^(/api/token-image/${mint}|/api/repo-logo/\\d+|/(art|badges|launch-icons|hook-icons|credits)/[a-z0-9-]+\\.(webp|png)|/favicon\\.ico|/icon\\.png|/apple-icon\\.png|/brand-cat\\.webp|/gitcat\\.png|/launch-on-repoing\\.svg|/opengraph-image\\.png|/video/repoing-flywheel-poster\\.jpg)$`)
 function edgePolicy(url, request, slot) {
   if (!['GET', 'HEAD'].includes(request.method) || url.searchParams.has('_rsc')) return null
   if ([...EDGE_SKIP_HEADERS, SLOT_HEADER, SLOT_TOKEN_HEADER].some(name => request.headers.has(name))) return null
@@ -588,7 +588,7 @@ const worker = {
         || /^\/m\/[1-9]\d{0,15}$/.test(url.pathname)
         || /^\/api\/repo-logo\/\d+$/.test(url.pathname)
         || ['/api/health', '/api/mcp/readonly', '/api/growth', '/api/repo-search', '/api/wallet/overview'].includes(url.pathname)
-        || ['/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png'].includes(url.pathname)
+        || ['/favicon.ico', '/icon.png', '/apple-icon.png', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png'].includes(url.pathname)
         || /^\/(art|badges|launch-icons|hook-icons|credits)\/[a-z0-9-]+\.(webp|png)$/.test(url.pathname)
         || ['/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4'].includes(url.pathname)
         || url.pathname.startsWith('/_next/static/')
@@ -637,7 +637,7 @@ const worker = {
     if (request.method === 'GET' && safe.status === 200) {
       if (/^\/_next\/static\/[a-zA-Z0-9_./-]+\.(js|css|woff2?)$/.test(url.pathname)) {
         safe.headers.set('Cache-Control', 'public, max-age=31536000, immutable')
-      } else if (['/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png', '/video/repoing-flywheel-poster.jpg'].includes(url.pathname)
+      } else if (['/favicon.ico', '/icon.png', '/apple-icon.png', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png', '/video/repoing-flywheel-poster.jpg'].includes(url.pathname)
         || /^\/(art|badges|launch-icons|hook-icons|credits)\/[a-z0-9-]+\.(webp|png)$/.test(url.pathname)) {
         safe.headers.set('Cache-Control', 'public, max-age=300')
       }
