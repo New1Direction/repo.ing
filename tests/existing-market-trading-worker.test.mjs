@@ -111,7 +111,7 @@ test('policy fallback serves public discovery and wallet reads but rejects priva
   const allowed = ['/', '/launch', '/explore', '/find-repos', '/discoverers', '/referrals', '/agents', '/wallet', '/api/repo-search', '/api/wallet/overview', '/builders', '/ja', '/ja/faq', '/waiting', '/launches', '/opt-out', '/api/v1/launches', '/stats', '/how-it-works', '/about', '/programmable-coins', '/hooks', `/token/${mint}`, ...['trades', 'metrics', 'curve', 'traders', 'activity', 'pulse', 'events'].map(s => `/api/market/${mint}/${s}`), `/api/token-image/${mint}`, '/api/repo-logo/123', '/api/growth', '/favicon.ico', '/brand-cat.webp', '/gitcat.png', '/launch-on-repoing.svg', '/opengraph-image.png', ...['art', 'badges', 'launch-icons', 'hook-icons', 'credits'].map(s => `/${s}/test-image.webp`), '/video/repoing-flywheel-poster.jpg', '/video/repoing-flywheel.mp4', '/_next/static/chunks/test.js']
   for (const path of allowed) for (const method of ['GET', 'HEAD']) assert.equal((await f.request(path, { method })).status, 200, `${method} ${path}`)
   const before = f.runtime.calls.length
-  for (const path of ['/api/trade', '/api/trade/', '/api/auth/session', '/api/launch', '/api/hook-lab/native-launch', '/api/hook-lab/inclusive-trade', '/api/builders/claim', '/api/bundles', '/api/replay', '/api/actions/trade', '/api/mcp/', '/builders?owner=x', '/ja/', '/japan', '/ja/a/b/c/d', '/api/v1/launches/events', '/api/opt-out', '/launches/manage', '/api/builders', '/api/discovery/1', '/api/x/connect', '/api/x/callback', '/admin/restart', '/api/market/not-a-mint/balance', `/api/market/${mint}/balance/`, '/stats/', '/art/image.svg']) {
+  for (const path of ['/api/trade', '/api/trade/', '/api/auth/session', '/api/launch', '/api/hook-lab/native-launch', '/api/hook-lab/inclusive-trade', '/api/builders/claim', '/api/bundles', '/api/replay', '/api/actions/trade', '/api/mcp/', '/builders?owner=x', '/ja/', '/japan', '/ja/a/b/c/d', '/api/opt-out', '/api/builders', '/api/discovery/1', '/api/x/connect', '/api/x/callback', '/admin/restart', '/api/market/not-a-mint/balance', `/api/market/${mint}/balance/`, '/stats/', '/art/image.svg']) {
     for (const method of ['GET', 'HEAD', 'POST', 'OPTIONS', 'PUT', 'DELETE']) assert.equal((await f.request(path, { method })).status, 403, `${method} ${path}`)
   }
   assert.equal(f.runtime.calls.length, before)
@@ -719,16 +719,16 @@ test('HOOK_BURN_ENABLED is off by default and forwarded only with Hooks and open
 
 test('reopened pages (owner, 2026-10-28): launch pages redirect to the live page, refused pages are a page for browsers', async () => {
   const f = await fixture()
-  for (const [from, to] of [['/coins/new', '/hooks'], ['/launches/new', '/launch']]) for (const method of ['GET', 'HEAD']) {
+  for (const [from, to] of [['/coins/new', '/hooks'], ['/launches/new', '/launch'], ['/launches/manage', '/launch']]) for (const method of ['GET', 'HEAD']) {
     const response = await f.request(from, { method })
     assert.equal(response.status, 302, `${method} ${from}`); assert.equal(response.headers.get('location'), to)
   }
   assert.equal((await f.request('/coins/new', { method: 'POST' })).status, 403, 'only GET/HEAD redirect')
   const before = f.runtime.calls.length
-  const page = await f.request('/launches/manage', { headers: { accept: 'text/html,application/xhtml+xml' } })
+  const page = await f.request('/builders/reminders', { headers: { accept: 'text/html,application/xhtml+xml' } })
   assert.equal(page.status, 403); assert.match(page.headers.get('content-type'), /text\/html/)
   assert.match(await page.text(), /isn\u2019t open yet[\s\S]*href="\/"/)
-  assert.equal((await f.request('/launches/manage', { method: 'HEAD', headers: { accept: 'text/html' } })).status, 403)
+  assert.equal((await f.request('/builders/reminders', { method: 'HEAD', headers: { accept: 'text/html' } })).status, 403)
   const api = await f.request('/builders/reminders')
   assert.deepEqual([api.status, await api.json()], [403, { error: 'RECOVERY_ROUTE_DISABLED' }], 'non-browser callers keep the JSON refusal')
   assert.equal(f.runtime.calls.length, before, 'nothing refused reaches the container')
@@ -914,4 +914,20 @@ test('slots: a slot-scoped bundle hash and Holders switch reach only their slot;
   f.env.HOOKLAB_STACK_BUNDLE_SHA256_A = 'not-a-hash'
   assert.equal((await f.request('/hooks/new', { headers: probe('a') })).status, 503)
   assert.equal((await f.request('/hooks/new', { headers: probe('b') })).status, 200)
+})
+
+test('read-only public data the pages link to: GET/HEAD reach the site with their query, without cookies; nothing else does', async () => {
+  const f = await fixture()
+  const paths = [`/api/v1/markets/${mint}/liquidity`, `/api/v1/markets/${mint}/transparency`, '/api/v1/launches/events?after=5', '/launches.atom', '/launches.ics?repos=1278009399']
+  for (const path of paths) for (const method of ['GET', 'HEAD']) {
+    assert.equal((await f.request(path, { method, headers: { cookie: 'repoing_github=session; __Host-hook-wallet-session=x' } })).status, 200, `${method} ${path}`)
+    const upstream = f.runtime.calls.at(-1).request
+    assert.equal(new URL(upstream.url).pathname + new URL(upstream.url).search, path); assert.equal(upstream.headers.get('cookie'), null)
+  }
+  const before = f.runtime.calls.length
+  for (const path of paths) for (const method of ['POST', 'PUT', 'DELETE', 'OPTIONS']) assert.equal((await f.request(path, { method })).status, 403, `${method} ${path}`)
+  for (const path of ['/api/v1/markets/notamint/liquidity', `/api/v1/markets/${mint}/quote`, '/launches.atomx', '/api/v1/launches/events/x', '/api/v1/webhooks/signing-key'])
+    assert.equal((await f.request(path)).status, 403, path)
+  for (const method of ['POST', 'PUT', 'DELETE']) assert.equal((await f.request('/launches/manage', { method })).status, 403, `${method} /launches/manage`)
+  assert.equal(f.runtime.calls.length, before, 'nothing refused reaches the container')
 })

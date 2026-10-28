@@ -10,11 +10,15 @@ const pages = new Set(['/', '/launch', '/explore', '/find-repos', '/discoverers'
   '/programmable-coins', '/hooks', '/ja', '/waiting', '/launches', '/opt-out', '/api/v1/launches'])
 const jaPage = /^\/ja(\/[a-z0-9-]{1,64}){1,3}$/
 // Pages that start a launch through a route that is not open: sent to the live launch page instead of a refusal.
-const redirects = { '/coins/new': '/hooks', '/launches/new': '/launch' }
+// /launches/manage needs the schedule routes, which stay closed; its links land on the launch page instead.
+const redirects = { '/coins/new': '/hooks', '/launches/new': '/launch', '/launches/manage': '/launch' }
 const mint = '[1-9A-HJ-NP-Za-km-z]{32,44}'
 const tokenPage = new RegExp(`^/token/${mint}$`)
 // events: the read-only live hint stream (app/api/market/[mint]/events) that tells an open chart a trade was indexed.
 const publicMarketApi = new RegExp(`^/api/market/${mint}/(trades|metrics|curve|traders|activity|pulse|events)$`)
+// Read-only public data the pages link to (docs/MARKET_DATA_API.md): a market's liquidity and transparency JSON, the launch
+// calendar's event feed, Atom and iCalendar. GET and HEAD only, no cookies; each route keeps its own rate limits and caching.
+const publicDataApi = new RegExp(`^(/api/v1/markets/${mint}/(liquidity|transparency)|/api/v1/launches/events|/launches\\.atom|/launches\\.ics)$`)
 const tokenImage = new RegExp(`^/api/token-image/${mint}$`)
 const tokenMetadata = new RegExp(`^/api/token-metadata/${mint}$`)
 const marketBalance = new RegExp(`^/api/market/${mint}/balance$`)
@@ -527,6 +531,7 @@ export default {
       const allowed = pages.has(url.pathname) || jaPage.test(url.pathname) || tokenPage.test(url.pathname)
         || (ordinaryLaunchEnabled(bindings) && (ordinaryRepoPath(url.pathname) || url.pathname === '/api/launch'))
         || publicMarketApi.test(url.pathname) || tokenImage.test(url.pathname) || tokenMetadata.test(url.pathname)
+        || (['GET', 'HEAD'].includes(request.method) && publicDataApi.test(url.pathname))
         || /^\/m\/[1-9]\d{0,15}$/.test(url.pathname)
         || /^\/api\/repo-logo\/\d+$/.test(url.pathname)
         || ['/api/health', '/api/mcp/readonly', '/api/growth', '/api/repo-search', '/api/wallet/overview'].includes(url.pathname)
