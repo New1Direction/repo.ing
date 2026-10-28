@@ -68,21 +68,55 @@ function accountKeys(tx) {
   return Array.from({ length: keys.length }, (_, i) => keys.get(i).toBase58())
 }
 
-// Event discriminator (hex) -> its table row and coder, from the swap IDL (the coin profile's pinned swap IDL when the
-// caller has it; else the reviewed native swap IDL, whose Swapped layout is bundle 2's and which also has SwappedNative).
+// Event discriminator (hex) -> { name, coder, discriminator } for the IDL's events named in `names`.
 const tables = new WeakMap()
-function eventTable(idl, events) {
-  const cached = tables.get(idl)?.get(events)
+function eventTable(idl, names) {
+  const key = names.join(','), cached = tables.get(idl)?.get(key)
   if (cached) return cached
   const coder = new BorshCoder(idl)
-  const table = new Map(events.filter(spec => spec.role === 'swap').map(spec => {
-    const def = idl.events?.find(e => e.name === spec.name)
+  const table = new Map(names.map(name => {
+    const def = idl.events?.find(e => e.name === name)
     check(def, 'HOOK_TRADE_EVENT_UNKNOWN')
-    return [Buffer.from(def.discriminator).toString('hex'), { spec, coder, discriminator: Buffer.from(def.discriminator) }]
+    return [Buffer.from(def.discriminator).toString('hex'), { name, coder, discriminator: Buffer.from(def.discriminator) }]
   }))
-  if (!tables.has(idl)) tables.set(idl, new WeakMap())
-  tables.get(idl).set(events, table)
+  if (!tables.has(idl)) tables.set(idl, new Map())
+  tables.get(idl).set(key, table)
   return table
+}
+
+// The events `program` emitted about itself in one finalized, successful transaction (Anchor emit_cpi: an inner instruction
+// to the program, called by the program, whose only account is the program's event authority, carrying the IDL's exact
+// event bytes), limited to `names`, in order. Each is { ordinal, outer, name, data }: ordinal is the event's position among
+// the transaction's inner instructions, so (signature, ordinal) names one event for good; outer is its outer instruction.
+// keys: the transaction's account keys (lookups included). Evidence that does not add up throws.
+export function programEvents(tx, { program, idl, names }) {
+  check(tx?.meta && Array.isArray(tx.meta.innerInstructions), 'HOOK_TRADE_EVIDENCE_MISSING')
+  const keys = accountKeys(tx), outer = tx.transaction.message.compiledInstructions
+  const authority = eventAuthority(program), table = eventTable(idl, names), events = [], groups = new Set()
+  let ordinal = -1
+  for (const group of tx.meta.innerInstructions) {
+    check(Number.isInteger(group.index) && group.index >= 0 && group.index < outer.length && !groups.has(group.index), 'HOOK_TRADE_ORDERING_MISSING')
+    groups.add(group.index)
+    // stack[h]: the program running at stack height h (1 is the outer instruction).
+    const stack = [null, keys[outer[group.index].programIdIndex]]
+    for (const ix of group.instructions) {
+      ordinal++
+      const running = keys[ix.programIdIndex], height = ix.stackHeight
+      check(running && Number.isInteger(height) && height >= 2 && height <= stack.length, 'HOOK_TRADE_ORDERING_MISSING')
+      stack.length = height; stack[height] = running
+      if (running !== program) continue
+      const bytes = Buffer.from(bs58.decode(ix.data))
+      if (!bytes.subarray(0, 8).equals(EMIT_CPI_TAG)) continue
+      check(stack[height - 1] === program && ix.accounts.length === 1 && keys[ix.accounts[0]] === authority, 'HOOK_TRADE_EVENT_UNAUTHENTICATED')
+      const row = table.get(bytes.subarray(8, 16).toString('hex'))
+      if (!row) continue
+      const event = row.coder.events.decode(bytes.subarray(8).toString('base64'))
+      check(event?.name === row.name, 'HOOK_TRADE_EVENT_ENCODING')
+      check(Buffer.concat([EMIT_CPI_TAG, row.discriminator, row.coder.types.encode(row.name, event.data)]).equals(bytes), 'HOOK_TRADE_EVENT_ENCODING')
+      events.push({ ordinal, outer: group.index, name: row.name, data: event.data })
+    }
+  }
+  return { keys, events }
 }
 
 // One finalized transaction (web3.js getTransaction, maxSupportedTransactionVersion 0) that named `pool`: its trades on
@@ -90,39 +124,20 @@ function eventTable(idl, events) {
 // among the transaction's inner instructions (a native trade's: its SwappedNative), so (signature, eventIndex) names one
 // event for good. expectNative: the coin's pool is native (every pool on our own stack), so a Swapped without its
 // SwappedNative stops the decode. A failed transaction has none.
+// The swap IDL is the coin profile's pinned one when the caller has it; else the reviewed native swap IDL, whose Swapped
+// layout is bundle 2's and which also has SwappedNative.
 export function decodeHookTrades(tx, { signature, pool, programs, events = HOOK_TRADE_EVENTS, swapIdl = null, expectNative = false }) {
   check(typeof programs?.swap === 'string', 'HOOK_TRADE_PROGRAMS_MISSING')
   check(tx?.meta && Number.isSafeInteger(tx.slot) && tx.slot > 0, 'HOOK_TRADE_EVIDENCE_MISSING')
   check(tx.transaction?.signatures?.[0] === signature, 'HOOK_TRADE_SIGNATURE_MISMATCH')
   if (tx.meta.err !== null) return []
-  check(Array.isArray(tx.meta.innerInstructions), 'HOOK_TRADE_EVIDENCE_MISSING')
-  const keys = accountKeys(tx), outer = tx.transaction.message.compiledInstructions
+  const specs = events.filter(spec => spec.role === 'swap'), byName = new Map(specs.map(spec => [spec.name, spec]))
+  const { keys, events: found } = programEvents(tx, { program: programs.swap, idl: swapIdl ?? loadNativeArtifacts().idls.swap, names: specs.map(spec => spec.name) })
   check(keys.includes(pool), 'HOOK_TRADE_POOL_MISSING')
-  const swap = programs.swap, authority = eventAuthority(swap), table = eventTable(swapIdl ?? loadNativeArtifacts().idls.swap, events)
-  const trades = [], groups = new Set()
-  let ordinal = -1
+  const trades = []
   for (const group of tx.meta.innerInstructions) {
-    check(Number.isInteger(group.index) && group.index >= 0 && group.index < outer.length && !groups.has(group.index), 'HOOK_TRADE_ORDERING_MISSING')
-    groups.add(group.index)
-    // stack[h]: the program running at stack height h (1 is the outer instruction).
-    const stack = [null, keys[outer[group.index].programIdIndex]], found = []
-    for (const ix of group.instructions) {
-      ordinal++
-      const program = keys[ix.programIdIndex], height = ix.stackHeight
-      check(program && Number.isInteger(height) && height >= 2 && height <= stack.length, 'HOOK_TRADE_ORDERING_MISSING')
-      stack.length = height; stack[height] = program
-      if (program !== swap) continue
-      const bytes = Buffer.from(bs58.decode(ix.data))
-      if (!bytes.subarray(0, 8).equals(EMIT_CPI_TAG)) continue
-      check(stack[height - 1] === swap && ix.accounts.length === 1 && keys[ix.accounts[0]] === authority, 'HOOK_TRADE_EVENT_UNAUTHENTICATED')
-      const row = table.get(bytes.subarray(8, 16).toString('hex'))
-      if (!row) continue
-      const event = row.coder.events.decode(bytes.subarray(8).toString('base64'))
-      check(event?.name === row.spec.name, 'HOOK_TRADE_EVENT_ENCODING')
-      check(Buffer.concat([EMIT_CPI_TAG, row.discriminator, row.coder.types.encode(row.spec.name, event.data)]).equals(bytes), 'HOOK_TRADE_EVENT_ENCODING')
-      if (event.data.pool.toBase58() === pool) found.push({ ordinal, spec: row.spec, data: event.data })
-    }
-    trades.push(...groupTrades(found, { signature, pool, slot: tx.slot, keys, expectNative }))
+    const mine = found.filter(e => e.outer === group.index && e.data.pool.toBase58() === pool).map(e => ({ ordinal: e.ordinal, spec: byName.get(e.name), data: e.data }))
+    trades.push(...groupTrades(mine, { signature, pool, slot: tx.slot, keys, expectNative }))
   }
   return trades
 }

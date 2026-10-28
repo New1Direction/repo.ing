@@ -5,13 +5,13 @@ import { BUYBACK_WALLETS } from '../app/lib/buyback-receipts.mjs'
 import { buybackTokenAccount, detectBuyback } from './buyback-detection.mjs'
 import { loadFinalizedTransaction, UNSUPPORTED_TRANSACTION_SHAPE } from './finalized-transaction.mjs'
 import { releaseAfterUnlock } from './database-pool.mjs'
+import { splitByPolicy } from './revenue-policy-split.mjs'
 
 // Canonical platform-revenue accounting. Builder and repository earnings are never
 // touched here: this ledger only covers revenue repo.ing owns (partner fees).
 // Accounting determines available revenue, policy determines the allocation, a
 // reviewed intent pins the spend, and any executor may only run that exact intent.
 
-const PERMILLE = 1000n
 const REVENUE_LOCK = 'platform-revenue-allocation'
 // Claims settle to the partner wallet; the team moves the buyback share to the published custody wallet and buys
 // there. Receipts from a mapped custody wallet spend the reserve of the partner wallet that funds it.
@@ -154,10 +154,7 @@ export function createPlatformRevenue({ pool, partnerWallet }) {
         await client.query('begin')
         try {
           for (const claim of claims) {
-            const amount = BigInt(claim.amount)
-            const buyback = amount * BigInt(policy.buybackPermille) / PERMILLE
-            const liquidity = amount * BigInt(policy.liquidityPermille) / PERMILLE
-            const treasury = amount - buyback - liquidity
+            const { buyback, liquidity, treasury } = splitByPolicy(claim.amount, policy)
             await client.query(`insert into platform_revenue_allocations
               (allocation_group, claim_signature, github_repo_id, claimed_amount, buyback_amount,
                liquidity_amount, treasury_amount, policy_version, created_by)

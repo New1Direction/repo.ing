@@ -72,3 +72,14 @@ export function ownLaunch({ n, slot }) {
     { program: P.swap, bytes: defaults(swap, swapIdl, 'PoolCreated') }]
   return transaction({ n, slot, program: P.launch, events, extraKeys: [ownCreator] })
 }
+
+// A transaction of `program` emitting the named events ({ program, name, data }; each encoded with its program's reviewed IDL)
+// with the given lamport changes ({ [address]: delta }) in its balances; addresses in extraKeys join the account keys.
+export function ownEventTransaction({ n, slot, program, events, extraKeys = [], changes = {}, fee = 5000 }) {
+  const coders = { [P.swap]: [swapCoder(), loadNativeArtifacts().idls.swap], [P.launch]: [launchCoder(), loadOpenArtifacts().idls.launch] }
+  const tx = transaction({ n, slot, program, extraKeys, events: events.map(e => ({ program: e.program, bytes: eventBytes(...coders[e.program], e.name, e.data) })) })
+  const keys = tx.transaction.message.staticAccountKeys.map(k => k.toBase58())
+  const pre = keys.map(() => 10_000_000_000), post = keys.map((k, i) => pre[i] + (changes[k] ?? 0) - (i === 0 ? fee : 0))
+  return { ...tx, meta: { ...tx.meta, fee, preBalances: pre, postBalances: post } }
+}
+export { pk as ownKey, bn as ownBn }
