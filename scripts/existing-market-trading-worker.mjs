@@ -19,10 +19,10 @@ const publicMarketApi = new RegExp(`^/api/market/${mint}/(trades|metrics|curve|t
 // Read-only public data the pages link to (docs/MARKET_DATA_API.md): a market's liquidity and transparency JSON, the launch
 // calendar's event feed, Atom and iCalendar. GET and HEAD only, no cookies; each route keeps its own rate limits and caching.
 const publicDataApi = new RegExp(`^(/api/v1/markets/${mint}/(liquidity|transparency)|/api/v1/launches/events|/launches\\.atom|/launches\\.ics)$`)
-// Read-only public views the token and claim pages poll (GET/HEAD, no cookies, so the anonymous view): a repository's
-// allocation status and the holder notes. Their POSTs stay closed. The discovery ledger (/api/discovery) stays closed
-// with its claims: it advertises payouts the legacy partner key would sign.
-const publicReadApi = new RegExp(`^(/api/allocation/[1-9]\\d{0,17}|/api/holder-notes/${mint})$`)
+// Read-only public view the token pages poll (GET/HEAD, no cookies): the holder notes. Its POST stays closed. Still closed:
+// the discovery ledger (/api/discovery, it advertises payouts the legacy partner key would sign) and the allocation status
+// (/api/allocation, which answers 503 under the read-only site role on the test site; it belongs to the claims review).
+const publicReadApi = new RegExp(`^/api/holder-notes/${mint}$`)
 const tokenImage = new RegExp(`^/api/token-image/${mint}$`)
 const tokenMetadata = new RegExp(`^/api/token-metadata/${mint}$`)
 const marketBalance = new RegExp(`^/api/market/${mint}/balance$`)

@@ -1009,15 +1009,15 @@ test('edge cache: pages are kept per slot, so a flip never serves the other buil
 
 test('read-only views the pages poll answer GET/HEAD without cookies; their writes stay closed; beacons are dropped', async () => {
   const f = await fixture()
-  const reads = ['/api/allocation/1278009399', `/api/holder-notes/${mint}`, `/api/holder-notes/${mint}?wallet=${mint}`, `/api/holder-notes/${mint}?offset=20`]
+  const reads = [`/api/holder-notes/${mint}`, `/api/holder-notes/${mint}?wallet=${mint}`, `/api/holder-notes/${mint}?offset=20`]
   for (const path of reads) for (const method of ['GET', 'HEAD']) {
     assert.equal((await f.request(path, { method, headers: { cookie: 'repoing_github=session' } })).status, 200, `${method} ${path}`)
     const upstream = f.runtime.calls.at(-1).request
     assert.equal(upstream.headers.get('cookie'), null); assert.equal(upstream.method, method)
   }
   const before = f.runtime.calls.length
-  for (const path of reads.slice(0, 2)) for (const method of ['POST', 'PUT', 'DELETE']) assert.equal((await f.request(path, { method, headers: { origin: 'https://repo.ing', 'content-type': 'application/json' }, body: method === 'DELETE' ? undefined : '{}' })).status, 403, `${method} ${path}`)
-  for (const path of ['/api/participation/1278009399', '/api/allocation/0', '/api/discovery/1265419522', '/api/holder-notes/x']) assert.equal((await f.request(path)).status, 403, path)
+  for (const path of reads.slice(0, 1)) for (const method of ['POST', 'PUT', 'DELETE']) assert.equal((await f.request(path, { method, headers: { origin: 'https://repo.ing', 'content-type': 'application/json' }, body: method === 'DELETE' ? undefined : '{}' })).status, 403, `${method} ${path}`)
+  for (const path of ['/api/participation/1278009399', '/api/allocation/1278009399', '/api/discovery/1265419522', '/api/holder-notes/x']) assert.equal((await f.request(path)).status, 403, path)
   const beacon = await f.request('/api/funnel', { method: 'POST', body: '{"step":"view"}' })
   assert.equal(beacon.status, 204)
   assert.equal((await f.request('/api/funnel')).status, 403)
