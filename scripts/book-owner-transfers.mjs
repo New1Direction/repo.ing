@@ -12,7 +12,7 @@ import bs58 from 'bs58'
 
 const SWEEP = '4wCQ1y8yRqRtiCehbyEYHeWeiVjCREEbuyUtBVvWJUvpFn3bEzvUPr29CPN4u8EY5Mh9czMwwofCowePoKSAQpAQ', SWEEP_LAMPORTS = 6666505574n
 const TEAM = '4euCWuZo1Ud3PfhFQr9ShmJVzqmARGqY2LR23YECDYce', VAULT = '3dHCTpgdx15yXyVGh7DK1woQ1XisQpmFCxncURrq63Gs'
-const REPO = '1388219884', CP_AMM = 'cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG', EVENT = Buffer.from('e445a52e51cb9a1dc6b6b734610c3138', 'hex')
+const REPO = process.env.BOOK_REPO ?? '1388219884', CP_AMM = 'cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG', EVENT = Buffer.from('e445a52e51cb9a1dc6b6b734610c3138', 'hex')
 const DECISION = 'owner 2026-10-28: "Book as paid to me"'
 const RPC = process.env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com'
 const [mode, ...claims] = process.argv.slice(2)
@@ -56,9 +56,12 @@ try {
     if (Number(exists.n) > 0) { booked.push({ signature, skipped: 'already booked' }); continue }
     const { tx, events } = await claimEvents(signature)
     const creator = events.find(e => e.position === market.creator_position), partner = events.find(e => e.position === market.partner_position)
-    check(events.length === 2 && creator && partner && events.every(e => e.pool === market.pool && e.owner === VAULT && e.base === 0n && e.quote > 0n),
-      `claim ${signature} is not exactly repo.ing's two vault positions`)
+    // A claim takes the creator position, the partner position, or both (DAMM_ROLES in the collector); nothing else.
+    check(events.length >= 1 && events.length === [creator, partner].filter(Boolean).length &&
+      events.every(e => e.pool === market.pool && e.owner === VAULT && e.base === 0n && e.quote > 0n),
+      `claim ${signature} is not only this repo's vault positions`)
     const transactionHash = sha256(JSON.stringify(tx))
+    if (creator) {
     const terms = JSON.stringify({ purpose: 'historical-damm-receipt-v1', signature, transactionHash, repoId: REPO, mint: market.mint, curve: market.curve,
       pool: market.pool, position: market.creator_position, source: VAULT, receiver: TEAM, amount: String(creator.quote), dammClaimed: String(creator.quote),
       originalIntentAvailable: false, decision: DECISION })
@@ -68,9 +71,10 @@ try {
     await db.query(`insert into builder_fee_collections(id, github_repo_id, mint, pool, wallet, amount, status, terms, terms_hash, signature, receipt, settled_at, evidence_source)
       values(gen_random_uuid(), $1, $2, $3, $4, $5, 'settled', $6, $7, $8, $9, now(), 'historical-receipt')`,
     [REPO, market.mint, market.curve, TEAM, String(creator.quote), terms, sha256(terms), signature, receipt])
-    await db.query(`insert into platform_fee_claims(github_repo_id, pool, wallet, amount, status, signature, signed_transaction, last_valid_block_height, settled_at, phase)
+    }
+    if (partner) await db.query(`insert into platform_fee_claims(github_repo_id, pool, wallet, amount, status, signature, signed_transaction, last_valid_block_height, settled_at, phase)
       values($1, $2, $3, $4, 'settled', $5, 'OFFLINE_RECOVERY_ARCHIVE_NOT_EXECUTABLE', 0, now(), 'DAMM')`, [REPO, market.pool, TEAM, String(partner.quote), signature])
-    booked.push({ signature, creator: String(creator.quote), partner: String(partner.quote) })
+    booked.push({ repo: REPO, signature, creator: creator ? String(creator.quote) : null, partner: partner ? String(partner.quote) : null })
   }
   const { rows: [after] } = await db.query(`select (select coalesce(sum(amount),0) from custody_fee_collections) - (select coalesce(sum(amount),0) from custody_fee_payouts)
     - (select coalesce(sum(amount),0) from custody_owner_transfers) as custody_held`)
