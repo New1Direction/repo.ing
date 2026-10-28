@@ -19,7 +19,7 @@ const row = (repoId, extra = {}) => ({ repoId, mint: key(), pool: key(), tokenNa
   fullName: 'New1Direction/Waternot', description: null, avatarUrl: null, source: 'github', stars: 10, forks: 1, updatedAt: null, githubCreatedAt: null,
   beneficiaryWallet: null, beneficiaryBoundAt: null, beneficiaryMethod: null, earned: '0', claimed: '0', volume24hLamports: '0', wasVerified: false,
   platformCollected: '0',
-  lastSqrtPrice: null, graduationStatus: null, observation: null, graduationError: null, migrationEvidenceHash: null, ...extra })
+  lastPriceSol: null, supplyBaseUnits: null, supplyDecimals: null, graduationStatus: null, observation: null, graduationError: null, migrationEvidenceHash: null, ...extra })
 const CURVE = row('101'), GRADUATED = row('102', { migrationEvidenceHash: 'migrated' }), STOCK = row('103', { quoteAssetId: 'meta-xstock', quoteMint: METAX,
   fullName: 'facebook/docusaurus', owner: 'facebook', name: 'docusaurus' }), STALE = row('104')
 const MARKETS = [CURVE, GRADUATED, STOCK, STALE]

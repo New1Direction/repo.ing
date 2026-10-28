@@ -1,9 +1,9 @@
 // Pure portfolio math, shared by the wallet API and page. Token balances use 6 decimals and
-// prices are SOL per whole token (the chart's spot price), so value = base units × price × 1e3.
+// prices are SOL per whole token (the price the newest trade paid, trade_prices.price_sol), so value = base units × price × 1e3.
 const LAMPORTS_PER_BASE_UNIT_AT_ONE_SOL = 1000
 const MARKET_TOKEN_DECIMALS = 6
 
-// Latest spot price among one market's trades in its newest slot, ordered exactly like the chart:
+// Latest trade price among one market's trades in its newest slot, ordered exactly like the chart:
 // block transaction order, then signature, then event. Same-slot trades without finalized block
 // order across several transactions are ambiguous, so no price is claimed (the chart withholds it too).
 export function latestSlotTrade(rows) {

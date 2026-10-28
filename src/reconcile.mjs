@@ -151,7 +151,8 @@ export function createReconciler({ pool, connection, config, earlyAccess = null,
         // Aggregate each table separately: joining its individual rows would multiply credits and withdrawals.
         const { rows: [ledger] } = await client.query(`select
           (select coalesce(sum(amount_base_units),0)::text from builder_fee_credits where github_repo_id=$1) as earned,
-          (select coalesce(sum(amount_base_units),0)::text from repo_claims where github_repo_id=$1 and status='settled') as claimed,
+          ((select coalesce(sum(amount_base_units),0) from repo_claims where github_repo_id=$1 and status='settled') +
+            (select coalesce(sum(amount),0) from custody_owner_transfers where github_repo_id=$1 and role='creator'))::text as claimed,
           (select coalesce(sum(amount),0)::text from builder_fee_collections where github_repo_id=$1 and status='settled') as collected,
           (select count(*) from repo_claims where github_repo_id=$1 and status='pending') +
           (select count(*) from builder_fee_collections where github_repo_id=$1 and status='pending') as pending`, [String(repoId)])

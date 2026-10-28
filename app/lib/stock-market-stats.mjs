@@ -22,7 +22,7 @@ const FUTURE_SKEW_MS = 5_000
 const scope = t => `${t}.github_repo_id=m.repo_id and ${t}.asset_id=m.asset_id and ${t}.quote_mint=m.quote_mint
     and ((${t}.venue='dbc' and ${t}.pool=m.pool) or (${t}.venue='damm' and ${t}.pool=m.damm_pool and ${t}.slot>=m.damm_slot))`
 const FACTS = `select m.repo_id::text as "repoId",
-  (select next_sqrt_price from (${latestTradeSql('stock_trade_events', t => `${scope(t)} and ${t}.next_sqrt_price is not null`)}) latest) as "lastSqrtPrice",
+  (select next_sqrt_price from (${latestTradeSql('stock_trade_events', t => `${scope(t)} and ${t}.next_sqrt_price is not null`, 'next_sqrt_price')}) latest) as "lastSqrtPrice",
   (select coalesce(sum(t.quote_amount),0)::text from stock_trade_events t where ${scope('t')}
     and t.traded_at >= $7::timestamptz - interval '24 hours' and t.traded_at <= $7::timestamptz) as "volume24h",
   o.pool as "observedPool", o.quote_reserve::text as "quoteReserve", o.migration_threshold::text as "migrationThreshold",

@@ -15,17 +15,25 @@ export function chartScaleRange(original) {
   return { ...original, priceRange: { minValue: Math.max(0, minValue - pad), maxValue: maxValue + pad } }
 }
 
+// scale: what each SOL price is multiplied by to plot it: one number for every bar, or bar => number for a bar's own (a market
+// cap at the SOL/USD price of that candle's close). A bar without a usable scale is a gap, never filled with another's.
+const usableScale = value => Number.isFinite(value) && value > 0
+export function barScale(scale, bar) {
+  const value = typeof scale === 'function' ? (bar ? scale(bar) : null) : scale
+  return usableScale(value) ? value : null
+}
+
 // volumeOf: a bar's volume as the histogram plots it (SOL by default; a stock pair's in its shown units, app/lib/chart-quote.mjs).
-export function chartSeries(data, multiplier = 1, volumeOf = bar => Number(bar.volumeLamports) / 1e9) {
-  if (!data || !Number.isFinite(multiplier) || multiplier <= 0) return { prices: [], volumes: [] }
+export function chartSeries(data, scale = 1, volumeOf = bar => Number(bar.volumeLamports) / 1e9) {
+  if (!data || (typeof scale !== 'function' && !usableScale(scale))) return { prices: [], volumes: [] }
   const byTime = new Map(data.candles.map(bar => [bar.time, bar]))
   const first = data.candles[0]?.time
   const last = data.candles.at(-1)?.time
   const prices = [], volumes = []
   // Whitespace preserves elapsed time without manufacturing flat candles or trades.
   for (let time = first; time <= last; time += data.interval) {
-    const bar = byTime.get(time)
-    if (!bar || bar.orderingPending) prices.push({ time })
+    const bar = byTime.get(time), multiplier = bar && !bar.orderingPending ? barScale(scale, bar) : null
+    if (multiplier === null) prices.push({ time })
     else prices.push({ time, open: bar.open * multiplier, high: bar.high * multiplier,
       low: bar.low * multiplier, close: bar.close * multiplier, value: bar.close * multiplier })
     volumes.push(bar ? { time, value: volumeOf(bar),

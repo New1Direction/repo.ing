@@ -1,6 +1,6 @@
 import { formatSolDisplay } from './format.mjs'
 import { chartPriceLabel } from './chart-display.mjs'
-import { formatSolMarketCap, formatUsdMarketCap, MARKET_TOKEN_SUPPLY } from './market-display.mjs'
+import { formatSolMarketCap, formatUsdMarketCap, supplyTokens } from './market-display.mjs'
 import { formatStockCompact, stockAmountLabel, stockDisplayUnits, stockRawUsd } from './stock-display.mjs'
 
 // The phone token page's market summary, computed only from what the page already has: the server market row (last
@@ -46,19 +46,23 @@ export function formatUsdPrice(value) {
   return `$${value.toLocaleString('en-US', { maximumSignificantDigits: 4 })}`
 }
 
-// usdPerSol: the SOL/USD price until a metrics read arrives (the server render has none), so it shows USD, not SOL.
-export function phoneMarketSummary({ priceSol = null, volume24hLamports = null, usdPerSol = null, chart = null, metrics = null, now = Date.now() }) {
-  const price = positive(chart?.latest?.priceSol) ? chart.latest.priceSol : positive(priceSol) ? priceSol : null
-  const usd = metrics ? metrics.solUsd : usdPerSol, solUsd = positive(usd) ? usd : null
-  const supply = /^\d+$/.test(metrics?.supplyBaseUnits ?? '') && Number.isInteger(metrics.supplyDecimals)
-    ? Number(metrics.supplyBaseUnits) / 10 ** metrics.supplyDecimals : MARKET_TOKEN_SUPPLY
+// The mint's on-chain supply (mint_facts): the chart's, the metrics read's, else the server row's (supply); no cap without one.
+const summarySupply = (chart, metrics, supply) => supplyTokens(chart?.supply) ?? supplyTokens(metrics) ?? supplyTokens(supply)
+
+// usdPerSol: the SOL/USD price until a metrics read arrives (the server render has none), so it shows USD, not SOL. The chart's
+// latest trade brings the SOL/USD price of its own minute, which the "now" figures use first.
+export function phoneMarketSummary({ priceSol = null, volume24hLamports = null, usdPerSol = null, supply: rowSupply = null, chart = null, metrics = null, now = Date.now() }) {
+  const latest = positive(chart?.latest?.priceSol) ? chart.latest : null
+  const price = latest ? latest.priceSol : positive(priceSol) ? priceSol : null
+  const usd = positive(latest?.solUsd) ? latest.solUsd : metrics ? metrics.solUsd : usdPerSol, solUsd = positive(usd) ? usd : null
+  const supply = summarySupply(chart, metrics, rowSupply)
   const volume = /^\d+$/.test(String(chart?.volume24hLamports ?? '')) ? chart.volume24hLamports
     : /^\d+$/.test(String(volume24hLamports ?? '')) ? String(volume24hLamports) : null
   const nowSeconds = Math.floor(now / 1000), candles = chart?.candles ?? [], interval = chart?.interval ?? 0
   return {
     price: !price ? '—' : solUsd ? formatUsdPrice(price * solUsd) : `${chartPriceLabel(price)} SOL`,
     change: chart ? change24h(candles, interval, price, nowSeconds) : null,
-    marketCap: !price ? '—' : solUsd ? formatUsdMarketCap(price * supply * solUsd) : formatSolMarketCap(price * supply),
+    marketCap: !price || !supply ? '—' : solUsd ? formatUsdMarketCap(price * supply * solUsd) : formatSolMarketCap(price * supply),
     volume: volume === null ? '—' : solUsd ? formatUsdMarketCap(Number(volume) / 1e9 * solUsd) : `${formatSolDisplay(volume)} SOL`,
     spark: chart ? sparklinePoints(candles, interval, nowSeconds) : [],
   }
@@ -68,12 +72,11 @@ export function phoneMarketSummary({ priceSol = null, volume24hLamports = null, 
 // market row's `stock` (app/lib/stock-market-stats.mjs): USD at the stock's own price when there is one, else in the stock as
 // wallets show it at today's multiplier, and '—' until the stock's units arrive with the chart's metrics read. The 24h change
 // and sparkline are ratios of prices in one unit, so they need no conversion.
-export function stockMarketSummary({ quote, stock = null, chart = null, metrics = null, now = Date.now() }) {
+export function stockMarketSummary({ quote, stock = null, supply: rowSupply = null, chart = null, metrics = null, now = Date.now() }) {
   const info = metrics?.quote
   const units = info?.assetId === quote?.assetId && info?.decimals === quote?.decimals ? stockDisplayUnits(info) : null
   const price = positive(chart?.latest?.priceQuote) ? chart.latest.priceQuote : positive(stock?.price) ? stock.price : null
-  const supply = /^\d+$/.test(metrics?.supplyBaseUnits ?? '') && Number.isInteger(metrics.supplyDecimals)
-    ? Number(metrics.supplyBaseUnits) / 10 ** metrics.supplyDecimals : MARKET_TOKEN_SUPPLY
+  const supply = summarySupply(chart, metrics, rowSupply)
   const volume = /^\d+$/.test(String(chart?.volume24hQuote ?? '')) ? chart.volume24hQuote
     : /^\d+$/.test(String(stock?.volume24h ?? '')) ? String(stock.volume24h) : null
   const usd = units?.usdPrice ?? null
@@ -81,7 +84,7 @@ export function stockMarketSummary({ quote, stock = null, chart = null, metrics 
   return {
     price: !price || !units ? '—' : usd ? formatUsdPrice(price * usd) : `${chartPriceLabel(price * units.multiplier)} ${units.symbol}`,
     change: chart ? change24h(candles, interval, price, nowSeconds) : null,
-    marketCap: !price || !units ? '—' : usd ? formatUsdMarketCap(price * supply * usd) : formatStockCompact(price * units.multiplier * supply, units.symbol),
+    marketCap: !price || !units || !supply ? '—' : usd ? formatUsdMarketCap(price * supply * usd) : formatStockCompact(price * units.multiplier * supply, units.symbol),
     volume: volume === null || !units ? '—' : usd ? formatUsdMarketCap(stockRawUsd(volume, units)) : stockAmountLabel(volume, units),
     spark: chart ? sparklinePoints(candles, interval, nowSeconds) : [],
   }

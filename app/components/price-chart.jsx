@@ -5,7 +5,7 @@ import { visiblePolling } from '../lib/visible-polling.mjs'
 import { useEffect, useMemo, useState } from 'react'
 import { Code2, RefreshCw } from 'lucide-react'
 import { RecentTrades } from './recent-trades'
-import { formatUsdMarketCap } from '../lib/market-display.mjs'
+import { formatUsdMarketCap, supplyTokens } from '../lib/market-display.mjs'
 import { percentChange } from '../lib/format.mjs'
 import { CHART_PERIODS, chartPriceLabel, chartTradeAge } from '../lib/chart-display.mjs'
 import { marketMetricsUrl, marketTradesUrl } from '../lib/market-chart-urls.mjs'
@@ -131,16 +131,20 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd, onQuoteUnits, 
   // displayed period remains explicit until its replacement actually arrives.
   const current = data
   const stale = error || (data && now - dataAt > TRADES_STALE_MS)
-  const supply = freshMetrics?.supplyBaseUnits && freshMetrics?.supplyDecimals !== null && freshMetrics?.supplyDecimals !== undefined
-    ? Number(freshMetrics.supplyBaseUnits) / 10 ** freshMetrics.supplyDecimals : null
-  const capMultiplier = supply && units.usdPerUnit ? supply * units.usdPerUnit : null
-  const capMode = metric === 'cap'
-  const capUnavailable = capMode && !capMultiplier
-  // Price view: SOL as recorded; a stock pair at today's display multiplier (null until its units load).
-  const valueMultiplier = capMode ? capMultiplier : units.priceScale
-  const unitsPending = !capMode && !units.ready
+  // The mint's on-chain supply (mint_facts): the chart read's, else the metrics read's. No market cap without it.
+  const supply = supplyTokens(data?.supply) ?? supplyTokens(freshMetrics)
   const latest = data?.latest
   const latestValue = units.price(latest)
+  // The "now" cap uses the latest trade's own SOL/USD price (today's only while it has none); each candle uses its own close's.
+  const nowUsd = units.usdOf(latest) ?? units.usdPerUnit, nowCap = supply && nowUsd ? supply * nowUsd : null
+  const capScale = useMemo(() => supply ? bar => { const usd = units.usdOf(bar); return usd ? supply * usd : null } : null, [supply, units])
+  const capMode = metric === 'cap'
+  // Drawable when some candle has its own USD price (an empty period: when the "now" cap is known).
+  const capReady = Boolean(capScale) && (current?.candles.length ? current.candles.some(bar => !bar.orderingPending && units.usdOf(bar)) : Boolean(nowCap))
+  const capUnavailable = capMode && !capReady
+  // Price view: SOL as recorded; a stock pair at today's display multiplier (null until its units load). Market cap: per candle.
+  const valueMultiplier = capMode ? capScale : units.priceScale
+  const unitsPending = !capMode && !units.ready
   const validBars = current?.candles.filter(bar => !bar.orderingPending) ?? []
   const change = validBars.length > 1 ? percentChange((validBars.at(-1).close / validBars[0].open - 1) * 100) : null
   const awaitingRange = !current || current.range !== range
@@ -152,10 +156,10 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd, onQuoteUnits, 
   const emptyMessage = <><strong>{error && !current ? 'Trade history is unavailable' : data?.totalTrades ? 'No trades in this period' : 'Waiting for the first trade'}</strong><span>{error && !current ? 'Your trade form is still available. Retry the chart below.' : data?.totalTrades ? 'Choose All to see the market’s full history.' : 'The first trade appears here as soon as it is confirmed.'}</span>{range !== 'all' && !error && <button className="button outline" onClick={() => { setRange('all'); setRefreshing(true) }}>View all history</button>}</>
   return <><script dangerouslySetInnerHTML={{ __html: earlyChartScript(mint) }}/><section className="chart-card market-chart-card" aria-label={`${symbol} market chart`}>
     <div className="chart-summary"><div className="chart-heading"><span className="chart-symbol">${symbol} <span className="chart-unit">{capMode ? 'Market cap · USD estimate' : `Price · ${units.symbol}`}</span></span>
-      <div className="chart-headline"><strong>{latestValue && valueMultiplier ? capMode ? formatUsdMarketCap(latestValue * valueMultiplier) : chartPriceLabel(latestValue * valueMultiplier) : '—'}</strong>{change !== null && <span className={change.sign >= 0 ? 'chart-up' : 'chart-down'} title="Change from the first to last recorded price in the displayed period">{change.label} <small>{periodLabel(current.range)}</small></span>}</div>
-    </div><div className="chart-metrics"><span>{data?.graduation ? '24h total volume' : ended ? '24h curve volume' : '24h volume'}<strong>{data ? units.amountLabel(units.volume24h(data)) : <span className="skeleton-text"/>}</strong></span><span>{historyOnly ? 'Last curve cap' : 'Market cap'}<strong>{latestValue && capMultiplier ? formatUsdMarketCap(latestValue * capMultiplier) : '—'}</strong></span><span>Holders<strong>{historyOnly || freshMetrics?.holders == null ? '—' : freshMetrics.holders.toLocaleString('en-US')}</strong></span></div></div>
+      <div className="chart-headline"><strong>{!latestValue ? '—' : capMode ? nowCap ? formatUsdMarketCap(latestValue * nowCap) : '—' : units.priceScale ? chartPriceLabel(latestValue * units.priceScale) : '—'}</strong>{change !== null && <span className={change.sign >= 0 ? 'chart-up' : 'chart-down'} title="Change from the first to last recorded price in the displayed period">{change.label} <small>{periodLabel(current.range)}</small></span>}</div>
+    </div><div className="chart-metrics"><span>{data?.graduation ? '24h total volume' : ended ? '24h curve volume' : '24h volume'}<strong>{data ? units.amountLabel(units.volume24h(data)) : <span className="skeleton-text"/>}</strong></span><span>{historyOnly ? 'Last curve cap' : 'Market cap'}<strong>{latestValue && nowCap ? formatUsdMarketCap(latestValue * nowCap) : '—'}</strong></span><span>Holders<strong>{historyOnly || freshMetrics?.holders == null ? '—' : freshMetrics.holders.toLocaleString('en-US')}</strong></span></div></div>
     <div className="chart-toolbar"><div className="chart-control-group" aria-label="Chart period">{CHART_PERIODS.map(([value, label]) => <button key={value} aria-pressed={range === value} onClick={() => { if (value !== range) { setRange(value); setRefreshing(true); setError(false) } }}>{label}</button>)}</div>
-      <div className="chart-options"><div className="chart-control-group" aria-label="Chart value"><button aria-pressed={!capMode} onClick={() => setMetric('price')}>Price</button><button aria-pressed={capMode} disabled={!capMultiplier && !capMode} onClick={() => setMetric('cap')}>MCap</button></div><div className="chart-control-group" aria-label="Chart style"><button aria-pressed={style === 'line'} onClick={() => chooseStyle('line')}>Line</button><button aria-pressed={style === 'candles'} onClick={() => chooseStyle('candles')}>Candles</button></div>
+      <div className="chart-options"><div className="chart-control-group" aria-label="Chart value"><button aria-pressed={!capMode} onClick={() => setMetric('price')}>Price</button><button aria-pressed={capMode} disabled={!capReady && !capMode} onClick={() => setMetric('cap')}>MCap</button></div><div className="chart-control-group" aria-label="Chart style"><button aria-pressed={style === 'line'} onClick={() => chooseStyle('line')}>Line</button><button aria-pressed={style === 'candles'} onClick={() => chooseStyle('candles')}>Candles</button></div>
         {pulseEvents?.length > 0 && <div className="chart-control-group" aria-label="GitHub events"><button className="chart-pulse-toggle" aria-pressed={showPulse} onClick={() => choosePulse(!showPulse)} title={showPulse ? 'Hide GitHub releases, merges and commits on the chart' : 'Show GitHub releases, merges and commits on the chart'}><Code2 size={13} aria-hidden="true"/>Dev</button></div>}</div>
     </div>
     {current ? <ChartCanvas data={current} multiplier={valueMultiplier} unit={capMode ? 'USD' : units.symbol} style={style ?? 'line'} symbol={symbol} pulse={pulseEvents} showPulse={showPulse}
@@ -168,7 +172,7 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd, onQuoteUnits, 
     {pendingSignature && <p className="chart-notice" role="status">Trade confirmed. Waiting for the finalized swap to be indexed.</p>}
     {(data?.latestOrderingPending || current?.candles.some(bar => bar.orderingPending)) && <p className="chart-notice">Some prices are withheld while price or transaction-order evidence is unavailable. Verified volume is retained.</p>}
     {ended && <p className="chart-notice" role="status">{hasDammPrices ? 'Chart continues through graduation into the same repository’s verified DAMM pool.' : graduated ? 'Waiting for the first indexed DAMM price. Showing the recorded curve history.' : 'Graduation in progress. Curve history stays visible while the destination pool is verified.'}{data?.graduation && <> <a href={`https://solscan.io/tx/${data.graduation.signature}`} target="_blank" rel="noreferrer">Migration receipt ↗</a></>}</p>}
-    <details className="chart-data"><summary>Chart details & data</summary><p>Finalized {data?.graduation ? 'DBC and verified DAMM' : 'DBC'} pool spot prices after each swap, grouped by {current?.intervalLabel ?? 'time'}.{units.stock ? '' : ' A swap shows as soon as it is confirmed, marked confirming until it is finalized about 13 seconds later.'} Line view connects recorded closes; candles show the full open/high/low/close. Quiet markets start in line view. Empty intervals contain no candles. {units.stock ? `Volume uses recorded pool ${units.symbol} amounts. ${units.symbol} prices and amounts are shown as wallets show them, history included, at today’s display multiplier. USD market cap uses on-chain supply and today’s ${units.symbol} price, not historical USD prices.` : 'Volume uses recorded pool SOL amounts. USD market cap uses on-chain supply and today’s SOL price, not historical USD prices.'} Times are UTC.</p>{latest && <p>Last trade: {new Date(latest.tradedAt).toLocaleString('en-US', { timeZone: 'UTC' })} UTC.</p>}
+    <details className="chart-data"><summary>Chart details & data</summary><p>Finalized {data?.graduation ? 'DBC and verified DAMM' : 'DBC'} swaps at the price each one paid, grouped by {current?.intervalLabel ?? 'time'}.{units.stock ? '' : ' A swap shows as soon as it is confirmed, marked confirming until it is finalized about 13 seconds later.'} Line view connects recorded closes; candles show the full open/high/low/close. Quiet markets start in line view. Empty intervals contain no candles. {units.stock ? `Volume uses recorded pool ${units.symbol} amounts. ${units.symbol} prices and amounts are shown as wallets show them, history included, at today’s display multiplier. USD market cap uses on-chain supply and today’s ${units.symbol} price, not historical USD prices.` : 'Volume uses recorded pool SOL amounts. USD market cap uses on-chain supply and the SOL/USD price at each candle’s close; a candle without a recorded SOL price is left blank.'} Times are UTC.</p>{latest && <p>Last trade: {new Date(latest.tradedAt).toLocaleString('en-US', { timeZone: 'UTC' })} UTC.</p>}
       {validBars.length > 0 && <div className="chart-data-scroll"><table><caption>{`Most recent price bars · ${units.symbol} per token`}</caption><thead><tr><th>UTC</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>{`Volume (${units.symbol})`}</th></tr></thead><tbody>{validBars.slice(-20).reverse().map(bar => <tr key={bar.time}><td>{new Date(bar.time * 1000).toISOString().slice(0, 16).replace('T', ' ')}</td>{['open', 'high', 'low', 'close'].map(key => <td key={key}>{chartPriceLabel(units.stock ? bar[key] * (units.priceScale ?? NaN) : bar[key])}</td>)}<td>{units.barVolumeAmount(bar)}</td></tr>)}</tbody></table></div>}
       <p>Charts powered by <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts™</a>. Copyright (с) 2025 TradingView, Inc.</p>
     </details>

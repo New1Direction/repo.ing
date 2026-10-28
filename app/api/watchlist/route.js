@@ -1,5 +1,5 @@
 import { database } from '../../lib/server.mjs'
-import { latestTradeSql } from '../../../src/market-chart.mjs'
+import { latestPriceColumn, latestPriceJoins } from '../../../src/market-chart.mjs'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export async function GET(request) {
@@ -9,12 +9,13 @@ export async function GET(request) {
   try {
     const pool = database()
     if (!pool) throw Error('Database unavailable')
-    // The newest curve trade as the chart picks it; no price (skipped by the alert) while its slot's order is unproven.
+    // The newest curve or graduated trade as the chart picks it (trade_prices); no price (skipped by the alert) while its
+    // slot's order is unproven or it is not priced yet.
     const { rows } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint,
-        t.next_sqrt_price as "sqrtPrice", t.signature || ':' || t.event_index as event
-      from markets m join lateral (${latestTradeSql('trade_events', t => `${t}.pool = m.pool`)}) t on true
+        ${latestPriceColumn('price_sol')}::text as "priceSol", ${latestPriceColumn('signature')} || ':' || ${latestPriceColumn('event_index')} as event
+      from markets m ${latestPriceJoins('m.mint')}
       where m.github_repo_id = any($1::bigint[]) and m.status = 'confirmed'
-        and m.launch_finality = 'finalized' and m.indexed_at is not null`, [ids])
+        and m.launch_finality = 'finalized' and m.indexed_at is not null and coalesce(cp.slot, dp.slot) is not null`, [ids])
     return json({ quotes: rows })
   } catch { return json({ error: 'Price alerts are temporarily unavailable. We will retry.' }, 503) }
 }

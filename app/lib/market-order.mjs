@@ -1,17 +1,19 @@
-import { MARKET_TOKEN_SUPPLY } from './market-display.mjs'
+import { supplyTokens } from './market-display.mjs'
 import { stockDisplayUnits } from './stock-display.mjs'
 
-// A row's market cap for ranking: the figure the market table shows (last trade price × the 1B supply), in USD so SOL rows and
+// A row's market cap for ranking: the figure the market table shows (last trade price × its on-chain supply), in USD so SOL rows and
 // stock pairs compare (SOL at usdPerSol, a stock pair at its stock's USD price). Without usdPerSol, SOL rows rank in SOL and
-// stock pairs, which then have no comparable figure, go last. null without a trade.
+// stock pairs, which then have no comparable figure, go last. null without a trade or before its supply is read.
 export function marketCapRank(market, usdPerSol = null) {
-  if (market?.stock) {
+  const supply = supplyTokens(market?.supply)
+  if (!supply) return null
+  if (market.stock) {
     const units = stockDisplayUnits(market.stock), price = market.stock.price
-    return units?.usdPrice && typeof price === 'number' && price > 0 && usdPerSol > 0 ? price * MARKET_TOKEN_SUPPLY * units.usdPrice : null
+    return units?.usdPrice && typeof price === 'number' && price > 0 && usdPerSol > 0 ? price * supply * units.usdPrice : null
   }
-  const price = market?.priceSol
+  const price = market.priceSol
   if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return null
-  return price * MARKET_TOKEN_SUPPLY * (usdPerSol > 0 ? usdPerSol : 1)
+  return price * supply * (usdPerSol > 0 ? usdPerSol : 1)
 }
 
 // Trending: markets that earned promotion (app/lib/repo-quality.mjs; rows without the flag count as promoted) before new
@@ -44,7 +46,7 @@ export const tradedToday = market => BigInt(market.volume24hLamports ?? '0') > 0
 // Only the fields MarketTable, RepoAvatar and WatchButton read, so the home page ships no unused rows. A model market's
 // display-only likes (app/lib/hf-markets.mjs withModelFacts) ride along only when known; GitHub rows never carry them. A
 // stock pair's figures (`stock`, app/lib/stock-market-stats.mjs) ride along the same way; SOL rows never carry them.
-const HOME_MARKET_FIELDS = ['repoId', 'mint', 'fullName', 'description', 'symbol', 'tokenName', 'wasVerified', 'volume24hLamports', 'earned', 'claimed', 'remaining', 'stars', 'priceSol', 'bondingPercent', 'graduated', 'pulse', 'newRepo', 'officialLaunch']
+const HOME_MARKET_FIELDS = ['repoId', 'mint', 'fullName', 'description', 'symbol', 'tokenName', 'wasVerified', 'volume24hLamports', 'earned', 'claimed', 'remaining', 'stars', 'priceSol', 'supply', 'bondingPercent', 'graduated', 'pulse', 'newRepo', 'officialLaunch']
 // usdPerSol: ranks the Market cap tab across SOL rows and stock pairs (orderMarkets); that tab lists only markets with a trade.
 // New repositories are in their real place on every home tab (owner, 2026-10-06), labeled on their rows.
 export function homeMarketTabs(markets, { usdPerSol = null } = {}) {

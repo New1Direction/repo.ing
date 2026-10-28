@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import BN from 'bn.js'
 import { getPriceFromSqrtPrice } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { quoteAssetById, quoteStamp, resolveQuoteAsset } from '../src/quote-assets.mjs'
-import { chartSpotPrice, readMarketChart } from '../src/market-chart.mjs'
+import { readMarketChart } from '../src/market-chart.mjs'
 import { isStockMarket, readStockMarketChart, stockChartBar, stockChartMigration, stockQuoteOf, stockSpotPrice, stockTradeScope, stockTradeScopeParams } from '../src/stock-market-chart.mjs'
 import { formatQuoteAmount, formatStockCompact, stockAmountLabel, stockDisplayUnits, stockRawUsd, stockRowDisplay } from '../app/lib/stock-display.mjs'
 import { chartQuote } from '../app/lib/chart-quote.mjs'
@@ -31,7 +31,7 @@ test('stock spot price: Q64.64 sqrt price in the stock\'s decimals (8), never SO
   assert.equal(stockSpotPrice(SQRT.toString(), 6, 8), 0.01)
   assert.equal(stockSpotPrice((SQRT * 2n).toString(), 6, 8), 0.04)
   // The same sqrt price is 10× cheaper in SOL's 9 decimals: a SOL reading of a stock pool would be off by 10×.
-  assert.equal(chartSpotPrice(SQRT.toString()), 0.001)
+  assert.equal(getPriceFromSqrtPrice(new BN(SQRT.toString()), 6, 9).toNumber(), 0.001)
   const raw = '184467440737095516'
   assert.equal(stockSpotPrice(raw, 6, 8), getPriceFromSqrtPrice(new BN(raw), 6, 8).toNumber())
   assert.throws(() => stockSpotPrice(raw), /decimals/, 'the quote decimals are required')
@@ -110,15 +110,19 @@ test('stock amounts read like SOL amounts: two places from one up, about four si
 
 test('a stock row shows USD at the stock\'s price, else the stock as wallets show it, and nothing without units', () => {
   const stock = { assetId: 'meta-xstock', symbol: 'METAx', decimals: 8, price: 0.04, volume24h: '140000000', uiMultiplier: MULTIPLIER, usdPrice: 712.5 }
-  const usd = stockRowDisplay(stock)
+  const supply = { baseUnits: '1000000000000000', decimals: 6 }
+  const usd = stockRowDisplay(stock, supply)
   assert.equal(usd.cap, '$28.5b'); assert.match(usd.capTitle, /40\.1m METAx.*USD estimate at the current METAx price/)
   // Volume in the stock, as SOL rows show SOL; its USD estimate (1.4 × $712.5) in the title.
   assert.equal(usd.volume, '1.4 METAx'); assert.equal(usd.volumeTitle, '1.4 METAx traded in 24 hours (≈ $997 at the current METAx price)')
-  const noPrice = stockRowDisplay({ ...stock, usdPrice: null })
+  const noPrice = stockRowDisplay({ ...stock, usdPrice: null }, supply)
   assert.equal(noPrice.cap, '40.1m METAx'); assert.equal(noPrice.volume, '1.4 METAx')
-  const noUnits = stockRowDisplay({ ...stock, uiMultiplier: null, usdPrice: null })
+  const noUnits = stockRowDisplay({ ...stock, uiMultiplier: null, usdPrice: null }, supply)
   assert.deepEqual([noUnits.cap, noUnits.volume], [null, '—'])
-  assert.deepEqual([stockRowDisplay({ ...stock, price: null }).cap, stockRowDisplay({ unavailable: true }).volume], [null, '—'])
+  assert.deepEqual([stockRowDisplay({ ...stock, price: null }, supply).cap, stockRowDisplay({ unavailable: true }).volume], [null, '—'])
+  // The cap is last price × the mint's on-chain supply (mint_facts); none before the mint is read, never a fixed 1B.
+  const unread = stockRowDisplay(stock, null)
+  assert.deepEqual([unread.cap, unread.capTitle, unread.volume], [null, 'Supply not read yet', '1.4 METAx'])
 })
 
 test('chart accessors: SOL reads exactly the SOL fields; a stock pair waits for its own units and never reads SOL fields', () => {

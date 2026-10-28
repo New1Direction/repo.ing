@@ -17,9 +17,13 @@ export function formatUsdMarketCap(value) {
   return `$${compactFigure(value, value < 10 ? 2 : 0)}`
 }
 
-// Every market launches from the fixed DBC config: 1,000,000,000 tokens, immutable mint authority.
-// List rows use it instead of a per-market supply RPC read, so this is the fully diluted cap.
-export const MARKET_TOKEN_SUPPLY = 1_000_000_000
+// Whole tokens in a mint's on-chain supply ({ baseUnits, decimals } from mint_facts: market rows' and the chart's `supply`,
+// or the metrics route's supplyBaseUnits/supplyDecimals); null until the mint has been read. Every market cap uses it.
+export function supplyTokens(supply) {
+  const baseUnits = supply?.baseUnits ?? supply?.supplyBaseUnits, decimals = supply?.decimals ?? supply?.supplyDecimals
+  if (!/^\d+$/.test(String(baseUnits ?? '')) || !Number.isInteger(decimals) || decimals < 0) return null
+  return Number(baseUnits) / 10 ** decimals
+}
 
 export function formatSolMarketCap(value) {
   if (!Number.isFinite(value) || value < 0) return '—'
@@ -27,16 +31,18 @@ export function formatSolMarketCap(value) {
   return `${compactFigure(value, value < 10 ? 2 : 1, 'b')} SOL`
 }
 
-// USD when a SOL/USD price is available, otherwise the SOL cap. Null when the market has no recorded price.
-export function marketCapDisplay(priceSol, usdPerSol = null) {
-  if (typeof priceSol !== 'number' || !Number.isFinite(priceSol) || priceSol <= 0) return null
-  const capSol = priceSol * MARKET_TOKEN_SUPPLY
+// USD when a SOL/USD price is available, otherwise the SOL cap. Null when the market has no recorded price or its supply is
+// not read yet. supply: the row's mint supply (supplyTokens).
+export function marketCapDisplay(priceSol, supply, usdPerSol = null) {
+  const tokens = supplyTokens(supply)
+  if (typeof priceSol !== 'number' || !Number.isFinite(priceSol) || priceSol <= 0 || !tokens) return null
+  const capSol = priceSol * tokens
   const sol = formatSolMarketCap(capSol)
   if (typeof usdPerSol === 'number' && Number.isFinite(usdPerSol) && usdPerSol > 0) {
     const usd = formatUsdMarketCap(capSol * usdPerSol)
-    if (usd !== '—') return { value: usd, title: `Market cap ≈ ${sol} (last trade price × 1B supply). USD estimate at the current SOL price.` }
+    if (usd !== '—') return { value: usd, title: `Market cap ≈ ${sol} (last trade price × on-chain supply). USD estimate at the current SOL price.` }
   }
-  return { value: sol, title: 'Market cap: last trade price × 1B supply.' }
+  return { value: sol, title: 'Market cap: last trade price × on-chain supply.' }
 }
 
 // Graduated markets read 100%. Unknown or invalid progress returns null so no line is drawn.

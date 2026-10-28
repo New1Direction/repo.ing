@@ -1,6 +1,4 @@
-import BN from 'bn.js'
 import { evidenceHash } from './graduation-state.mjs'
-import { getPriceFromSqrtPrice, TokenDecimal } from '@meteora-ag/dynamic-bonding-curve-sdk'
 
 export const CHART_RANGES = {
   '1h': { seconds: 3600, interval: 60, label: '1 minute' },
@@ -19,12 +17,17 @@ export function chartWindow(range, firstTrade, now = Date.now(), lastTrade = now
     intervalLabel: spec.label ?? (interval < 3600 ? `${interval / 60} minutes` : `${Number((interval / 3600).toFixed(1))} hours`) }
 }
 
-export function chartSpotPrice(raw) {
-  if (!/^\d+$/.test(String(raw)) || BigInt(raw) <= 0n) throw Error('Invalid chart price evidence')
-  const price = Number(getPriceFromSqrtPrice(new BN(String(raw)), TokenDecimal.SIX, TokenDecimal.NINE).toString())
-  if (!Number.isFinite(price) || price <= 0) throw Error('Invalid chart price')
-  return price
+// A trade's stored price (drizzle/0089_trade_prices.sql price_sol: the SOL it actually paid per whole token, each side at its
+// mint's real decimals) as a number; null while it is not priced yet. Never derived from a pool's sqrt price or reserves.
+export function storedPrice(raw) {
+  if (raw === null || raw === undefined || !/^\d*\.?\d+(e-?\d+)?$/i.test(String(raw))) return null
+  const price = Number(raw)
+  return Number.isFinite(price) && price > 0 ? price : null
 }
+const chartPrice = raw => storedPrice(raw) ?? (() => { throw Error('Invalid chart price evidence') })()
+
+// SOL/USD at a moment (sol_usd_minutes): the newest minute at or before it, so USD uses the SOL price of the trade's own time.
+export const solUsdAt = at => `(select s.usd::text from sol_usd_minutes s where s.minute <= date_trunc('minute', ${at}) order by s.minute desc limit 1)`
 
 export function chartBar(row) {
   const time = Number(row.time)
@@ -34,8 +37,9 @@ export function chartBar(row) {
   if (!Number.isSafeInteger(count) || count < 1) throw Error('Invalid chart trade count')
   // Withhold open/close until finalized block evidence resolves boundary-slot order.
   if (row.ambiguous || row.missing_price) return { time, volumeLamports, count, orderingPending: true, priceEvidenceMissing: Boolean(row.missing_price) }
-  return { time, open: chartSpotPrice(row.open), high: chartSpotPrice(row.high), low: chartSpotPrice(row.low),
-    close: chartSpotPrice(row.close), volumeLamports, count }
+  // solUsd: SOL/USD at the minute of the close trade (null before any is recorded), so USD views use that candle's own price.
+  return { time, open: chartPrice(row.open), high: chartPrice(row.high), low: chartPrice(row.low),
+    close: chartPrice(row.close), solUsd: storedPrice(row.sol_usd), volumeLamports, count }
 }
 
 // Historical prices require immutable migration proof, independently of short-lived
@@ -50,12 +54,12 @@ export function chartMigration(market, row) {
   return { pool: row.pool, slot: String(row.slot), signature: row.signature }
 }
 const canonicalEvents = `with canonical_events as (
-  select signature,event_index,slot,traded_at,direction,next_sqrt_price,
+  select signature,event_index,slot,traded_at,direction,price_sol,
     (case when direction='buy' then input_base_units else output_base_units end)::numeric as quote_amount,
     (case when direction='buy' then output_base_units else input_base_units end)::numeric as base_amount,
     'DBC'::text as venue from trade_events where pool=$1
   union all
-  select signature,event_index,slot,traded_at,direction,next_sqrt_price,quote_amount::numeric,base_amount::numeric,'DAMM'::text as venue
+  select signature,event_index,slot,traded_at,direction,price_sol,quote_amount::numeric,base_amount::numeric,'DAMM'::text as venue
     from damm_trade_events where pool=$5 and github_repo_id=$6 and slot >= $7
 )`
 // A trade's place in its finalized block: the stored position (finalized_chart_positions), else the block's full
@@ -65,19 +69,28 @@ export const blockPosition = t => `coalesce(p.transaction_index,array_position(b
 export const blockJoins = t => `left join finalized_chart_positions p on p.slot=${t}.slot and p.signature=${t}.signature
   left join finalized_chart_blocks b on b.slot=${t}.slot and p.slot is null`
 
-// One row (slot, signature, event_index, next_sqrt_price): a market's newest trade in `table`, ordered as the chart orders
+// One row (slot, signature, event_index, traded_at, `price`): a market's newest trade in `table`, ordered as the chart orders
 // trades (newest slot, then place in its finalized block). Several transactions in one slot share event_index 0, so the slot
 // and event index alone pick an arbitrary one. Its price is null while that slot holds several transactions whose block order
 // is unproven, as the chart then withholds `latest` (app/lib/portfolio.mjs latestSlotTrade reads prices the same way).
 // scope(alias): the condition selecting the market's rows; it may name columns of the outer query (a lateral join).
-export const latestTradeSql = (table, scope) => `select l.slot, l.signature, l.event_index,
-    case when l.unordered then null else l.next_sqrt_price end as next_sqrt_price
-  from (select t.slot, t.signature, t.event_index, t.next_sqrt_price,
+// price: the price column (price_sol on trade_prices and the trade tables; a stock pair's ledger keeps its sqrt price).
+export const latestTradeSql = (table, scope, price = 'price_sol') => `select l.slot, l.signature, l.event_index, l.traded_at,
+    case when l.unordered then null else l.${price} end as ${price}
+  from (select t.slot, t.signature, t.event_index, t.traded_at, t.${price},
       bool_or(${blockPosition('t')} is null) over () and min(t.signature) over () <> max(t.signature) over () as unordered,
       row_number() over (order by ${blockPosition('t')} desc, t.signature desc, t.event_index desc) as n
     from ${table} t ${blockJoins('t')}
     where ${scope('t')} and t.slot = (select max(s.slot) from ${table} s where ${scope('s')})) l
   where l.n = 1`
+
+// A market's newest trade (price_sol, traded_at, signature, event_index) as rows show it: the newest curve and graduated
+// trades from trade_prices (graduated ones only on the verified migration pool from the migration slot on), each picked as
+// latestTradeSql picks it. A DAMM trade in the same slot as the last curve trade came after it: the curve takes no swaps once
+// complete, and its DAMM pool opens only at migration. mint: the SQL naming the market's mint (a lateral join's outer column).
+export const latestPriceJoins = mint => `left join lateral (${latestTradeSql('trade_prices', t => `${t}.mint = ${mint} and ${t}.venue = 'DBC'`)}) cp on true
+      left join lateral (${latestTradeSql('trade_prices', t => `${t}.mint = ${mint} and ${t}.venue = 'DAMM'`)}) dp on true`
+export const latestPriceColumn = column => `case when coalesce(dp.slot, -1) >= coalesce(cp.slot, -1) then dp.${column} else cp.${column} end`
 
 // Live trades (drizzle/0057_live_trade_events.sql, src/live-trades.mjs): confirmed swaps the finalized ledgers do not hold
 // yet. Only the canonical curve pool's and the verified DAMM destination's, from the newest finalized slot on, at most
@@ -88,7 +101,7 @@ export async function readLiveTrades(db, market, migration, fromSlot) {
   if (!market.repoId) return []
   try {
     const { rows } = await db.query(`select l.signature, l.event_index as "eventIndex", l.slot::text, l.traded_at as "tradedAt",
-        l.direction, l.venue, l.next_sqrt_price::text as "nextSqrtPrice", l.quote_amount::text as "solLamports",
+        l.direction, l.venue, l.price_sol::text as "priceSol", ${solUsdAt('l.traded_at')} as "solUsd", l.quote_amount::text as "solLamports",
         l.base_amount::text as "tokenBaseUnits"
       from live_trade_events l
       where l.github_repo_id = $1 and l.pool = any($2::text[]) and l.slot >= $3::bigint
@@ -105,14 +118,16 @@ export async function readLiveTrades(db, market, migration, fromSlot) {
 // bucket: a bucket the finalized history already has keeps its open, and one withholding prices for unproven order keeps
 // withholding them. The newest becomes the latest price. Live trades are marked pending, their candles live, and the source
 // says it includes confirmed trades. Same-slot live trades keep the order they were received in until finalized order
-// replaces them. A swap the finalized trade list already holds (it finalized between this read's queries) is left out.
+// replaces them. A swap the finalized trade list already holds (it finalized between this read's queries) is left out, and so
+// is one not priced yet (its price_sol null): it is never guessed.
 export function mergeLiveTrades(chart, rows, now = Date.now()) {
   const finalized = new Set(chart.trades.map(trade => `${trade.signature}:${trade.eventIndex}`))
   const live = rows.flatMap(row => {
-    if (finalized.has(`${row.signature}:${row.eventIndex}`)) return []
+    const priceSol = storedPrice(row.priceSol)
+    if (finalized.has(`${row.signature}:${row.eventIndex}`) || priceSol === null) return []
     try {
       return [{ signature: row.signature, eventIndex: row.eventIndex, direction: row.direction, venue: row.venue,
-        tradedAt: new Date(row.tradedAt).toISOString(), priceSol: chartSpotPrice(row.nextSqrtPrice), solLamports: String(row.solLamports),
+        tradedAt: new Date(row.tradedAt).toISOString(), priceSol, solUsd: storedPrice(row.solUsd), solLamports: String(BigInt(row.solLamports)),
         tokenBaseUnits: row.tokenBaseUnits ?? null, pending: true }]
     } catch { return [] } // An unreadable live row is left out; it never costs the finalized chart.
   })
@@ -124,7 +139,7 @@ export function mergeLiveTrades(chart, rows, now = Date.now()) {
     const time = Math.floor(at / 1000 / chart.interval) * chart.interval
     const previous = bars.get(time)
     const bar = previous ? { ...previous } : { time, open: trade.priceSol, high: trade.priceSol, low: trade.priceSol, volumeLamports: '0', count: 0 }
-    if (!bar.orderingPending) Object.assign(bar, { high: Math.max(bar.high, trade.priceSol), low: Math.min(bar.low, trade.priceSol), close: trade.priceSol })
+    if (!bar.orderingPending) Object.assign(bar, { high: Math.max(bar.high, trade.priceSol), low: Math.min(bar.low, trade.priceSol), close: trade.priceSol, solUsd: trade.solUsd })
     bars.set(time, { ...bar, volumeLamports: (BigInt(bar.volumeLamports) + BigInt(trade.solLamports)).toString(), count: bar.count + 1, live: true })
   }
   const dayAgo = now - 86_400_000
@@ -143,6 +158,15 @@ function liveUnavailable(error) {
   console.warn(JSON.stringify({ liveTradesUnavailable: { code: error?.code ?? String(error?.message ?? 'error').slice(0, 80) } }))
 }
 
+// A mint's on-chain supply (mint_facts, read from the mint by the prices job): { baseUnits, decimals }, null until it is read.
+// Every market cap uses it (never a fixed 1B supply).
+export const mintSupply = row => row && /^\d+$/.test(String(row.supply ?? '')) && Number.isInteger(Number(row.decimals))
+  ? { baseUnits: String(row.supply), decimals: Number(row.decimals) } : null
+export async function readMintSupply(db, mint) {
+  if (!mint) return null
+  return mintSupply((await db.query('select supply::text, decimals from mint_facts where mint=$1', [mint])).rows[0])
+}
+
 const earliest = (...values) => values.filter(value => value != null).sort((a, b) => new Date(a) - new Date(b))[0] ?? null
 const newest = (...values) => values.filter(value => value != null).sort((a, b) => new Date(b) - new Date(a))[0] ?? null
 
@@ -158,7 +182,7 @@ export async function readMarketChart(db, market, range = 'all', now = Date.now(
   if (live) try { liveRows = await readLiveTrades(db, market, migration, summary.last_slot) } catch (error) { liveUnavailable(error) }
   const window = liveRows.length ? chartWindow(range, earliest(summary.first, liveRows[0].tradedAt), now, newest(summary.last, liveRows.at(-1).tradedAt))
     : chartWindow(range, summary.first, now, summary.last)
-  const [{ rows }, { rows: recent }] = await Promise.all([
+  const [{ rows }, { rows: recent }, supply] = await Promise.all([
     db.query(`${canonicalEvents}, events as (
       select t.*, ${blockPosition('t')} as transaction_index,
         floor(extract(epoch from traded_at)/$4)::bigint*$4 as bucket
@@ -166,10 +190,11 @@ export async function readMarketChart(db, market, range = 'all', now = Date.now(
       where traded_at >= $2 and traded_at <= $3
     ), bars as (
       select bucket as time, min(slot) as first_slot, max(slot) as last_slot,
-        (array_agg(next_sqrt_price order by slot,transaction_index,signature,event_index))[1] as open,
-        (array_agg(next_sqrt_price order by slot desc,transaction_index desc,signature desc,event_index desc))[1] as close,
-        max(next_sqrt_price::numeric)::text as high, min(next_sqrt_price::numeric)::text as low,
-        sum(quote_amount)::text as volume, bool_or(next_sqrt_price is null) as missing_price,
+        (array_agg(price_sol::text order by slot,transaction_index,signature,event_index))[1] as open,
+        (array_agg(price_sol::text order by slot desc,transaction_index desc,signature desc,event_index desc))[1] as close,
+        (array_agg(traded_at order by slot desc,transaction_index desc,signature desc,event_index desc))[1] as close_at,
+        max(price_sol)::text as high, min(price_sol)::text as low,
+        sum(quote_amount)::text as volume, bool_or(price_sol is null) as missing_price,
         count(*)::text as count
       from events group by bucket
     ), unordered_slots as materialized (
@@ -178,14 +203,15 @@ export async function readMarketChart(db, market, range = 'all', now = Date.now(
       select bucket, slot from events group by bucket, slot
       having count(distinct signature)>1 and bool_or(transaction_index is null)
     ) select bars.*, exists(select 1 from unordered_slots u where u.bucket=bars.time
-      and u.slot in (bars.first_slot,bars.last_slot)) as ambiguous
+      and u.slot in (bars.first_slot,bars.last_slot)) as ambiguous, ${solUsdAt('bars.close_at')} as sol_usd
       from bars order by time`, params(window.start, window.end, window.interval)),
     db.query(`${canonicalEvents} select t.signature,t.event_index as "eventIndex",t.slot::text,direction,traded_at as "tradedAt",venue,
       ${blockPosition('t')} as "transactionIndex",
-      next_sqrt_price as "nextSqrtPrice",quote_amount::text as "solLamports",base_amount::text as "tokenBaseUnits"
+      price_sol::text as "priceSol",${solUsdAt('t.traded_at')} as "solUsd",quote_amount::text as "solLamports",base_amount::text as "tokenBaseUnits"
       from canonical_events t ${blockJoins('t')}
       where traded_at <= $2 and $3::text is null and $4::text is null
       order by t.slot desc,"transactionIndex" desc,t.signature desc,t.event_index desc limit 120`, params(window.end, null, null)),
+    readMintSupply(db, market.mint),
   ])
   const latestSlot = recent[0]?.slot
   const latestTrades = recent.filter(t => t.slot === latestSlot)
@@ -193,10 +219,10 @@ export async function readMarketChart(db, market, range = 'all', now = Date.now(
     (new Set(latestTrades.map(t => t.signature)).size > 1 || (recent.length === 120 && latestTrades.length === 120))
   const trades = recent.reverse().map(row => ({ signature: row.signature, eventIndex: row.eventIndex,
     direction: row.direction, venue: row.venue, tradedAt: row.tradedAt.toISOString(),
-    priceSol: row.nextSqrtPrice ? chartSpotPrice(row.nextSqrtPrice) : null,
+    priceSol: storedPrice(row.priceSol), solUsd: storedPrice(row.solUsd),
     solLamports: row.solLamports ?? null, tokenBaseUnits: row.tokenBaseUnits ?? null }))
   const chart = { ...window, candles: rows.map(chartBar), trades, volume24hLamports: summary.volume,
-    totalTrades: Number(summary.count), latest: latestAmbiguous || !trades.at(-1)?.priceSol ? null : trades.at(-1),
+    totalTrades: Number(summary.count), supply, latest: latestAmbiguous || !trades.at(-1)?.priceSol ? null : trades.at(-1),
     latestOrderingPending: latestAmbiguous, fetchedAt: new Date(now).toISOString(),
     source: migration ? 'finalized-dbc-and-damm-swaps' : 'finalized-dbc-swaps',
     graduation: migration ? { ...migration, indexedTrades: summary.damm_count } : null }

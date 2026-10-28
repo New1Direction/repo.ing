@@ -14,13 +14,15 @@ test('home tabs match the client ordering, top 5 only, with only rendered fields
     assert.deepEqual(tabs[tab].map(m => m.mint), orderMarkets(markets, tab).slice(0, 5).map(m => m.mint))
   }
   assert.notDeepEqual(tabs.Trending.map(m => m.mint), tabs.New.map(m => m.mint))
-  assert.deepEqual(Object.keys(tabs.New[0]).sort(), ['claimed', 'description', 'earned', 'fullName', 'mint', 'remaining', 'repoId', 'stars', 'symbol', 'tokenName', 'volume24hLamports', 'wasVerified', 'priceSol', 'bondingPercent', 'graduated', 'pulse', 'newRepo', 'officialLaunch'].sort())
+  assert.deepEqual(Object.keys(tabs.New[0]).sort(), ['claimed', 'description', 'earned', 'fullName', 'mint', 'remaining', 'repoId', 'stars', 'symbol', 'tokenName', 'volume24hLamports', 'wasVerified', 'priceSol', 'supply', 'bondingPercent', 'graduated', 'pulse', 'newRepo', 'officialLaunch'].sort())
   assert.deepEqual(homeMarketTabs([]), { Trending: [], 'Market cap': [], New: [] })
 })
 
 test('the Market cap tab ranks by last trade price × supply in USD, SOL rows and stock pairs together; no trade goes last', () => {
   const at = new Date('2026-10-01T00:00:00Z')
-  const row = (mint, extra) => ({ repoId: mint, mint, fullName: `o/${mint}`, symbol: mint, indexedAt: at, volume24hLamports: '0', ...extra })
+  // Every mint's on-chain supply (mint_facts) is 1B tokens here; a cap is never ranked without one.
+  const row = (mint, extra) => ({ repoId: mint, mint, fullName: `o/${mint}`, symbol: mint, indexedAt: at, volume24hLamports: '0',
+    supply: { baseUnits: '1000000000000000', decimals: 6 }, ...extra })
   // busy has more volume, valuable the higher price: Trending and Market cap disagree.
   const busy = row('busy', { priceSol: 0.0000000348, volume24hLamports: '63080000000' })
   const valuable = row('valuable', { priceSol: 0.0000000398, volume24hLamports: '14070000000' })
@@ -37,12 +39,14 @@ test('the Market cap tab ranks by last trade price × supply in USD, SOL rows an
   const tabs = homeMarketTabs(markets, { usdPerSol: 120 })
   assert.deepEqual(tabs['Market cap'].map(m => m.mint), ['hidden', 'stock', 'valuable', 'busy'],
     'the home tab lists traded markets only, a new repo under its mark in its real place')
+  assert.deepEqual(homeMarketTabs([busy, { ...valuable, supply: null }], { usdPerSol: 120 })['Market cap'].map(m => m.mint), ['busy'],
+    'a mint whose supply is not read yet has no cap to rank')
 })
 
 test('home tabs show a new repository under its promotion mark in its real place; Explore still puts it last', () => {
   const at = new Date('2026-10-06T00:00:00Z')
   const row = (mint, volume, price, extra = {}) => ({ repoId: mint, mint, fullName: `o/${mint}`, symbol: mint, indexedAt: at,
-    volume24hLamports: String(volume), priceSol: price, ...extra })
+    volume24hLamports: String(volume), priceSol: price, supply: { baseUnits: '1000000000000000', decimals: 6 }, ...extra })
   const big = row('big', 60e9, 0.00000004), fresh = row('fresh', 14e9, 0.000000035, { promoted: false, newRepo: true }), small = row('small', 1e9, 0.00000003)
   const tabs = homeMarketTabs([small, fresh, big], { usdPerSol: 120 })
   assert.deepEqual(tabs.Trending.map(m => m.mint), ['big', 'fresh', 'small'], 'by 24h volume, the new repo included')

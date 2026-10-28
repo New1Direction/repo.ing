@@ -6,7 +6,6 @@ import { Connection, Keypair } from '@solana/web3.js'
 import { NATIVE_MINT } from '@solana/spl-token'
 import { CpAmm, CP_AMM_PROGRAM_ID, getPriceFromSqrtPrice } from '@meteora-ag/cp-amm-sdk'
 import { dammSwapEvents } from '../src/damm-trades.mjs'
-import { chartSpotPrice } from '../src/market-chart.mjs'
 const program=new CpAmm(new Connection('http://127.0.0.1:8909'))._program
 const mint=Keypair.generate().publicKey,pool=Keypair.generate().publicKey
 function transaction(patch={},accounts=[1,2,1,1,1,1,3,4],nextSqrtPrice=new BN(1).shln(64)){
@@ -20,7 +19,8 @@ function transaction(patch={},accounts=[1,2,1,1,1,1,3,4],nextSqrtPrice=new BN(1)
 test('installed DAMM SDK event decoding preserves SOL volume, direction and Q64 price',()=>{
  const events=dammSwapEvents(transaction(),{mint:mint.toBase58()},pool.toBase58(),program.coder)
  assert.equal(events.length,1);assert.equal(events[0].nextSqrtPrice,(1n<<64n).toString());assert.equal(events[0].quoteAmount,'100')
- assert.equal(chartSpotPrice(events[0].nextSqrtPrice),getPriceFromSqrtPrice(new BN(events[0].nextSqrtPrice),6,9).toNumber())
+ // The chart prices a swap by what it paid (price_sol = quote / base, set on insert), so both amounts are kept exactly.
+ assert.equal(events[0].baseAmount,'42');assert.equal(getPriceFromSqrtPrice(new BN(events[0].nextSqrtPrice),6,9).toNumber(),0.001)
  const sell=dammSwapEvents(transaction({tradeDirection:0}),{mint:mint.toBase58()},pool.toBase58(),program.coder)[0]
  assert.equal(sell.direction,'sell');assert.equal(sell.quoteAmount,'42')
 })

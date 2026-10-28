@@ -32,7 +32,7 @@ const row = (repoId, mint, stamp) => ({ repoId, mint, pool: `Pool${repoId}`, tok
   allocationVersion: null, discoveryVersion: null, launcherWallet: LAUNCHER, verificationBonusLamports: null, quoteAssetId: stamp ? 'meta-xstock' : null,
   quoteMint: stamp ? METAX : null, owner: 'facebook', name: 'docusaurus', fullName: 'facebook/docusaurus', description: 'Easy to maintain open source documentation websites.',
   avatarUrl: null, source: 'github', stars: 60000, forks: 9000, updatedAt: null, githubCreatedAt: null, beneficiaryWallet: null, beneficiaryBoundAt: null,
-  beneficiaryMethod: null, earned: '0', claimed: '0', volume24hLamports: '0', wasVerified: false, lastSqrtPrice: null, graduationStatus: null, observation: null,
+  beneficiaryMethod: null, earned: '0', claimed: '0', volume24hLamports: '0', wasVerified: false, lastPriceSol: null, supplyBaseUnits: null, supplyDecimals: null, graduationStatus: null, observation: null,
   platformCollected: '0',
   graduationError: null, migrationEvidenceHash: null })
 const MARKETS = [row(STOCK_ID, 'MintStockDocs', true), row(SOL_ID, 'MintSolHello', false)]

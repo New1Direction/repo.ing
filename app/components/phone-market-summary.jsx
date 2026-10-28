@@ -12,7 +12,8 @@ const SPARK_WIDTH = 96, SPARK_HEIGHT = 34
 // first, then the trades and metrics the price chart below already loaded. A stock pair (quote: marketQuoteView, stock: the
 // row's stock figures) reads the same snapshot in its stock (stockMarketSummary). usdPerSol: the server's SOL/USD price, so the
 // server-rendered summary shows USD as the browser's will (the chart's metrics replace it once they load).
-export function PhoneMarketSummary({ mint, symbol, priceSol = null, volume24hLamports = null, usdPerSol = null, quote = null, stock = null }) {
+// supply: the market row's mint supply (mint_facts), until the chart's own arrives.
+export function PhoneMarketSummary({ mint, symbol, priceSol = null, volume24hLamports = null, usdPerSol = null, supply = null, quote = null, stock = null }) {
   const [snapshot, setSnapshot] = useState(null)
   useEffect(() => {
     setSnapshot(readMarketSnapshot(mint))
@@ -20,8 +21,8 @@ export function PhoneMarketSummary({ mint, symbol, priceSol = null, volume24hLam
   }, [mint])
   // The newest price and volume from any chart window, over the latest window long enough for 24h change and sparkline.
   const chart = snapshot?.chart ? { ...snapshot.chart, latest: snapshot.latest, ...(quote ? { volume24hQuote: snapshot.volume24hQuote } : { volume24hLamports: snapshot.volume24hLamports }) } : null
-  const summary = quote ? stockMarketSummary({ quote, stock, chart, metrics: snapshot?.metrics ?? null, now: Date.parse(chart?.fetchedAt) || 0 })
-    : phoneMarketSummary({ priceSol, volume24hLamports, usdPerSol, chart, metrics: snapshot?.metrics ?? null, now: Date.parse(chart?.fetchedAt) || 0 })
+  const summary = quote ? stockMarketSummary({ quote, stock, supply, chart, metrics: snapshot?.metrics ?? null, now: Date.parse(chart?.fetchedAt) || 0 })
+    : phoneMarketSummary({ priceSol, volume24hLamports, usdPerSol, supply, chart, metrics: snapshot?.metrics ?? null, now: Date.parse(chart?.fetchedAt) || 0 })
   const path = sparklinePath(summary.spark, SPARK_WIDTH, SPARK_HEIGHT)
   const change = percentChange(summary.change)
   const trend = change === null ? '' : change.sign >= 0 ? ' is-up' : ' is-down'

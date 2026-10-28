@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Minus, Plus, RotateCcw } from 'lucide-react'
-import { chartFollowRange, chartPriceLabel, chartSeries, chartScaleRange, chartUpdatePlan, chartInitialRange, chartZoomRange } from '../lib/chart-display.mjs'
+import { barScale, chartFollowRange, chartPriceLabel, chartSeries, chartScaleRange, chartUpdatePlan, chartInitialRange, chartZoomRange } from '../lib/chart-display.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
 import { PULSE_TAIL_POINTS, pulsePins, pulseTail } from '../lib/pulse-chart.mjs'
 import { ChartPulsePins } from './chart-pulse-pins'
@@ -14,6 +14,7 @@ const SOL_VOLUME_LABEL = bar => `${formatSolDisplay(bar.volumeLamports)} SOL`
 // unit: 'USD' (market cap) or the price's unit ('SOL', or a stock pair's symbol). volumeOf / volumeLabel: a bar's volume as
 // plotted and as read out; SOL's unless given (a stock pair's come from app/lib/chart-quote.mjs). valueLabel: what the line
 // shows, for screen readers, when the unit alone does not say it (a market cap in SOL).
+// multiplier: one number for every bar, or bar => number for each candle's own (app/lib/chart-display.mjs chartSeries).
 export default function MarketChartCanvas({ data, multiplier, unit, style, symbol, pulse = null, showPulse = true, volumeOf, volumeLabel = SOL_VOLUME_LABEL, valueLabel, children }) {
   const container = useRef(null), api = useRef(null), latest = useRef(null)
   const [ready, setReady] = useState(false), [failed, setFailed] = useState(false)
@@ -147,11 +148,11 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
     }
   }
   const current = byTime.get(hoverTime) ?? data.candles.findLast(bar => !bar.orderingPending)
-  const label = value => Number.isFinite(multiplier) && multiplier > 0 ? `${unit === 'USD' ? '$' : ''}${chartPriceLabel(value * multiplier)}` : '—'
+  const label = (bar, key) => { const scale = barScale(multiplier, bar); return scale === null ? '—' : `${unit === 'USD' ? '$' : ''}${chartPriceLabel(bar[key] * scale)}` }
   return <div className="market-chart-plot">
     <div className="chart-readout" aria-hidden="true">
       <time>{current ? `${new Date(current.time * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} UTC` : 'Trade history'}</time>
-      <div className="chart-readout-values">{['open', 'high', 'low', 'close'].map(key => <span key={key}>{key[0].toUpperCase()} <b>{current && !current.orderingPending ? label(current[key]) : '—'}</b></span>)}<span>Vol <b>{current ? volumeLabel(current) : '—'}</b></span></div>
+      <div className="chart-readout-values">{['open', 'high', 'low', 'close'].map(key => <span key={key}>{key[0].toUpperCase()} <b>{current && !current.orderingPending ? label(current, key) : '—'}</b></span>)}<span>Vol <b>{current ? volumeLabel(current) : '—'}</b></span></div>
     </div>
     <div className="market-chart-stage">
       <div ref={container} className="market-chart-canvas" tabIndex={0} role="region" aria-label={`${symbol} ${valueLabel ?? (unit === 'USD' ? 'estimated market cap' : `${unit} price`)} chart. Drag to pan, pinch to zoom, or use plus, minus and Home. Exact prices are in the chart data table below.`} onKeyDown={keyboard}/>

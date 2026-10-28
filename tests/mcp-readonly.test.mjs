@@ -163,7 +163,7 @@ function listedRow({ repoId, mint, fullName, symbol, stars, source = 'github', r
   const { status, observation, error_code, migration_evidence_hash } = graduationColumns({ mint, reserveSol })
   return { repoId, mint, pool: `pool-${mint}`, tokenName: symbol, symbol, indexedAt: new Date('2026-09-01T00:00:00Z'), owner: fullName.split('/')[0],
     name: fullName.split('/')[1], fullName, description: `About ${fullName}`, stars, forks: 0, githubCreatedAt: '2024-01-01T00:00:00Z', source,
-    earned: '1000000000', claimed: '0', volume24hLamports: volume, beneficiaryWallet: null, wasVerified: false, lastSqrtPrice: null,
+    earned: '1000000000', claimed: '0', volume24hLamports: volume, beneficiaryWallet: null, wasVerified: false, lastPriceSol: null, supplyBaseUnits: null, supplyDecimals: null,
     platformCollected: '0',
     graduationStatus: status, observation, graduationError: error_code, migrationEvidenceHash: migration_evidence_hash }
 }

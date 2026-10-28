@@ -4,21 +4,31 @@ import { Keypair } from '@solana/web3.js'
 import { marketTokenMetrics } from '../app/lib/market-metrics.mjs'
 import { solUsdPrice } from '../app/lib/sol-usd.mjs'
 
-test('concurrent market viewers share one holder/supply request, and failed requests can retry', async () => {
+test('concurrent market viewers share one holder request, supply is the mint_facts row, and failed requests can retry', async () => {
+  // Arrange
   const mint = Keypair.generate().publicKey.toBase58(), pool = Keypair.generate().publicKey.toBase58()
-  let supplies = 0, holders = 0, fail = true
+  let holders = 0, fail = true
+  const supplyReads = []
+  const db = { query: async (sql, params) => { supplyReads.push(params); return { rows: /from mint_facts/.test(sql) ? [{ supply: '999850848836751', decimals: 6 }] : [] } } }
   const connection = {
-    async getTokenSupply() { supplies++; await new Promise(r => setTimeout(r, 10)); if (fail) throw Error('RPC unavailable'); return { value: { amount: '1000000000000000', decimals: 6 } } },
-    async getProgramAccounts() { holders++; return [] },
+    async getTokenSupply() { throw Error('supply must come from mint_facts, never a live read') },
+    async getProgramAccounts() { holders++; await new Promise(r => setTimeout(r, 10)); if (fail) throw Error('RPC unavailable'); return [] },
   }
-  const failed = await Promise.allSettled([marketTokenMetrics(connection, mint, pool), marketTokenMetrics(connection, mint, pool)])
-  assert.ok(failed.every(r => r.status === 'rejected'))
-  assert.equal(supplies, 1); assert.equal(holders, 1)
+  // Act
+  const failed = await Promise.allSettled([marketTokenMetrics(connection, mint, pool, Date.now(), { db }), marketTokenMetrics(connection, mint, pool, Date.now(), { db })])
   fail = false
-  const [a, b] = await Promise.all([marketTokenMetrics(connection, mint, pool), marketTokenMetrics(connection, mint, pool)])
-  assert.deepEqual(a, b); assert.equal(a.holders, 0); assert.equal(supplies, 2)
-  await marketTokenMetrics(connection, mint, pool)
-  assert.equal(supplies, 2)
+  const [a, b] = await Promise.all([marketTokenMetrics(connection, mint, pool, Date.now(), { db }), marketTokenMetrics(connection, mint, pool, Date.now(), { db })])
+  await marketTokenMetrics(connection, mint, pool, Date.now(), { db })
+  // Assert
+  assert.ok(failed.every(r => r.status === 'rejected'))
+  assert.deepEqual(a, { supplyBaseUnits: '999850848836751', supplyDecimals: 6, holders: 0 })
+  assert.deepEqual(a, b)
+  assert.equal(holders, 2, 'one shared holder scan per failure and per success, then cached')
+  assert.deepEqual(supplyReads.at(-1), [mint])
+  await assert.rejects(marketTokenMetrics(connection, Keypair.generate().publicKey.toBase58(), pool), /database/)
+  const unread = { query: async () => ({ rows: [] }) }
+  assert.deepEqual(await marketTokenMetrics(connection, mint, pool, Date.now(), { db: unread }), { supplyBaseUnits: null, supplyDecimals: null, holders: 0 },
+    'a mint not read yet has no supply')
 })
 
 test('concurrent FX reads share one request and never return an expired price after failure', async () => {

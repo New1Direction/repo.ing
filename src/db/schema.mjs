@@ -240,6 +240,8 @@ export const dammTradeEvents = pgTable('damm_trade_events', {
   evidence: text('evidence').notNull(),
   trader: varchar('trader',{length:44}),
   baseAmount: bigint('base_amount',{mode:'bigint'}),
+  // Migration 0089: the price actually paid (trade_price over mint_facts), set on insert or by the prices job.
+  priceSol: numeric('price_sol'),
 },t=>[uniqueIndex('damm_trade_chain_event_unique').on(t.signature,t.eventIndex),
   index('damm_trade_trader_repo').on(t.trader,t.githubRepoId).where(sql`${t.trader} is not null`),
   // INCLUDE (quote_amount) in migration 0038: per-repository volume sums read the index only.
@@ -257,6 +259,7 @@ export const liveTradeEvents = pgTable('live_trade_events', {
   quoteAmount: numeric('quote_amount', { precision: 20, scale: 0 }).notNull(), baseAmount: numeric('base_amount', { precision: 20, scale: 0 }),
   nextSqrtPrice: numeric('next_sqrt_price', { precision: 39, scale: 0 }).notNull(),
   receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
+  priceSol: numeric('price_sol'),
 }, t => [primaryKey({ name: 'live_trade_events_pkey', columns: [t.signature, t.eventIndex] }),
   index('live_trade_events_repo_slot').on(t.githubRepoId, t.slot), index('live_trade_events_received').on(t.receivedAt),
   check('live_trade_events_venue_check', sql`${t.venue} in ('DBC', 'DAMM')`),
@@ -612,6 +615,8 @@ export const tradeEvents = pgTable('trade_events', {
   outputBaseUnits: varchar('output_base_units', { length: 20 }).notNull(),
   nextSqrtPrice: varchar('next_sqrt_price', { length: 40 }).notNull(),
   trader: varchar('trader', { length: 44 }),
+  // Migration 0089: the price actually paid (trade_price over mint_facts), set on insert or by the prices job.
+  priceSol: numeric('price_sol'),
 }, (table) => [
   uniqueIndex('trade_events_chain_event_unique').on(table.signature, table.eventIndex),
   index('trade_events_trader_pool').on(table.trader, table.pool).where(sql`${table.trader} is not null`),
@@ -1748,3 +1753,35 @@ export const custodyFeePayouts = pgTable('custody_fee_payouts', {
   index('custody_fee_payouts_collection').on(t.collectionSignature),
   check('custody_fee_payouts_amount_check', sql`${t.amount} > 0`),
   check('custody_fee_payouts_slot_check', sql`${t.slot} > 0`)])
+
+// Migration 0089: each mint's on-chain decimals and supply (the prices job reads them), and SOL/USD per UTC minute, so
+// prices use real decimals, market cap one on-chain supply, and USD the SOL price at the trade's or candle's time.
+export const mintFacts = pgTable('mint_facts', {
+  mint: varchar('mint', { length: 44 }).primaryKey(),
+  decimals: smallint('decimals').notNull(),
+  supply: numeric('supply', { precision: 39, scale: 0 }).notNull(),
+  slot: bigint('slot', { mode: 'bigint' }).notNull(),
+  readAt: timestamp('read_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [check('mint_facts_decimals_check', sql`${t.decimals} between 0 and 18`), check('mint_facts_supply_check', sql`${t.supply} >= 0`),
+  check('mint_facts_slot_check', sql`${t.slot} > 0`)])
+export const solUsdMinutes = pgTable('sol_usd_minutes', {
+  minute: timestamp('minute', { withTimezone: true }).primaryKey(),
+  usd: numeric('usd').notNull(),
+  source: text('source').notNull(),
+}, t => [check('sol_usd_minutes_minute_check', sql`date_trunc('minute', ${t.minute}) = ${t.minute}`), check('sol_usd_minutes_usd_check', sql`${t.usd} > 0`)])
+
+// Migration 0090: custody collections the owner booked as paid to themself (one row per collection item; the transfer
+// signature repeats across a multi-repository sweep). Counted as paid out of custody and, for creators, as settled.
+export const custodyOwnerTransfers = pgTable('custody_owner_transfers', {
+  collectionSignature: varchar('collection_signature', { length: 88 }).notNull(),
+  collectionItemIndex: integer('collection_item_index').notNull(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
+  role: text('role').notNull(),
+  amount: numeric('amount', { precision: 20, scale: 0 }).notNull(),
+  transferSignature: varchar('transfer_signature', { length: 88 }).notNull(),
+  recipient: varchar('recipient', { length: 44 }).notNull(),
+  decision: text('decision').notNull(),
+  recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [primaryKey({ name: 'custody_owner_transfers_pkey', columns: [t.collectionSignature, t.collectionItemIndex] }),
+  index('custody_owner_transfers_repo').on(t.githubRepoId, t.role),
+  check('custody_owner_transfers_role_check', sql`${t.role} in ('creator', 'partner')`), check('custody_owner_transfers_amount_check', sql`${t.amount} > 0`)])

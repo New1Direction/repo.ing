@@ -27,7 +27,7 @@ const short = text => assert.ok(text.includes(HF_DISCLAIMER_SHORT) || decoded(te
 const ROW = { repoId: MODEL_ID, mint: MINT, pool: 'PoolModelGpt2', tokenName: 'gpt2', symbol: 'GPT2', indexedAt: new Date('2026-10-01T11:00:00Z'), allocationVersion: null,
   discoveryVersion: null, launcherWallet: 'LauncherWallet', verificationBonusLamports: null, owner: 'openai-community', name: 'gpt2', fullName: 'openai-community/gpt2',
   description: null, avatarUrl: null, source: 'huggingface', stars: 4194, forks: 0, updatedAt: null, githubCreatedAt: null, beneficiaryWallet: null,
-  beneficiaryBoundAt: null, beneficiaryMethod: null, earned: '0', claimed: '0', volume24hLamports: '0', wasVerified: false, lastSqrtPrice: null,
+  beneficiaryBoundAt: null, beneficiaryMethod: null, earned: '0', claimed: '0', volume24hLamports: '0', wasVerified: false, lastPriceSol: null, supplyBaseUnits: null, supplyDecimals: null,
   platformCollected: '0',
   graduationStatus: null, observation: null, graduationError: null, migrationEvidenceHash: null }
 async function withModelDatabase(work) {

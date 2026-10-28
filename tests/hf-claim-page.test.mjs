@@ -32,7 +32,7 @@ const row = (repoId, source, owner, name) => ({ repoId, mint: Keypair.generate()
   verificationBonusLamports: null, owner, name, fullName: `${owner}/${name}`, description: null, avatarUrl: null, source, stars: 0, forks: 0, updatedAt: null,
   githubCreatedAt: null, beneficiaryWallet: null, beneficiaryBoundAt: null, beneficiaryMethod: null, earned: '0', claimed: '0', volume24hLamports: '0',
   platformCollected: '0',
-  wasVerified: false, lastSqrtPrice: null, graduationStatus: null, observation: null, graduationError: null, migrationEvidenceHash: null })
+  wasVerified: false, lastPriceSol: null, supplyBaseUnits: null, supplyDecimals: null, graduationStatus: null, observation: null, graduationError: null, migrationEvidenceHash: null })
 const MARKETS = { [MODEL_ID]: row(MODEL_ID, 'huggingface', 'openai-community', 'gpt2'), [GITHUB_ID]: row(GITHUB_ID, 'github', 'octo', 'repo') }
 
 const saved = { ...process.env }

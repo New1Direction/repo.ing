@@ -1,4 +1,4 @@
-import { chain, marketByMint } from '../../../../lib/server.mjs'
+import { chain, database, marketByMint } from '../../../../lib/server.mjs'
 import { solUsdPrice } from '../../../../lib/sol-usd.mjs'
 import { marketTokenMetrics } from '../../../../lib/market-metrics.mjs'
 import { MARKET_METRICS_CACHE, NO_STORE } from '../../../../lib/cache-headers.mjs'
@@ -26,7 +26,7 @@ export const GET = withServerTiming(async (_request, { params }) => {
   const stock = isStockMarket(market)
   const [solUsd, metrics, quote] = await Promise.all([
     solUsdPrice(), timed('tokenMetrics', () => marketTokenMetrics(chain(), market.mint, market.pool, undefined,
-      { token2022: Boolean(market.transferHookProgram) })).catch(() => null),
+      { token2022: Boolean(market.transferHookProgram), db: database() })).catch(() => null),
     stock ? unitsOf(market) : null,
   ])
   // A response without chain metrics (RPC unavailable), or a stock pair's without its units, is never shared from the

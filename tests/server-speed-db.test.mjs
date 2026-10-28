@@ -5,7 +5,7 @@ import bs58 from 'bs58'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
-import { readMarketChart } from '../src/market-chart.mjs'
+import { latestPriceColumn, latestPriceJoins, readMarketChart } from '../src/market-chart.mjs'
 import { createChartOrdering, recordChartBlock } from '../src/chart-ordering.mjs'
 import { trendCandidate, trendOperatorView } from '../src/trend-intake.mjs'
 import { createVitalsStore } from '../src/web-vitals-store.mjs'
@@ -101,6 +101,9 @@ test('real PostgreSQL: 0038 indexes, block positions, batched trend view and web
         ['fee_events_pool_signature', `select f.signature from fee_events f where f.pool = '${m.pool}' group by f.signature order by f.signature limit 100`],
         ['graduation_alerts_open_repo_kind', `select id, detail from graduation_alerts where kind = 'TRADE_QUARANTINED' and github_repo_id = ${m.repoId} and acknowledged_at is null order by id limit 100`],
         ['graduation_alerts_kind', `select id from graduation_alerts where kind in ('RESERVE_MOVED', 'OPS_WALLET_LOW') order by id limit 5`],
+        // A row's last price (app/lib/server.mjs, the watchlist): the newest trade in trade_prices, per market, by index.
+        ['trade_events_pool_slot', `select ${latestPriceColumn('price_sol')} from markets m ${latestPriceJoins('m.mint')} where m.github_repo_id = ${m.repoId}`],
+        ['damm_trade_events_repo_slot', `select ${latestPriceColumn('price_sol')} from markets m ${latestPriceJoins('m.mint')} where m.github_repo_id = ${m.repoId}`],
       ]
       for (const [index, sql] of checks) {
         const nodes = await planNodes(pool, sql)
@@ -112,6 +115,9 @@ test('real PostgreSQL: 0038 indexes, block positions, batched trend view and web
     await t.test('block positions match the full signature lists and the chart reads them instead', async () => {
       await pool.query('truncate finalized_chart_positions, finalized_chart_blocks, trade_events, markets, repositories restart identity cascade')
       const [market] = await seedMarkets(pool, 1)
+      // Prices come from the mints' facts (drizzle/0089_trade_prices.sql): without them every bucket withholds its prices.
+      await pool.query(`insert into mint_facts(mint,decimals,supply,slot) values('So11111111111111111111111111111111111111112',9,0,1),($1,6,1000000000000000,1)
+        on conflict(mint) do nothing`, [market.mint])
       const at = Date.now() - 60_000
       const insertDbc = (n, slot, eventIndex = 0, price = n) => pool.query(`insert into trade_events(pool,signature,event_index,slot,traded_at,direction,input_base_units,output_base_units,next_sqrt_price)
         values($1,$2,$3,$4,$5,'buy','1000','2000',$6)`, [market.pool, sig(n), eventIndex, slot, new Date(at + slot), sqrt(price)])

@@ -33,7 +33,7 @@ const NOW = Date.parse('2026-10-01T12:00:00Z')
 const GITHUB = [
   { repoId: '1384142609', source: 'github', mint: 'MintGithubVerified', pool: 'PoolGithubVerified', fullName: 'New1Direction/Waternot', owner: 'New1Direction', name: 'Waternot',
     description: 'Water quality on a budget', symbol: 'WTR', tokenName: 'Waternot', wasVerified: true, beneficiaryWallet: 'BeneficiaryWallet111', volume24hLamports: '2500000000',
-    earned: '125000000', claimed: '25000000', remaining: '100000000', stars: 1200, forks: 31, priceSol: 0.00000042, bondingPercent: 12.5, graduated: false,
+    earned: '125000000', claimed: '25000000', remaining: '100000000', stars: 1200, forks: 31, supply: { baseUnits: '1000000000000000', decimals: 6 }, priceSol: 0.00000042, bondingPercent: 12.5, graduated: false,
     indexedAt: new Date(NOW - 3_600_000).toISOString(), promoted: true, newRepo: false, officialLaunch: false, avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
     language: 'Rust', updatedAt: '2026-09-30T00:00:00Z', githubCreatedAt: '2025-01-01T00:00:00Z' },
   { repoId: '1296269', source: 'github', mint: 'MintGithubNew', pool: 'PoolGithubNew', fullName: 'octocat/Hello-World', owner: 'octocat', name: 'Hello-World', description: null,
@@ -42,7 +42,7 @@ const GITHUB = [
     pulse: { badge: { status: 'today', text: '3 commits today', title: '3 commits in the last 24 hours' } } },
   { repoId: '1388219884', source: 'github', mint: 'MintGithubOfficial', pool: 'PoolGithubOfficial', fullName: 'New1Direction/repo.ing', owner: 'New1Direction', name: 'repo.ing',
     description: 'The market layer for open source', symbol: 'REPOING', tokenName: 'repo.ing', wasVerified: true, volume24hLamports: '900000000', earned: '7',
-    claimed: '0', remaining: '7', stars: 40, forks: 2, priceSol: 0.000001, graduated: true, indexedAt: new Date(NOW - 86_400_000).toISOString(), promoted: true,
+    claimed: '0', remaining: '7', stars: 40, forks: 2, supply: { baseUnits: '1000000000000000', decimals: 6 }, priceSol: 0.000001, graduated: true, indexedAt: new Date(NOW - 86_400_000).toISOString(), promoted: true,
     newRepo: false, officialLaunch: true },
 ]
 const [verified, fresh, official] = GITHUB

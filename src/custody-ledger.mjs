@@ -12,9 +12,12 @@ export async function custodyBalance(db, repoId, { phase = null } = {}) {
   check([null, 'all', 'DAMM', 'DBC'].includes(phase), 'invalid balance phase')
   if (phase === null) check(!(await db.query("select 1 from custody_fee_collections where github_repo_id=$1 and phase='DBC' limit 1", [String(repoId)])).rows.length,
     'balance phase selection required for DBC collections')
+  // Owner-booked transfers (migration 0090) leave custody like payouts.
   const { rows } = await db.query(`select c.role,coalesce(sum(c.amount),0)::text as collected,
     coalesce(sum((select coalesce(sum(p.amount),0) from custody_fee_payouts p
-      where p.collection_signature=c.signature and p.collection_item_index=c.item_index)),0)::text as paid
+      where p.collection_signature=c.signature and p.collection_item_index=c.item_index)
+      + (select coalesce(sum(o.amount),0) from custody_owner_transfers o
+      where o.collection_signature=c.signature and o.collection_item_index=c.item_index)),0)::text as paid
     from custody_fee_collections c where c.github_repo_id=$1 and ($2='all' or c.phase=$2) group by c.role`, [String(repoId), phase ?? 'DAMM'])
   const totals = { creator: { collected: 0n, paid: 0n, held: 0n }, partner: { collected: 0n, paid: 0n, held: 0n } }
   for (const row of rows) {
@@ -32,7 +35,8 @@ export const holdsCustodyFunds = funds => !!funds && (funds.creator.held > 0n ||
 export async function verifyCustodySolvency(db, connection) {
   const { rows: [row] } = await db.query(`select
     (select coalesce(sum(amount),0) from custody_fee_collections) -
-    (select coalesce(sum(amount),0) from custody_fee_payouts) as held`)
+    (select coalesce(sum(amount),0) from custody_fee_payouts) -
+    (select coalesce(sum(amount),0) from custody_owner_transfers) as held`)
   const held = BigInt(row.held)
   check(held >= 0n, 'balance is overdrawn')
   if (held === 0n) return held

@@ -148,11 +148,12 @@ test('candles: open and close follow the swap counter; volume is the SOL traders
     [[1792356480, 1, '1000200'], [1792356540, 1, '980295']])
   // The window ends at the last trade, at most `bars` intervals long.
   assert.deepEqual((await store.candles(coin.pool, { seconds: 60, decimals: 6, bars: 1 })).map(b => b.time), [1792356540])
-  const summary = await store.summary(coin.pool, { now: Date.parse('2026-10-19T12:00:00Z') })
+  const summary = await store.summary(coin.pool, { now: Date.parse('2026-10-19T12:00:00Z'), decimals: 6 })
   assert.deepEqual({ ...summary, latest: { ...summary.latest, priceSol: undefined } }, { totalTrades: 2, volume24hLamports: '1980495',
     firstTradeAt: '2026-10-18T20:48:51.000Z', lastTradeAt: '2026-10-18T20:49:37.000Z',
     latest: { signature: CANARY_SELL, swapCount: '2', tradedAt: '2026-10-18T20:49:37.000Z', curveBase: '1125000000000000', curveQuote: '1000000001', priceSol: undefined } })
-  assert.equal((await store.summary(coin.pool, { now: Date.parse('2026-10-20T12:00:00Z') })).volume24hLamports, '0')
+  assert.equal((await store.summary(coin.pool, { now: Date.parse('2026-10-20T12:00:00Z'), decimals: 6 })).volume24hLamports, '0')
+  await assert.rejects(store.summary(coin.pool), /HOOK_COIN_DECIMALS_REQUIRED/, 'the coin\'s own decimals, never a default')
   assert.deepEqual(await store.candles('11111111111111111111111111111111', { seconds: 60, decimals: 6 }), [])
 }))
 

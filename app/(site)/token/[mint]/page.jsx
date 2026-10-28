@@ -145,7 +145,7 @@ export default async function Token({ params, searchParams }) {
     {!activity && <MarketFunnel key={mint} page="token"/>}
     {decision && <DeclinedBanner fullName={market.fullName} decision={decision}/>}
     <PhoneMarketSummary mint={market.mint} symbol={market.symbol} priceSol={market.priceSol} volume24hLamports={market.volume24hLamports}
-      usdPerSol={cachedSolUsdPrice()} {...(quote ? { quote, stock: market.stock ?? null } : {})}/>
+      usdPerSol={cachedSolUsdPrice()} supply={market.supply ?? null} {...(quote ? { quote, stock: market.stock ?? null } : {})}/>
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
     <EarlyAccessNote market={market}/>
     <header className="market-hero">

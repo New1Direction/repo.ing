@@ -3,10 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { holdingValueLamports, latestSlotTrade, portfolioSummary, sortHoldingsByValue, stockHoldingValue, withHoldingValues } from '../app/lib/portfolio.mjs'
 import { clearPriceCache, latestMarketPrices } from '../app/lib/portfolio-prices.mjs'
-import { chartSpotPrice } from '../src/market-chart.mjs'
 import { evidenceHash } from '../src/graduation-state.mjs'
-
-const sqrt = 1n << 64n
 
 test('holding value is balance times SOL-per-token price in lamports', () => {
   assert.equal(holdingValueLamports('1000000', 0.001), '1000000') // 1 token at 0.001 SOL
@@ -45,13 +42,13 @@ test('holdings sort by value descending with unpriced holdings last in original 
 
 test('latest price follows the chart ordering and withholds ambiguous same-slot trades', () => {
   assert.equal(latestSlotTrade([]), null)
-  const oneTx = [{ signature: 'x', eventIndex: 1, transactionIndex: null, nextSqrtPrice: 'a' }, { signature: 'x', eventIndex: 2, transactionIndex: null, nextSqrtPrice: 'b' }]
-  assert.equal(latestSlotTrade(oneTx).nextSqrtPrice, 'b')
-  const twoTx = [...oneTx, { signature: 'y', eventIndex: 0, transactionIndex: null, nextSqrtPrice: 'c' }]
+  const oneTx = [{ signature: 'x', eventIndex: 1, transactionIndex: null, priceSol: 'a' }, { signature: 'x', eventIndex: 2, transactionIndex: null, priceSol: 'b' }]
+  assert.equal(latestSlotTrade(oneTx).priceSol, 'b')
+  const twoTx = [...oneTx, { signature: 'y', eventIndex: 0, transactionIndex: null, priceSol: 'c' }]
   assert.equal(latestSlotTrade(twoTx), null)
   // Finalized block order wins over signature order.
-  const ordered = [{ signature: 'a', eventIndex: 0, transactionIndex: 2, nextSqrtPrice: 'late' }, { signature: 'z', eventIndex: 5, transactionIndex: 1, nextSqrtPrice: 'early' }]
-  assert.equal(latestSlotTrade(ordered).nextSqrtPrice, 'late')
+  const ordered = [{ signature: 'a', eventIndex: 0, transactionIndex: 2, priceSol: 'late' }, { signature: 'z', eventIndex: 5, transactionIndex: 1, priceSol: 'early' }]
+  assert.equal(latestSlotTrade(ordered).priceSol, 'late')
 })
 
 function stubDb({ graduations = [], trades = [] }) {
@@ -68,15 +65,15 @@ test('prices for curve and graduated markets load in two batched queries and are
   const db = stubDb({
     graduations: [{ github_repo_id: '2', pool: 'damm-b', slot: '44', signature: 'receipt', evidence: JSON.stringify({ migration }), evidence_hash: evidenceHash(migration) }],
     trades: [
-      { repoId: '1', signature: 's1', eventIndex: 0, transactionIndex: 0, nextSqrtPrice: sqrt.toString() },
-      { repoId: '2', signature: 's2', eventIndex: 0, transactionIndex: 3, nextSqrtPrice: (sqrt * 2n).toString() },
-      { repoId: '2', signature: 's3', eventIndex: 0, transactionIndex: 1, nextSqrtPrice: sqrt.toString() },
+      { repoId: '1', signature: 's1', eventIndex: 0, transactionIndex: 0, priceSol: '0.001' },
+      { repoId: '2', signature: 's2', eventIndex: 0, transactionIndex: 3, priceSol: '0.000000770513239952588184' },
+      { repoId: '2', signature: 's3', eventIndex: 0, transactionIndex: 1, priceSol: '0.000000772994682822333098' },
     ],
   })
   const markets = [{ repoId: '1', pool: 'curve-a', mint: 'mint-a' }, { repoId: '2', pool: 'curve-b', mint: 'mint-b' }, { repoId: '3', pool: 'curve-c', mint: 'mint-c' }]
   const prices = await latestMarketPrices(db, markets, 1000)
   assert.equal(prices.get('1'), 0.001)
-  assert.equal(prices.get('2'), chartSpotPrice((sqrt * 2n).toString()))
+  assert.equal(prices.get('2'), 0.000000770513239952588184, 'the price the later trade in the block paid')
   assert.equal(prices.get('3'), null) // no trades yet
   assert.equal(db.calls.length, 2)
   assert.deepEqual(db.calls[1].params, [['1', '2', '3'], ['curve-a', 'curve-b', 'curve-c'], [null, 'damm-b', null], [null, '44', null]])
@@ -91,7 +88,7 @@ test('a graduation record that fails its proof withholds that market price only'
   const migration = { curve: 'curve-b', mint: 'mint-b', pool: 'damm-b', slot: 44, signature: 'receipt' }
   const db = stubDb({
     graduations: [{ github_repo_id: '2', pool: 'damm-b', slot: '44', signature: 'receipt', evidence: JSON.stringify({ migration }), evidence_hash: 'tampered' }],
-    trades: [{ repoId: '1', signature: 's1', eventIndex: 0, transactionIndex: null, nextSqrtPrice: sqrt.toString() }],
+    trades: [{ repoId: '1', signature: 's1', eventIndex: 0, transactionIndex: null, priceSol: '0.001' }],
   })
   const prices = await latestMarketPrices(db, [{ repoId: '1', pool: 'curve-a', mint: 'mint-a' }, { repoId: '2', pool: 'curve-b', mint: 'mint-b' }], 0)
   assert.equal(prices.get('1'), 0.001)
@@ -128,7 +125,7 @@ test('a stock pair is valued in its stock, never in SOL; SOL rows are exactly as
 
 test('stock-paired markets get no SOL price and no SOL price query', async () => {
   clearPriceCache()
-  const db = stubDb({ trades: [{ repoId: '9', signature: 's9', eventIndex: 0, transactionIndex: null, nextSqrtPrice: sqrt.toString() }] })
+  const db = stubDb({ trades: [{ repoId: '9', signature: 's9', eventIndex: 0, transactionIndex: null, priceSol: '0.001' }] })
   const prices = await latestMarketPrices(db, [{ repoId: '9', pool: 'curve-s', mint: 'mint-s', quoteAssetId: 'meta-xstock', quoteMint: 'MintMetax' }], 0)
   assert.equal(prices.size, 0)
   assert.equal(db.calls.length, 0)
@@ -158,21 +155,20 @@ test('real PostgreSQL: wallet prices and P&L order use stored positions, so a cl
   const { latestMarketPrices, clearPriceCache } = await import('../app/lib/portfolio-prices.mjs')
   const { walletTrades } = await import('../app/lib/holding-pnl.mjs')
   const url = new URL(process.env.CHART_TEST_DATABASE_URL)
-  assert.equal(url.port, '55441', 'Use the dedicated chart test DB, never the production tunnel')
+  assert.ok(['55441', '55911'].includes(url.port), 'Use the dedicated chart test DB, never the production tunnel')
   const db = new pg.Client({ connectionString: url.href }); await db.connect()
   try {
     await db.query('begin')
     await db.query(`create temporary table trade_events(pool text, signature text, event_index integer, slot bigint, traded_at timestamptz, direction text,
-      input_base_units text, output_base_units text, next_sqrt_price text, trader text)`)
+      input_base_units text, output_base_units text, next_sqrt_price text, trader text, price_sol numeric)`)
     await db.query(`create temporary table damm_trade_events(github_repo_id bigint, pool text, signature text, event_index integer, slot bigint, traded_at timestamptz,
-      quote_amount bigint, direction text, next_sqrt_price text, base_amount bigint, trader text)`)
+      quote_amount bigint, direction text, next_sqrt_price text, base_amount bigint, trader text, price_sol numeric)`)
     await db.query('create temporary table graduation_events(github_repo_id bigint, pool text, signature text, slot bigint, evidence text, evidence_hash text)')
     await db.query('create temporary table finalized_chart_blocks(slot bigint primary key, blockhash text, previous_blockhash text, parent_slot bigint, signatures text[] not null)')
     await db.query('create temporary table finalized_chart_positions(slot bigint, signature text, transaction_index integer, primary key(slot, signature))')
-    const q64 = 1n << 64n
-    // Two transactions in one slot. Block order is B then A, the reverse of their signatures' alphabetical order.
-    await db.query(`insert into trade_events values ('curve-901','sig-A',0,50,now(),'buy','1000','10',$1,'W'), ('curve-901','sig-B',0,50,now(),'sell','5','900',$2,'W')`,
-      [(q64 * 2n).toString(), (q64 * 3n).toString()])
+    // Two transactions in one slot. Block order is B then A, the reverse of their signatures' alphabetical order. Their sqrt
+    // prices are deliberately swapped against what they paid: the wallet values holdings at price_sol only.
+    await db.query(`insert into trade_events values ('curve-901','sig-A',0,50,now(),'buy','1000','10','55340232221128654848','W',0.004), ('curve-901','sig-B',0,50,now(),'sell','5','900','36893488147419103232','W',0.009)`)
     await db.query(`insert into finalized_chart_blocks values (50,'h','p',49,$1)`, [['other', 'sig-B', 'sig-A']])
     await db.query(`insert into finalized_chart_positions values (50,'sig-B',2), (50,'sig-A',3)`)
     const market = { repoId: '901', pool: 'curve-901', mint: 'Mint901' }

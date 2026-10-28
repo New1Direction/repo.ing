@@ -76,7 +76,7 @@ export async function ModelTokenPage({ market, activity = false }) {
   ]
   return <><AppHeader/><main className="section-wrap market-page model-market"><JsonLd data={tokenJsonLd(market)}/>
     {decision && <ModelDeclinedBanner fullName={market.fullName} decision={decision}/>}
-    <PhoneMarketSummary mint={mint} symbol={market.symbol} priceSol={market.priceSol} volume24hLamports={market.volume24hLamports} usdPerSol={cachedSolUsdPrice()}/>
+    <PhoneMarketSummary mint={mint} symbol={market.symbol} priceSol={market.priceSol} volume24hLamports={market.volume24hLamports} usdPerSol={cachedSolUsdPrice()} supply={market.supply ?? null}/>
     <ModelDisclaimer className="is-banner"/>
     <header className="market-hero">
       <div className="market-hero-earnings"><Suspense fallback={<EarningsHeadlineFallback/>}><ModelEarningsHeadline market={market}/></Suspense></div>

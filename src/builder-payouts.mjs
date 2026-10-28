@@ -95,7 +95,8 @@ export async function owedLamports(db, repoId) {
   const { rows: [row] } = await db.query(`select
       (select coalesce(sum(amount_base_units), 0) from builder_fee_credits where github_repo_id = $1 and asset = $2)
     - (select coalesce(sum(amount_base_units), 0) from repo_claims where github_repo_id = $1 and status = 'settled')
-    - (select coalesce(sum(amount), 0) from builder_fee_collections where github_repo_id = $1 and status = 'settled') as owed`,
+    - (select coalesce(sum(amount), 0) from builder_fee_collections where github_repo_id = $1 and status = 'settled')
+    - (select coalesce(sum(amount), 0) from custody_owner_transfers where github_repo_id = $1 and role = 'creator') as owed`,
   [repoIdOf(repoId), SOL])
   return BigInt(row.owed)
 }

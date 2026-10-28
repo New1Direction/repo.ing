@@ -80,10 +80,11 @@ test('graduation bar: a stock pair\'s progress in its stock once its units load;
 
 test('market rows and the more-markets strip: a stock pair\'s cap and volume in its stock; SOL rows unchanged', () => {
   const sol = { repoId: '1', mint: 'SolMint1111111111111111111111111111111111', fullName: 'local/alpha', symbol: 'ALPHA', tokenName: 'Alpha', description: 'd',
-    volume24hLamports: '2500000000', earned: '30000000', claimed: '0', remaining: '30000000', stars: 5, priceSol: 1e-7, wasVerified: false, indexedAt: new Date() }
+    volume24hLamports: '2500000000', earned: '30000000', claimed: '0', remaining: '30000000', stars: 5, priceSol: 1e-7, wasVerified: false, indexedAt: new Date(),
+    supply: { baseUnits: '1000000000000000', decimals: 6 } }
   const stock = { repoId: '94911145', mint: 'StockMint11111111111111111111111111111111', fullName: 'facebook/docusaurus', symbol: 'DOCUSAURUS', tokenName: 'Docusaurus',
     description: 'd', volume24hLamports: null, earned: '0', claimed: '0', remaining: '0', stars: 60000, priceSol: null, wasVerified: false, indexedAt: new Date(),
-    quoteAssetId: 'meta-xstock', stock: { assetId: 'meta-xstock', symbol: 'METAx', decimals: 8, price: 0.04, volume24h: '140000000', uiMultiplier: INFO.uiMultiplier, usdPrice: 712.5 } }
+    quoteAssetId: 'meta-xstock', supply: { baseUnits: '1000000000000000', decimals: 6 }, stock: { assetId: 'meta-xstock', symbol: 'METAx', decimals: 8, price: 0.04, volume24h: '140000000', uiMultiplier: INFO.uiMultiplier, usdPrice: 712.5 } }
   const table = html(h(MarketTable, { markets: [sol, stock], usdPerSol: 150 }))
   const [solRow, stockRow] = table.split('class="market-row"').slice(1).map(text)
   assert.match(solRow, /\$15k 2\.5 SOL \$4\.50/); assert.doesNotMatch(solRow, /METAx/)
@@ -96,7 +97,8 @@ test('phone summary and activity heading: a stock pair waits for its units, a SO
   const stockSummary = text(html(h(PhoneMarketSummary, { mint: 'StockMint', symbol: 'DOCUSAURUS', priceSol: null, volume24hLamports: null, quote,
     stock: { price: 0.04, volume24h: '140000000' } })))
   assert.match(stockSummary, /\$DOCUSAURUS price — .* Market cap — 24h volume —/)
-  const solSummary = text(html(h(PhoneMarketSummary, { mint: 'SolMint', symbol: 'ALPHA', priceSol: 1e-7, volume24hLamports: '2500000000' })))
+  const solSummary = text(html(h(PhoneMarketSummary, { mint: 'SolMint', symbol: 'ALPHA', priceSol: 1e-7, volume24hLamports: '2500000000',
+    supply: { baseUnits: '1000000000000000', decimals: 6 } })))
   assert.match(solSummary, /\$ALPHA price 1e-7 SOL|\$ALPHA price 0\.0000001 SOL|\$ALPHA price 1\.000e-7 SOL/)
   assert.match(solSummary, /Market cap 100 SOL 24h volume 2\.5 SOL/)
   assert.match(text(html(h(ActivityFeed, { mint: 'SolMint', symbol: 'ALPHA' }))), /Finalized trades, creator fees, and settled payouts from this market\. Traders who linked X/)

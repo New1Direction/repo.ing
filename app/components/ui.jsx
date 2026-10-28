@@ -28,13 +28,13 @@ function MarketEarnings({ market, usdPerSol }) {
 }
 function MarketCap({ market, usdPerSol }) {
   // A stock pair's cap is in its stock (USD at the stock's price), from the row's stock figures.
-  if (market.stock) { const view = stockRowDisplay(market.stock); return <span className="table-mcap" title={view.capTitle}>{view.cap ?? '—'}</span> }
-  const cap = marketCapDisplay(market.priceSol, usdPerSol)
-  return <span className="table-mcap" title={cap?.title ?? 'No trades recorded yet'}>{cap?.value ?? '—'}</span>
+  if (market.stock) { const view = stockRowDisplay(market.stock, market.supply); return <span className="table-mcap" title={view.capTitle}>{view.cap ?? '—'}</span> }
+  const cap = marketCapDisplay(market.priceSol, market.supply, usdPerSol)
+  return <span className="table-mcap" title={cap?.title ?? (market.priceSol ? 'Supply not read yet' : 'No trades recorded yet')}>{cap?.value ?? '—'}</span>
 }
 function MarketVolume({ market }) {
   if (!market.stock) return <span className="table-volume">{formatSolDisplay(market.volume24hLamports)} SOL</span>
-  const view = stockRowDisplay(market.stock)
+  const view = stockRowDisplay(market.stock, market.supply)
   return <span className="table-volume" title={view.volumeTitle}>{view.volume}</span>
 }
 // One thin line on the row's bottom edge; nothing is drawn when progress is unknown or stale.

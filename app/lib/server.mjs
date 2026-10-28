@@ -6,6 +6,7 @@ import { createDatabasePool } from '../../src/database-pool.mjs'
 import { Connection, Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { chainAheadOfLedger, createReconciler } from '../../src/reconcile.mjs'
+import { claimWindow, payoutControls } from '../../src/builder-payouts.mjs'
 import { tradingEarlyAccessConfig } from '../../src/early-access.mjs'
 import { createRpcMeter, registerRpcEndpoint } from '../../src/rpc-usage.mjs'
 import { githubApiHeaders } from '../../src/github-app-auth.mjs'
@@ -18,7 +19,7 @@ import { isOfficialLaunch } from './official-launch.mjs'
 import { forkOf, githubTime } from '../../src/github.mjs'
 import { assertGithubRepoId, isMarketId } from '../../src/market-identity.mjs'
 import { isStockMarket } from '../../src/stock-market-chart.mjs'
-import { latestTradeSql } from '../../src/market-chart.mjs'
+import { latestPriceColumn, latestPriceJoins } from '../../src/market-chart.mjs'
 import { withStockStats } from './stock-market-stats.mjs'
 import { RECOVERED_LAUNCH_CONFIG, assertLaunchBootstrapSigner } from '../../src/launch-custody.mjs'
 import { verificationBonusLamports } from '../../src/verification-bonus.mjs'
@@ -132,12 +133,11 @@ export function ordinaryLaunchRuntime() {
     discoveryEnabled: true, builderAllocationEnabled: true, verificationBonusLamports: null }
 }
 
-// A market row's last price (list and single reads): the newest curve and DAMM trades as the chart picks them
-// (src/market-chart.mjs latestTradeSql). A DAMM trade in the same slot as the last curve trade came after it: the curve
-// takes no swaps once complete, and its DAMM pool opens only at migration.
-const LATEST_TRADES = `left join lateral (${latestTradeSql('trade_events', t => `${t}.pool = m.pool`)}) cp on true
-      left join lateral (${latestTradeSql('damm_trade_events', t => `${t}.github_repo_id = m.github_repo_id and ${t}.next_sqrt_price is not null`)}) dp on true`
-const LAST_SQRT_PRICE = `case when coalesce(dp.slot, -1) >= coalesce(cp.slot, -1) then dp.next_sqrt_price else cp.next_sqrt_price end as "lastSqrtPrice"`
+// A market row's last price (list and single reads): the newest curve and graduated trades' price_sol from trade_prices, as
+// the chart picks them (src/market-chart.mjs latestPriceJoins), and its supply from the mint's on-chain facts (mint_facts).
+const LATEST_TRADES = `${latestPriceJoins('m.mint')}
+      left join mint_facts mf on mf.mint = m.mint`
+const LAST_PRICE = `${latestPriceColumn('price_sol')}::text as "lastPriceSol", mf.supply::text as "supplyBaseUnits", mf.decimals as "supplyDecimals"`
 
 export function launchAvailable() { return Boolean(database() && configAddress() && creatorSigner()) }
 export function tradeAvailable() { return Boolean(database() && configAddress()) }
@@ -175,7 +175,7 @@ async function loadMarkets() {
         b.wallet as "beneficiaryWallet", b.method as "beneficiaryMethod", exists (
           select 1 from repo_verifications v where v.github_repo_id = m.github_repo_id and v.permission = 'admin'
         ) as "wasVerified",
-        ${LAST_SQRT_PRICE},
+        ${LAST_PRICE},
         o.status as "graduationStatus", o.observation, o.error_code as "graduationError", e.evidence_hash as "migrationEvidenceHash"
       from markets m join repositories r on r.github_repo_id = m.github_repo_id
       ${LATEST_TRADES}
@@ -193,11 +193,11 @@ async function loadMarkets() {
       where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'
       order by m.indexed_at desc`)
     const now = Date.now()
-    const markets = rows.map(({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash, quoteAssetId, quoteMint, ...row }) => withSignals({ ...row,
+    const markets = rows.map(({ lastPriceSol, supplyBaseUnits, supplyDecimals, graduationStatus, observation, graduationError, migrationEvidenceHash, quoteAssetId, quoteMint, ...row }) => withSignals({ ...row,
       ...(quoteAssetId || quoteMint ? { quoteAssetId, quoteMint } : {}),
       stars: Number(row.stars), forks: Number(row.forks),
       earned: row.earned, claimed: row.claimed, remaining: (BigInt(row.earned) - BigInt(row.claimed) - BigInt(row.platformCollected)).toString(),
-      ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) }, Boolean(migrationEvidenceHash), now))
+      ...marketRowStats({ lastPriceSol, supplyBaseUnits, supplyDecimals, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) }, Boolean(migrationEvidenceHash), now))
     // Stamped rows only (SOL rows pass through untouched): stock figures, then their signals from the stock progress.
     const stock = await withStockStats(markets, { db: pool, connection: chain, withUnits: true, now })
     return { markets: stock === markets ? markets : stock.map(market => isStockMarket(market) ? withSignals(market, false, now) : market) }
@@ -277,7 +277,7 @@ async function singleMarket(column, value) {
       + (select coalesce(sum(d.quote_amount), 0) from damm_trade_events d join graduation_events g on g.github_repo_id = d.github_repo_id and g.pool = d.pool
         where d.github_repo_id = m.github_repo_id and d.traded_at >= now() - interval '24 hours'))::text as "volume24hLamports",
       exists(select 1 from repo_verifications where github_repo_id = m.github_repo_id and permission = 'admin') as "wasVerified",
-      ${LAST_SQRT_PRICE},
+      ${LAST_PRICE},
       o.status as "graduationStatus", o.observation, o.error_code as "graduationError", e.evidence_hash as "migrationEvidenceHash"
       from markets m join repositories r on r.github_repo_id = m.github_repo_id
       left join repo_beneficiaries b on b.github_repo_id = m.github_repo_id
@@ -288,11 +288,11 @@ async function singleMarket(column, value) {
     const [row] = rows
     if (!row) return { market: null }
     // Same row fields as the market list (price, bonding progress, quality signals), so either read can back a market card.
-    const { lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash, ...market } = row
+    const { lastPriceSol, supplyBaseUnits, supplyDecimals, graduationStatus, observation, graduationError, migrationEvidenceHash, ...market } = row
     const now = Date.now()
     const built = withSignals({ ...market, stars: Number(market.stars), forks: Number(market.forks),
       remaining: (BigInt(market.earned) - BigInt(market.claimed) - BigInt(market.platformCollected)).toString(),
-      ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) }, Boolean(migrationEvidenceHash), now)
+      ...marketRowStats({ lastPriceSol, supplyBaseUnits, supplyDecimals, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) }, Boolean(migrationEvidenceHash), now)
     if (!isStockMarket(built)) return { market: built }
     // A stock-paired market: its figures from the stock ledger, in raw units (the page reads display units separately).
     const [stock] = await withStockStats([built], { db: pool, now })
@@ -369,8 +369,19 @@ export async function feeStatus(repoId) {
       globalThis.__repoingFeeReconciler = runtime
     }
     const result = await runtime.reconciler.reconcile(repoId)
-    return { ...result, ...recovery ? { payoutsEnabled: false } : {} }
+    return { ...result, ...recovery ? { payoutsEnabled: await builderPayoutsOpen(repoId) } : {} }
   } catch { return unavailable }
+}
+
+// Builder payouts from the capped payout wallet are open for a repository when the switch is on and its claim window is open
+// (src/builder-payouts.mjs, the claim page's own check). Fail closed: no claims pool or any read error reads as paused.
+async function builderPayoutsOpen(repoId) {
+  const claims = claimsDatabase()
+  if (!claims) return false
+  try {
+    const [controls, window] = await Promise.all([payoutControls(claims), claimWindow(claims, repoId)])
+    return controls.enabled && window !== null
+  } catch { return false }
 }
 
 // Token pages display fee status on every view; one chain reconciliation per repository per 30 s (10 s while it is not

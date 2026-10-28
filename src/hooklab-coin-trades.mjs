@@ -160,7 +160,9 @@ export function hookCoinTradeStore(db) {
       return { trades: rows.slice(0, limit).map(tradeRow), next: rows.length > limit ? rows[limit - 1].swapCount : null }
     },
     // Index-backed only (pool, swap counter / time): the trade count is the newest swap counter, as the counter is contiguous.
-    async summary(pool, { now = Date.now(), decimals = 6 } = {}) {
+    // decimals: the coin mint's own (never a default); the caller reads it from the coin.
+    async summary(pool, { now = Date.now(), decimals } = {}) {
+      check(Number.isInteger(decimals) && decimals >= 0 && decimals <= 18, 'HOOK_COIN_DECIMALS_REQUIRED')
       const { rows: [row] } = await db.query(`select (select min(traded_at) from hook_lab_coin_trades where pool=$1) as first,
           (select max(traded_at) from hook_lab_coin_trades where pool=$1) as last,
           (select coalesce(sum(quote_amount),0)::text from hook_lab_coin_trades where pool=$1 and traded_at>$2::timestamptz-interval '24 hours') as volume`,

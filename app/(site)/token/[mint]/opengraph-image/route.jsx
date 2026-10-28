@@ -1,6 +1,5 @@
 import bs58 from 'bs58'
-import { PublicKey } from '@solana/web3.js'
-import { chain, database, marketByMint } from '../../../../lib/server.mjs'
+import { database, marketByMint } from '../../../../lib/server.mjs'
 import { solUsdPrice } from '../../../../lib/sol-usd.mjs'
 import { ogMarketStats, settleWithin } from '../../../../lib/og-card.mjs'
 import { SOURCE_MS, cardCache, fallback, marketLogo, renderPng } from '../../../../lib/og-image'
@@ -24,14 +23,15 @@ export async function GET(_request, { params }) {
     // A Hugging Face model market's card exists only with HF_MARKETS_ENABLED.
     if (!market || (isModelMarket(market) && !hfMarketsEnabled())) return fallback()
     // A declined market's card says so (null: no decision; undefined: unreadable, so no notice and a sooner retry, as on the page).
-    const [logo, priceSol, supply, usdPerSol, decision] = await Promise.all([
+    // The last trade's price and the SOL/USD price of its minute, and the mint's supply (mint_facts), all from the chart read.
+    const [logo, chart, currentSolUsd, decision] = await Promise.all([
       settleWithin(marketLogo(market), SOURCE_MS),
-      settleWithin(readMarketChart(database(), market, '1h').then(chart => chart.latest?.priceSol ?? null), SOURCE_MS),
-      settleWithin((async () => (await chain().getTokenSupply(new PublicKey(market.mint), 'finalized')).value)(), SOURCE_MS),
+      settleWithin(readMarketChart(database(), market, '1h'), SOURCE_MS),
       settleWithin(solUsdPrice(), SOURCE_MS),
       settleWithin(maintainerDecision(market.repoId), SOURCE_MS, undefined),
     ])
-    const stats = ogMarketStats({ priceSol, supplyBaseUnits: supply?.amount, supplyDecimals: supply?.decimals, usdPerSol })
+    const stats = ogMarketStats({ priceSol: chart?.latest?.priceSol ?? null, supplyBaseUnits: chart?.supply?.baseUnits,
+      supplyDecimals: chart?.supply?.decimals, usdPerSol: chart?.latest?.solUsd ?? currentSolUsd })
     const body = await renderPng(<MarketCard market={market} logo={logo} stats={stats} at={Date.now()} declined={Boolean(decision)}/>)
     return cards.put(mint, body, stats.length > 0 && decision !== undefined)
   } catch {

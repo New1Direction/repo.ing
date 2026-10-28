@@ -19,7 +19,7 @@ const marketRow = (repoId, stamp) => ({ repoId, mint: `Mint${repoId}`, pool: `Po
   allocationVersion: null, discoveryVersion: null, launcherWallet: 'LauncherWallet', verificationBonusLamports: null, quoteAssetId: stamp?.quoteAssetId ?? null,
   quoteMint: stamp?.quoteMint ?? null, owner: 'facebook', name: 'docusaurus', fullName: 'facebook/docusaurus', description: null, avatarUrl: null, source: 'github',
   stars: 1, forks: 0, updatedAt: null, githubCreatedAt: null, beneficiaryWallet: null, beneficiaryBoundAt: null, beneficiaryMethod: null, earned: '0',
-  claimed: '0', platformCollected: '0', volume24hLamports: '0', wasVerified: false, lastSqrtPrice: null, graduationStatus: null, observation: null, graduationError: null, migrationEvidenceHash: null })
+  claimed: '0', platformCollected: '0', volume24hLamports: '0', wasVerified: false, lastPriceSol: null, supplyBaseUnits: null, supplyDecimals: null, graduationStatus: null, observation: null, graduationError: null, migrationEvidenceHash: null })
 const MARKETS = { [SOL_ID]: marketRow(SOL_ID, null), [STOCK_ID]: marketRow(STOCK_ID, STAMP) }
 const queries = []
 let payoutsOn = false

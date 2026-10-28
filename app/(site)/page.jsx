@@ -41,7 +41,7 @@ export default function Home() {
   const models = hfMarketsEnabled()
   const tabs = [
     { id: 'trending', label: 'Trending', note: 'Ranked by 24h volume.' },
-    { id: 'mcap', label: 'Market cap', note: 'Ranked by market cap: last trade price × 1B supply.' },
+    { id: 'mcap', label: 'Market cap', note: 'Ranked by market cap: last trade price × on-chain supply.' },
     { id: 'new', label: 'New', note: 'The newest launches.' },
     { id: 'graduating', label: 'Graduating', note: 'Closest to their graduation target, from verified on-chain reserves. At graduation, trading moves to a Meteora pool.' },
     { id: 'shipping', label: 'Shipping', note: 'The repositories whose developers shipped the most code this week.' },

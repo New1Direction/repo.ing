@@ -82,7 +82,7 @@ const ROW = { repoId: GOAT.repoId, mint: MINT, pool: 'PoolGoat', tokenName: 'Cry
   allocationVersion: null, discoveryVersion: null, launcherWallet: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU', verificationBonusLamports: null,
   quoteAssetId: null, quoteMint: null, owner: 'WILDCATZWEB3', name: 'Cryptogoat', fullName: GOAT.fullName, description: GOAT.description, avatarUrl: null,
   source: 'github', stars: 3, forks: 0, updatedAt: null, githubCreatedAt: null, beneficiaryWallet: null, beneficiaryBoundAt: null, beneficiaryMethod: null,
-  earned: '0', claimed: '0', volume24hLamports: '0', wasVerified: false, lastSqrtPrice: null, graduationStatus: null, observation: null, graduationError: null,
+  earned: '0', claimed: '0', volume24hLamports: '0', wasVerified: false, lastPriceSol: null, supplyBaseUnits: null, supplyDecimals: null, graduationStatus: null, observation: null, graduationError: null,
   platformCollected: '0',
   migrationEvidenceHash: null }
 const DECISION = { repoId: GOAT.repoId, kind: 'decline', note: null, createdAt: new Date('2026-10-06T12:00:00Z') }

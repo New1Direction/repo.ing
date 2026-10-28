@@ -1,4 +1,4 @@
-import { compactFigure, formatUsdMarketCap, MARKET_TOKEN_SUPPLY } from './market-display.mjs'
+import { compactFigure, formatUsdMarketCap, supplyTokens } from './market-display.mjs'
 import { shownUnits, stockUnits } from './trade-units.mjs'
 
 // A stock pair's figures as pages show them (docs/STOCK_QUOTES.md). Ledgers, charts and market stats keep raw units of the
@@ -49,20 +49,21 @@ export function formatStockCompact(value, symbol) {
 
 // A market row's stock figures (row.stock, app/lib/stock-market-stats.mjs) as the market table shows them, like SOL rows:
 // the cap in USD at the stock's price when there is one (else in the stock), the 24h volume in the stock as wallets show
-// it (USD in its title); '—' while the stock's units are unavailable. The cap is the fully diluted cap (last price × the
-// fixed 1B supply), as SOL rows compute it.
-export function stockRowDisplay(stock) {
+// it (USD in its title); '—' while the stock's units are unavailable. The cap is last price × the mint's on-chain supply
+// (supply: the row's `supply`, app/lib/market-display.mjs supplyTokens), as SOL rows compute it; none before it is read.
+export function stockRowDisplay(stock, supply = null) {
   const units = stockDisplayUnits(stock)
   const price = positive(stock?.price) ? stock.price : null
   const volume = DIGITS.test(String(stock?.volume24h ?? '')) ? stock.volume24h : null
   if (!units) return { cap: null, capTitle: `${stock?.symbol ?? 'Stock'} prices are temporarily unavailable`, volume: '—' }
-  const usdCap = price && units.usdPrice ? price * MARKET_TOKEN_SUPPLY * units.usdPrice : null
-  const shownCap = price ? price * units.multiplier * MARKET_TOKEN_SUPPLY : null
+  const tokens = supplyTokens(supply)
+  const usdCap = price && tokens && units.usdPrice ? price * tokens * units.usdPrice : null
+  const shownCap = price && tokens ? price * units.multiplier * tokens : null
   const capInStock = shownCap === null ? null : formatStockCompact(shownCap, units.symbol)
   const usdVolume = volume === null ? null : stockRawUsd(volume, units)
   return {
     cap: usdCap !== null ? formatUsdMarketCap(usdCap) : capInStock,
-    capTitle: price ? `Market cap ≈ ${capInStock} (last trade price × 1B supply)${usdCap !== null ? `. USD estimate at the current ${units.symbol} price.` : '.'}` : 'No trades recorded yet',
+    capTitle: !price ? 'No trades recorded yet' : !tokens ? 'Supply not read yet' : `Market cap ≈ ${capInStock} (last trade price × on-chain supply)${usdCap !== null ? `. USD estimate at the current ${units.symbol} price.` : '.'}`,
     volume: volume === null ? '—' : stockAmountLabel(volume, units),
     volumeTitle: volume === null ? undefined : `${stockAmountLabel(volume, units)} traded in 24 hours${usdVolume !== null ? ` (≈ ${formatUsdMarketCap(usdVolume)} at the current ${units.symbol} price)` : ''}`,
   }

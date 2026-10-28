@@ -51,11 +51,11 @@ test('holders of a Token-2022 mint are read from Token-2022 accounts by their ac
   assert.deepEqual(tokenAccountFilters(mint, false), [{ dataSize: 165 }, { memcmp: { offset: 0, bytes: mint } }])
   assert.deepEqual(tokenAccountFilters(mint, true), [{ memcmp: { offset: 0, bytes: mint } }, { memcmp: { offset: 165, bytes: '3' } }])
   const calls = []
-  const connection = { rpcEndpoint: 'test', getTokenSupply: async () => ({ value: { amount: '1000', decimals: 6 } }),
-    getProgramAccounts: async (program, options) => { calls.push([program.toBase58(), options.filters]); return [] } }
+  const connection = { rpcEndpoint: 'test', getProgramAccounts: async (program, options) => { calls.push([program.toBase58(), options.filters]); return [] } }
+  const db = { query: async () => ({ rows: [{ supply: '1000', decimals: 6 }] }) }
   for (const [token2022, program] of [[true, TOKEN_2022_PROGRAM_ID], [false, TOKEN_PROGRAM_ID]]) {
     const pool = Keypair.generate().publicKey.toBase58(), own = Keypair.generate().publicKey.toBase58()
-    const metrics = await marketTokenMetrics(connection, own, pool, Date.now(), { token2022 })
+    const metrics = await marketTokenMetrics(connection, own, pool, Date.now(), { token2022, db })
     assert.equal(metrics.holders, 0)
     assert.equal(calls.at(-1)[0], program.toBase58())
   }

@@ -603,6 +603,20 @@
       "when": 1793200000000,
       "tag": "0088_claims_open_for_all",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1793210000000,
+      "tag": "0089_trade_prices",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1793220000000,
+      "tag": "0090_custody_owner_transfers",
+      "breakpoints": true
     }
   ]
 }

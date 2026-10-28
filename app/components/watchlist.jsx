@@ -81,7 +81,7 @@ export function WatchlistSettings() {
   const { state, ready, update, storageError, priceError } = useWatchlist()
   return <div className="watchlist-settings"><div><strong>Your watchlist</strong><p>Saved in this browser. No wallet needed.</p></div>
     <label>Price alerts <select aria-label="Watchlist price alerts" disabled={!ready} value={state.alertPercent}
-      onChange={event => update(value => ({ ...value, alertPercent: Number(event.target.value), baselines: {} }))}>
+      onChange={event => update(value => ({ ...value, alertPercent: Number(event.target.value), prices: {} }))}>
       <option value="0">Off</option><option value="10">10% moves</option><option value="25">25% moves</option>
     </select></label>
     <p className="watchlist-note">{state.alertPercent ? 'Alerts appear in the bell menu while repo.ing is open. Based on indexed SOL prices before graduation; not an execution quote.' : 'Turn on optional price alerts for the repositories you watch.'}</p>

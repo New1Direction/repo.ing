@@ -31,22 +31,38 @@ test('the sparkline spans the last 24h from the close before it, thinned to a fi
   assert.equal(sparklinePath([1, 3], 100, 30), 'M2.0 28.0 L98.0 2.0')
 })
 
+test('summary: the latest trade\'s own SOL/USD price and the mint\'s on-chain supply set the "now" figures', () => {
+  // Arrange: the chart's latest trade was at SOL $120; today's SOL price (metrics) is $150. Supply: 999,850,848.836751 tokens.
+  const chart = { candles: [bar(NOW - HOUR, 3e-8)], interval: HOUR, latest: { priceSol: 3e-8, solUsd: 120 },
+    supply: { baseUnits: '999850848836751', decimals: 6 }, volume24hLamports: '0', fetchedAt: new Date(NOW * 1000).toISOString() }
+  // Act
+  const summary = phoneMarketSummary({ chart, metrics: { solUsd: 150, supplyBaseUnits: '1000000000000000', supplyDecimals: 6 }, now: NOW * 1000 })
+  const withoutTradeUsd = phoneMarketSummary({ chart: { ...chart, latest: { priceSol: 3e-8, solUsd: null } }, metrics: { solUsd: 150 }, now: NOW * 1000 })
+  // Assert: 3e-8 × $120 = $0.0000036; 999,850,848.836751 × 3e-8 × $120 = $3,599.5 → $3.6k (the chart's supply first).
+  assert.equal(summary.price, '$0.0000036')
+  assert.equal(summary.marketCap, '$3.6k')
+  assert.equal(withoutTradeUsd.price, '$0.0000045', 'today\'s SOL price only while the trade has none')
+  assert.equal(withoutTradeUsd.marketCap, '$4.5k')
+})
+
 test('summary: USD with a SOL price, SOL without one, server values until the chart loads', () => {
-  const chart = { candles: [bar(NOW - 25 * HOUR, 2e-8, 2e-8), bar(NOW - HOUR, 2e-8, 3e-8)], interval: HOUR,
+  const supply = { baseUnits: '1000000000000000', decimals: 6 }
+  const chart = { candles: [bar(NOW - 25 * HOUR, 2e-8, 2e-8), bar(NOW - HOUR, 2e-8, 3e-8)], interval: HOUR, supply,
     latest: { priceSol: 3e-8 }, volume24hLamports: '12500000000', fetchedAt: new Date(NOW * 1000).toISOString() }
   const metrics = { solUsd: 150, supplyBaseUnits: '1000000000000000', supplyDecimals: 6 }
   const usd = phoneMarketSummary({ priceSol: 1e-8, volume24hLamports: '0', chart, metrics, now: NOW * 1000 })
   assert.deepEqual({ ...usd, change: Math.round(usd.change) }, { price: '$0.0000045', change: 50, marketCap: '$4.5k', volume: '$1.9k', spark: [2e-8, 3e-8] })
   const sol = phoneMarketSummary({ priceSol: 1e-8, volume24hLamports: '0', chart, metrics: null, now: NOW * 1000 })
   assert.deepEqual([sol.price, sol.marketCap, sol.volume], ['0.00000003 SOL', '30 SOL', '12.5 SOL'], 'the chart headline\'s own SOL format')
-  const server = phoneMarketSummary({ priceSol: 2.5e-8, volume24hLamports: '3000000000' })
+  const server = phoneMarketSummary({ priceSol: 2.5e-8, volume24hLamports: '3000000000', supply })
   assert.deepEqual(server, { price: '0.000000025 SOL', change: null, marketCap: '25 SOL', volume: '3 SOL', spark: [] })
   // The server render knows the SOL/USD price, so it shows USD as the browser will; a metrics read then decides alone.
-  const priced = phoneMarketSummary({ priceSol: 2.5e-8, volume24hLamports: '3000000000', usdPerSol: 150 })
+  const priced = phoneMarketSummary({ priceSol: 2.5e-8, volume24hLamports: '3000000000', usdPerSol: 150, supply })
   assert.deepEqual(priced, { price: '$0.00000375', change: null, marketCap: '$3.8k', volume: '$450', spark: [] })
   assert.equal(phoneMarketSummary({ priceSol: 2.5e-8, usdPerSol: 150, metrics: { solUsd: 200 } }).price, '$0.000005')
   assert.equal(phoneMarketSummary({ priceSol: 2.5e-8, usdPerSol: 150, metrics: { solUsd: null } }).price, '0.000000025 SOL')
   assert.deepEqual(phoneMarketSummary({}), { price: '—', change: null, marketCap: '—', volume: '—', spark: [] })
+  assert.equal(phoneMarketSummary({ priceSol: 2.5e-8, usdPerSol: 150 }).marketCap, '—', 'no cap before the mint supply is read, never a guessed 1B')
   assert.deepEqual([formatUsdPrice(1234.567), formatUsdPrice(0.012345), formatUsdPrice(0), formatUsdPrice(NaN)], ['$1,234.57', '$0.01235', '—', '—'])
 })
 

@@ -57,6 +57,8 @@ export const DEFAULT_GROUP_DATABASES = [
   // Guided launch (migration 0073): drafts, conversion events and publishing into launch_schedules.
   launchtest('repoing_launch_guide_test'),
   launchtest('repoing_direct_coins_test'),
+  // One source of truth for prices (migration 0089): every price reader on trade_prices and mint_facts.
+  launchtest('repoing_trade_prices_test'),
 ]
 
 const scratchDb = trusted(55441, 'postgres')
@@ -76,6 +78,7 @@ export const DEFAULT_ENV = {
   LAUNCH_TRANSPARENCY_TEST_DATABASE_URL: launchtest('repoing_launch_transparency_test'),
   LAUNCH_GUIDE_TEST_DATABASE_URL: launchtest('repoing_launch_guide_test'),
   DIRECT_COINS_TEST_DATABASE_URL: launchtest('repoing_direct_coins_test'),
+  TRADE_PRICES_TEST_DATABASE_URL: launchtest('repoing_trade_prices_test'),
   X_LINKS_TEST_DATABASE_URL: launchtest('repoing_x_links_test'),
   BACKERS_TEST_DATABASE_URL: launchtest('repoing_backers_test'),
   LAUNCH_ALERTS_TEST_DATABASE_URL: launchtest('repoing_launch_alerts_test'),
