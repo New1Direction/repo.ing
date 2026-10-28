@@ -31,13 +31,14 @@ function CoinRow({ coin, index, usdPerSol }) {
     <span className="table-actions"><Link href={coinHref(coin.mint)} className="button outline table-action">Trade<ChevronRight size={15}/></Link></span></div>
 }
 
-// Explore → Hooks coins: every listed coin, with the same views, search and table as the repository markets.
-export function HookCoinExplore({ coins, usdPerSol }) {
+// Explore → Hooks coins and Hooks → Buy & sell: every listed coin, with the same views, search and table as the repository markets.
+// basePath: the page the view tabs keep in the address (Explore's tab, or Hooks → Buy & sell).
+export function HookCoinExplore({ coins, usdPerSol, basePath = '/explore/hooks' }) {
   const router = useRouter(), params = useSearchParams()
   const view = hookCoinView(params.get('view'))
   const [query, setQuery] = useState('')
   const shown = useMemo(() => orderHookCoins(coins.filter(c => `${c.name} ${c.symbol} ${c.mint}`.toLowerCase().includes(query.trim().toLowerCase())), view), [coins, query, view])
-  const select = value => router.replace(`/explore/hooks${value === 'trending' ? '' : `?view=${value}`}`, { scroll: false })
+  const select = value => router.replace(`${basePath}${value === 'trending' ? '' : `?view=${value}`}`, { scroll: false })
   return <>
     <div className="explore-search"><Search size={20}/><input aria-label="Search Hooks coins" placeholder="Search coins, tickers or addresses..." value={query} onChange={e => setQuery(e.target.value)}/></div>
     <div className="discovery-controls"><div className="discovery-tabs" aria-label="Hooks coin views">

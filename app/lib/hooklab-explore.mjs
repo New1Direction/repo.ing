@@ -10,7 +10,8 @@ import { cached } from './hooklab-market.mjs'
 import { hookCoinRules } from './hooklab-coin-display.mjs'
 import { coinImageUrl } from '../../src/hooklab-coin-profile.mjs'
 
-export const EXPLORE_HOOK_COINS_CACHE_MS = 15_000
+// As short as the coin page's cache (COIN_PAGE_CACHE_MS), so an owner's delisting leaves the lists as quickly.
+export const EXPLORE_HOOK_COINS_CACHE_MS = 3000
 export const EXPLORE_HOOK_COINS_LIMIT = 100
 
 // Listed coins (delisted ones left out), newest first, each with `stats` ({ priceSol, volume24hLamports, totalTrades,
