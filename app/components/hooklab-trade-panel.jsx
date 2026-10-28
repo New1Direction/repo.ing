@@ -1,13 +1,15 @@
 'use client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowDown, Check, LoaderCircle, X } from 'lucide-react'
+import { ArrowDown } from 'lucide-react'
 import { useWallet } from './wallet'
 import { useHookWalletSession } from './hooklab-wallet-signin'
 import { HooksOperationError } from './hooks-ui'
 import { DELISTED_BUY_TEXT, GRADUATION_TRADING_OPEN, HOLDING_RENT_LAMPORTS, SLIPPAGE_CHOICES, buyOff, estimateTrade, finalFillLamports, formatUnits, graduationHold, maxBuyLamports, nativeFailureText, nativeTradeIntent, nativeTradingOpen, ownStackCoin, parseUnits, tradesFromWallet, planBuy, planNative, planSell, sol, tradeButton, tradeHold, tradeIntent } from '../lib/hooklab-trade-math.mjs'
 import { callTrade, closeExpired, expectOperation, expiredUnsent, forgetOperation, isFinal, pendingOperations, rememberOperation, runOperation } from '../lib/hooklab-trade-runner.mjs'
 import { measuredTradeMinimum } from '../lib/hooklab-trade-math.mjs'
+import { HookCapRoom, HookFeeHeadline, HookTradePreview, HookTradeSkeleton, HookTradeStatusBar } from './hooklab-trade-ux'
+import { BUY_SIZES, optimisticWallet, rememberSize, rememberedSize } from '../lib/hooklab-ux.mjs'
 import '../trade-panel.css'
 
 // Rent for one 204-byte Hook Lab holding (app/lib/hooklab-trade-math.mjs); the server's review uses the live value before signing.
@@ -41,6 +43,10 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
   // Coin data that failed to load: separate from trade errors so a later successful refresh clears it.
   const [loadError, setLoadError] = useState('')
   const running = useRef(false)
+  // Phones: the panel is a bottom sheet that peeks with its tabs and opens to trade.
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const [defaultSize, setDefaultSize] = useState(null)
+  useEffect(() => { setDefaultSize(rememberedSize(globalThis.localStorage)) }, [])
   const market = view?.market, mine = view?.wallet && view.wallet.address === wallet ? view.wallet : null, symbol = market ? `$${market.symbol}` : ''
   const refresh = useCallback(async () => { try { const next = await readMarket(mint, wallet); setView(next); setLoadError(''); return next } catch (e) { setLoadError(e.message); return null } }, [mint, wallet])
   useEffect(() => { refresh(); const timer = setInterval(() => { if (!running.current) refresh() }, 10000); return () => clearInterval(timer) }, [refresh])
@@ -65,8 +71,11 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
   }, [market, coinBalance, fill, graduationOpen])
   // A full curve waits for graduate (buys pause); a held trade (tradeHold) is shown but not sent.
   const buyPaused = buying && (!!market?.curveComplete || delisted), hold = market ? tradeHold(view, estimate) : ''
-  const capNote = buying && estimate?.error && /max per wallet/.test(estimate.error)
-    ? (maxBuy ? `You can buy up to about ${sol(maxBuy, 4)} right now (${market.capBps / 100}% of the supply per wallet).` : 'This wallet already holds the most this coin allows.') : ''
+  // Over the max per wallet is shown before any click (HookCapRoom), never as an error after one.
+  const overCap = buying && !!estimate?.error && /max per wallet/.test(estimate.error)
+  const useMax = maxBuy ? () => setAmount(formatUnits(maxBuy, 9, maxBuy === fill ? 9 : 6).replace(/,/g, '')) : null
+  // A remembered size fills the amount when the box opens empty on Buy (only when it fits this wallet's max buy).
+  useEffect(() => { if (buying && !amount && defaultSize && market && (maxBuy === null || parseUnits(defaultSize, 9) <= maxBuy)) setAmount(defaultSize) }, [defaultSize, market?.mint, buying]) // eslint-disable-line react-hooks/exhaustive-deps
   const tooMuch = raw && mine && (buying ? false : raw > coinBalance)
   const button = tradeButton({ wallet, signedIn: session.signedIn, side, symbol, hasAmount: !!raw, blocked: !!estimate?.error || !!tooMuch || !!hold || buyPaused,
     tradingOpen: !!view?.tradingOpen, busy: busy || session.busy, graduates: !!estimate?.graduates && !hold })
@@ -152,7 +161,9 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
           if(!await approveReview({measurement:measured.quote,request:nativeTradeIntent(fresh.market,side,raw,minimum,e.graduates)}))throw Error('Trade cancelled. Nothing was signed.')
         }
         const op = await step(address, 0, { action: 'native-quote', request: nativeTradeIntent(fresh.market, side, raw, minimum, e.graduates) }, kind,signingId)
-        setResult({ kind: side, native: true, received: op.settlement?.quote?.delivered ?? e.delivered, graduated: kind === 'graduate' })
+        const received = op.settlement?.quote?.delivered ?? e.delivered
+        setResult({ kind: side, native: true, received, graduated: kind === 'graduate' })
+        setView(v => optimisticWallet(v, { side, amount: raw, received }))
       } else if (buying) {
         // Everything that could refuse the buy is checked before any SOL moves into Hook Lab.
         const first = estimateTrade(fresh.market, { side: 'buy', amount: raw, coinBalance: BigInt(me.coin ?? 0), slippageBps })
@@ -169,6 +180,7 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
         if (graduationHold(now.market, e)) throw Error(graduationHold(now.market, e))
         const op = await step(address, index, { action: 'quote', request: tradeIntent(now.market, 'buy', raw, e.minAmountOut) }, 'buy')
         setResult({ kind: 'buy', received: op.settlement?.quote?.delivered ?? e.delivered, graduated: e.graduates })
+        setView(v => optimisticWallet(v, { side: 'buy', amount: 0n, received: op.settlement?.quote?.delivered ?? e.delivered }))
       } else {
         if (raw > BigInt(me.coin ?? 0)) throw Error(`You hold ${formatUnits(BigInt(me.coin ?? 0), market.decimals, 2)} ${symbol}.`)
         const e = estimateTrade(fresh.market, { side: 'sell', amount: raw, slippageBps })
@@ -226,17 +238,21 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
 
   if (!market) return <div className="trade-card hooks-trade hooks-trade-waiting" aria-label="Buy and sell">
     <h2>Buy &amp; sell</h2>
-    <p className="trade-note" role="status">{loadError ? 'We couldn’t load this coin. This panel keeps trying.' : 'Loading this coin…'}</p>
+    {!loadError && <HookTradeSkeleton/>}
+    <p className={loadError ? 'trade-note' : 'trade-note sr-only'} role="status">{loadError ? 'We couldn’t load this coin. This panel keeps trying.' : 'Loading this coin…'}</p>
     <HooksOperationError error={loadError}/>
     {!wallet && <button type="button" className="button primary trade-submit" disabled={session.busy} onClick={() => connect().catch(() => {})}>Connect wallet</button>}
     {loadError && <button type="button" className="button outline" onClick={refresh}>Try again</button>}
   </div>
   // Buy shortcuts that can actually fill, plus Max; sell shortcuts are shares of what you hold.
-  const presets = buying ? [...['0.01', '0.05', '0.1', '0.5'].filter(p => maxBuy === null || parseUnits(p, 9) <= maxBuy).slice(0, 3), ...(maxBuy ? ['max'] : [])] : [25, 50, 100]
-  return <div className="trade-card hooks-trade" aria-label={`Trade ${symbol}`}>
+  const presets = buying ? [...BUY_SIZES.filter(p => maxBuy === null || parseUnits(p, 9) <= maxBuy), ...(maxBuy ? ['max'] : [])] : [25, 50, 100]
+  return <div className={`trade-card hooks-trade hooks-sheet${sheetOpen ? ' is-open' : ''}`} aria-label={`Trade ${symbol}`}>
+    <button type="button" className="hooks-sheet-handle" aria-expanded={sheetOpen} onClick={() => setSheetOpen(o => !o)}>
+      <span aria-hidden="true"/>{sheetOpen ? 'Close' : `Buy or sell ${symbol}`}</button>
+    <HookFeeHeadline market={market}/>
     <div className="trade-tabs" role="tablist" aria-label="Trade direction">
       {['buy', 'sell'].map(value => <button key={value} type="button" role="tab" data-side={value} aria-selected={side === value} className={side === value ? 'selected' : ''} disabled={busy}
-        onClick={() => { setSide(value); setAmount(''); setError(''); setResult(null) }}>{value === 'buy' ? 'Buy' : 'Sell'}</button>)}
+        onClick={() => { setSide(value); setAmount(''); setError(''); setResult(null); setSheetOpen(true) }}>{value === 'buy' ? 'Buy' : 'Sell'}</button>)}
     </div>
     {view && !view.tradingOpen && <p className="hooks-trade-soon" role="status">{tradingSoon(view)}</p>}
     {hold && (market.graduated || native || own || market.quoteFormMismatch) && <p className="hooks-trade-soon" role="status">{hold}</p>}
@@ -250,7 +266,8 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
           onChange={e => { setAmount(e.target.value.replace(',', '.')); setError('') }}/><span className="trade-unit">{buying ? 'SOL' : symbol}</span></div>
         <div className="trade-field-foot"><div className="trade-quick-actions" role="group" aria-label={buying ? 'Buy amounts' : 'Sell amounts'}>
           {presets.map(p => <button type="button" key={p} disabled={busy || buyPaused || (!buying && coinBalance === 0n)}
-            onClick={() => setAmount(buying ? (p === 'max' ? formatUnits(maxBuy, 9, maxBuy === fill ? 9 : 6).replace(/,/g, '') : p) : formatUnits(coinBalance * BigInt(p) / 100n, market.decimals).replace(/,/g, ''))}>
+            aria-pressed={buying ? amount === p : undefined}
+            onClick={() => { if (buying && p !== 'max') { rememberSize(globalThis.localStorage, p); setDefaultSize(p) } setAmount(buying ? (p === 'max' ? formatUnits(maxBuy, 9, maxBuy === fill ? 9 : 6).replace(/,/g, '') : p) : formatUnits(coinBalance * BigInt(p) / 100n, market.decimals).replace(/,/g, '')) }}>
             {buying ? (p === 'max' ? 'Max' : `${p} SOL`) : `${p}%`}</button>)}</div></div>
       </div>
       <div className="trade-flip" aria-hidden="true"><ArrowDown size={16}/></div>
@@ -262,7 +279,9 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
       </div>
       <div className="trade-settings hooks-slippage" role="group" aria-label="Max slippage"><span>Max slippage</span>
         {SLIPPAGE_CHOICES.map(bps => <button type="button" key={bps} aria-pressed={slippageBps === bps} disabled={busy} onClick={() => setSlippageBps(bps)}>{bps / 100}%</button>)}</div>
-      {estimate?.error && <p className="inline-error" role="alert">{estimate.error} {capNote}</p>}
+      {buying && !buyPaused && <HookCapRoom market={market} held={coinBalance} connected={!!mine} onUseMax={overCap ? useMax : null} maxBuyText={maxBuy ? sol(maxBuy, 4) : ''}/>}
+      {estimate?.error && !overCap && <p className="inline-error" role="alert">{estimate.error}</p>}
+      <HookTradePreview market={market} estimate={estimate} side={side} amount={raw ?? 0n}/>
       {tooMuch && <p className="inline-error" role="alert">You hold {formatUnits(coinBalance, market.decimals, 2)} {symbol}.</p>}
       <HookTradeSummary market={market} symbol={symbol} buying={buying} estimate={estimate} plan={plan} hold={hold} native={native}/>
       {plan && !steps && (fromWallet ? <p className="trade-note">One approval in your wallet.</p>
@@ -272,10 +291,8 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
       <HooksOperationError error={session.error}/>
     </form>
     {consent && <SelectedTradeReview consent={consent} market={market} symbol={symbol} onAnswer={answerConsent}/>}
-    {steps && <ol className="hooks-trade-steps" aria-label="Progress">{steps.map((s, i) => <li key={i} data-state={s.status}>
-      <span aria-hidden="true">{s.status === 'done' ? <Check size={14}/> : s.status === 'failed' ? <X size={14}/> : ['review', 'sign', 'send', 'confirm'].includes(s.status) ? <LoaderCircle size={14} className="image-picker-spinner"/> : i + 1}</span>
-      <div><strong>{stepLabel(s.kind, symbol)}</strong>
-        <small>{STATUS_TEXT[s.status] ?? (s.status === 'done' ? 'Done' : s.status === 'failed' ? 'Stopped' : 'Waiting')}{s.signature && <> · <a href={explorer(s.signature)} target="_blank" rel="noopener noreferrer">Receipt</a></>}</small></div></li>)}</ol>}
+    {steps && <HookTradeStatusBar steps={steps} labelOf={kind => stepLabel(kind, symbol)} explorer={explorer}/>}
+    {steps?.some(s => STATUS_TEXT[s.status]) && <p className="trade-note" role="status">{STATUS_TEXT[steps.find(s => STATUS_TEXT[s.status]).status]}</p>}
     {result && <p className="hooks-trade-result" role="status">{result.kind === 'buy' ? `You bought ${formatUnits(BigInt(result.received), market.decimals, 0)} ${symbol}.${result.graduated ? ` ${symbol} has graduated.` : ''}`
       : `${sol(result.received, 6)} ${result.native ? 'went straight to' : 'is back in'} your wallet.`}</p>}
     <HooksOperationError error={error}/>
@@ -317,10 +334,9 @@ export function HookTradeSummary({ market, symbol, buying, estimate, plan, hold,
       ? 'Finishing a curve from repo.ing opens soon, so buy a little less for now.'
       : `${symbol} graduates in the same transaction: its liquidity is locked forever${market.policyKind==='selected-hook'?'. The selected hook remains active.':' and the max per wallet lifts.'}`}</p>}
     <dl className="trade-details">
-      <div><dt>Minimum received</dt><dd>{estimate.minAmountOut===null?'Unmeasured — get a quote first':`${formatUnits(estimate.minAmountOut, buying ? market.decimals : 9, buying ? 0 : 6)} ${buying ? symbol : 'SOL'}`}</dd></div>
+      {/* You pay, the fee, coins burned, you receive and the minimum are in the preview above (HookTradePreview). */}
+      {estimate.minAmountOut === null && <div><dt>Minimum received</dt><dd>Unmeasured — get a quote first</dd></div>}
       <div><dt>Price impact</dt><dd className={estimate.priceImpactBps >= 500 ? 'is-high' : undefined}>{estimate.hookDeductionsUnmeasured?'Unmeasured':`${(estimate.priceImpactBps / 100).toFixed(2)}%`}</dd></div>
-      <div><dt>Creator base fee <small>({market.creatorFeeBps / 100}%)</small></dt><dd>{sol(estimate.creatorFee, 6)}</dd></div>
-      {BigInt(estimate.burned ?? 0) > 0n && <div><dt>Token burn <small>({(buying ? market.burnBuyBps : market.burnSellBps) / 100}%)</small></dt><dd>{formatUnits(BigInt(estimate.burned), market.decimals)} {symbol}</dd></div>}
       {estimate.hookDeductionsUnmeasured&&<div><dt>Token-hook fee / burn / custom SOL cut</dt><dd>Unmeasured</dd></div>}
       {deposit > 0n && <div><dt>{native ? <>Coin account deposit <small>(first buy)</small></> : <>Hook Lab deposits <small>(first trade only)</small></>}</dt><dd>{sol(deposit, 5)}</dd></div>}
       {plan && <div><dt>Network fees</dt><dd>{sol(plan.steps.reduce((sum, s) => sum + s.feeLamports, 0n), 6)}</dd></div>}

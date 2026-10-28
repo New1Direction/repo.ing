@@ -33,5 +33,7 @@ export function exploreHookCoins({ env = process.env, configuration = walletIden
 
 export const EXPLORE_IMAGE_WIDTH = 128
 // What the Explore list and strip show of a coin (plain data for the client components).
+// The fee and rule numbers ride along for the browse chips, badges and one-number fee (app/lib/hooklab-ux.mjs).
 export const hookCoinRow = coin => Object.freeze({ mint: coin.mint, name: coin.name, symbol: coin.symbol,
-  image: coin.profile ? coinImageUrl('', coin.id, EXPLORE_IMAGE_WIDTH) : null, rules: hookCoinRules(coin), stats: coin.stats })
+  image: coin.profile ? coinImageUrl('', coin.id, EXPLORE_IMAGE_WIDTH) : null, rules: hookCoinRules(coin), stats: coin.stats,
+  capBps: coin.selectedHook ? 0 : Number(coin.capBps) || 0, creatorFeeBps: Number(coin.creatorFeeBps) || 0, burnBps: Number(coin.burnBps) || 0, holderBps: Number(coin.holderBps) || 0 })

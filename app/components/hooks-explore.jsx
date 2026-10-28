@@ -6,6 +6,8 @@ import { ArrowRight, ChevronRight, Image as ImageIcon, Search } from 'lucide-rea
 import { marketCapDisplay } from '../lib/market-display.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
 import { hookCoinView, orderHookCoins } from '../lib/hooklab-explore-order.mjs'
+import { HOOK_TYPES, feeHeadline, filterCoins } from '../lib/hooklab-ux.mjs'
+import { HookTypeBadges } from './hooks-badges'
 import '../hooks-explore.css'
 
 export const EXPLORE_STRIP_COINS = 4
@@ -26,7 +28,7 @@ const volume = coin => coin.stats ? `${formatSolDisplay(coin.stats.volume24hLamp
 
 function CoinRow({ coin, index, usdPerSol }) {
   return <div className="market-row"><span className="row-index">{index + 1}</span>
-    <Link href={coinHref(coin.mint)} className="table-repo"><CoinAvatar image={coin.image}/><span><span className="table-repo-name"><strong>{coin.name}</strong><span className="table-repo-ticker">${coin.symbol}</span></span><small>{coin.rules}</small></span></Link>
+    <Link href={coinHref(coin.mint)} className="table-repo"><CoinAvatar image={coin.image}/><span><span className="table-repo-name"><strong>{coin.name}</strong><span className="table-repo-ticker">${coin.symbol}</span></span><small>{feeHeadline(coin).text}</small><HookTypeBadges coin={coin} className="is-row"/></span></Link>
     <Cap coin={coin} usdPerSol={usdPerSol}/><span className="table-volume">{volume(coin)}</span><span>{coin.stats?.totalTrades.toLocaleString('en-US') ?? '0'}</span>
     <span className="table-actions"><Link href={coinHref(coin.mint)} className="button outline table-action">Trade<ChevronRight size={15}/></Link></span></div>
 }
@@ -36,18 +38,25 @@ function CoinRow({ coin, index, usdPerSol }) {
 export function HookCoinExplore({ coins, usdPerSol, basePath = '/explore/hooks' }) {
   const router = useRouter(), params = useSearchParams()
   const view = hookCoinView(params.get('view'))
+  const type = HOOK_TYPES.some(([id]) => id === params.get('type')) ? params.get('type') : 'all'
   const [query, setQuery] = useState('')
-  const shown = useMemo(() => orderHookCoins(coins.filter(c => `${c.name} ${c.symbol} ${c.mint}`.toLowerCase().includes(query.trim().toLowerCase())), view), [coins, query, view])
-  const select = value => router.replace(`${basePath}${value === 'trending' ? '' : `?view=${value}`}`, { scroll: false })
+  const shown = useMemo(() => orderHookCoins(filterCoins(coins, type).filter(c => `${c.name} ${c.symbol} ${c.mint}`.toLowerCase().includes(query.trim().toLowerCase())), view), [coins, query, view, type])
+  // View and hook type live in the address (shareable), updated in place with no page reload.
+  const go = (key, value, fallback) => { const next = new URLSearchParams(params.toString()); value === fallback ? next.delete(key) : next.set(key, value); router.replace(`${basePath}${next.size ? `?${next}` : ''}`, { scroll: false }) }
+  const select = value => go('view', value, 'trending')
   return <>
     <div className="explore-search"><Search size={20}/><input aria-label="Search Hooks coins" placeholder="Search coins, tickers or addresses..." value={query} onChange={e => setQuery(e.target.value)}/></div>
     <div className="discovery-controls"><div className="discovery-tabs" aria-label="Hooks coin views">
       {VIEWS.map(([value, label]) => <button type="button" key={value} aria-pressed={view === value} onClick={() => select(value)}>{label}</button>)}
     </div></div>
-    <div className="discovery-caption"><span>{CAPTIONS[view]}</span>{query && <button type="button" onClick={() => setQuery('')}>Clear search</button>}</div>
+    <div className="hook-chips" role="group" aria-label="Filter by hook">
+      {[['all', 'All hooks'], ...HOOK_TYPES].map(([id, label]) => <button type="button" key={id} className={`hook-chip is-${id}`} aria-pressed={type === id}
+        onClick={() => go('type', id, 'all')}>{label}<span>{id === 'all' ? coins.length : filterCoins(coins, id).length}</span></button>)}
+    </div>
+    <div className="discovery-caption"><span>{CAPTIONS[view]}</span>{(query || type !== 'all') && <button type="button" onClick={() => { setQuery(''); go('type', 'all', 'all') }}>Clear filters</button>}</div>
     <div className="market-table-scroll"><div className="market-table hook-coin-table"><div className="market-head">{HEADINGS.map(h => <span key={h}>{h}</span>)}<span className="actions-heading">Action</span></div>
       {shown.length ? shown.map((coin, index) => <CoinRow key={coin.mint} coin={coin} index={index} usdPerSol={usdPerSol}/>)
-        : <div className="table-empty">{coins.length ? 'No coins match this search.' : <>No Hooks coins yet. <Link href="/hooks">Launch the first one</Link>.</>}</div>}
+        : <div className="table-empty">{coins.length ? 'No coins match these filters.' : <>No Hooks coins yet. <Link href="/hooks">Launch the first one</Link>.</>}</div>}
     </div></div>
     <div className="table-count">Showing {shown.length} of {coins.length} Hooks coins · Hooks coins trade on repo.ing in SOL.</div>
   </>

@@ -163,7 +163,7 @@ test('a delisted coin shows the notice and offers no BUY; selling still works', 
   const view = { market: market(), coin: ownCoin({ moderation: { delisted: true, reason: 'impersonation', notice } }), wallet: null, tradingOpen: true, nativeTrading: true }
   const markup = panel(view)
   assert.match(text(markup), /delisted this coin, so buying it here is off\. You can still sell\./)
-  assert.match(markup, /<button type="button" disabled="">0\.01 SOL<\/button>/, 'the buy shortcuts are off')
+  assert.match(markup, /<button type="button" disabled=""[^>]*>0\.1 SOL<\/button>/, 'the buy shortcuts are off')
   assertClean(markup, 'delisted panel')
 })
 

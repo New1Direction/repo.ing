@@ -1,0 +1,99 @@
+/* Hooks UI pass (owner, 2026-10-28): one accent (the site green), a small badge colour per hook type. */
+:root{--hook-maxwallet:#8fb8ff;--hook-burn:#ff9a6b;--hook-creator:#81e6ad;--hook-holders:#d7a8ff}
+
+/* Badges and filter chips */
+.hook-badges{display:flex;flex-wrap:wrap;gap:6px;list-style:none;margin:8px 0 0;padding:0}
+.hook-badges.is-row{margin-top:5px}
+.hook-badge{--c:var(--muted);display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;line-height:1;padding:4px 8px;border-radius:999px;color:var(--c);background:color-mix(in srgb,var(--c) 12%,transparent);border:1px solid color-mix(in srgb,var(--c) 30%,transparent)}
+.hook-badge::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--c)}
+.hook-badge.is-max-wallet,.hook-chip.is-max-wallet{--c:var(--hook-maxwallet)}
+.hook-badge.is-burn,.hook-chip.is-burn{--c:var(--hook-burn)}
+.hook-badge.is-creator-fee,.hook-chip.is-creator-fee{--c:var(--hook-creator)}
+.hook-badge.is-holders,.hook-chip.is-holders{--c:var(--hook-holders)}
+.hook-chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.hook-chip{--c:var(--green);display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+.hook-chip span{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+@media(hover:hover){.hook-chip:hover{color:var(--text);border-color:var(--border-strong)}}
+.hook-chip[aria-pressed=true]{color:var(--text);border-color:color-mix(in srgb,var(--c) 60%,transparent);background:color-mix(in srgb,var(--c) 12%,transparent)}
+.hook-chip[aria-pressed=true] span{color:var(--c)}
+
+/* One fee number */
+.hooks-fee-headline{margin:10px 0 0;font-size:14px;font-weight:650;color:var(--text);letter-spacing:-.01em}
+.hooks-trade .hooks-fee-headline{margin:0 0 12px;font-size:13px;color:var(--muted);font-weight:600}
+
+/* Pre-sign preview */
+.hooks-preview{margin:14px 0 4px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:color-mix(in srgb,var(--surface2) 70%,transparent);display:grid;gap:8px}
+.hooks-preview>div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:13px}
+.hooks-preview dt{color:var(--muted)}.hooks-preview dt small{color:var(--dim);font-size:11px}
+.hooks-preview dd{margin:0;font-variant-numeric:tabular-nums;text-align:right;color:var(--text)}
+.hooks-preview .is-burn dd{color:var(--hook-burn)}
+.hooks-preview .is-receive{padding-top:8px;border-top:1px solid var(--border)}
+.hooks-preview .is-receive dt,.hooks-preview .is-receive dd{font-size:15px;font-weight:700;color:var(--text)}
+.hooks-preview .is-minimum{font-size:12px}.hooks-preview .is-minimum dt,.hooks-preview .is-minimum dd{color:var(--dim)}
+
+/* Max-wallet room, shown before any click */
+.hooks-cap-room{margin:10px 0 0;padding:10px 12px;border-radius:10px;font-size:12.5px;line-height:1.5;color:var(--muted);background:color-mix(in srgb,var(--hook-maxwallet) 8%,transparent);border:1px solid color-mix(in srgb,var(--hook-maxwallet) 25%,transparent)}
+.hooks-cap-room strong{color:var(--text);font-weight:650}
+.hooks-cap-room.is-full{background:color-mix(in srgb,var(--hook-burn) 8%,transparent);border-color:color-mix(in srgb,var(--hook-burn) 30%,transparent)}
+.hooks-cap-room .hooks-text-button{display:block;margin-top:6px;min-height:36px;padding:0;color:var(--green);font-weight:650}
+
+/* Status bar instead of a spinner */
+.hooks-status{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:12px}
+.hooks-status-head{display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-bottom:6px}
+.hooks-status-head a{color:var(--green);font-size:12px}
+.hooks-status-track{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.hooks-status-track span{display:flex;align-items:center;justify-content:center;gap:4px;min-height:26px;border-radius:6px;font-size:11px;font-weight:600;color:var(--dim);background:var(--surface2);border:1px solid var(--border)}
+.hooks-status-track .is-done{color:#0f1712;background:var(--green);border-color:var(--green)}
+.hooks-status-track .is-now{color:var(--text);border-color:var(--green);background:linear-gradient(90deg,color-mix(in srgb,var(--green) 25%,transparent),transparent);background-size:200% 100%;animation:hooks-status-pulse 1.2s ease-in-out infinite}
+@keyframes hooks-status-pulse{0%{background-position:100% 0}100%{background-position:-100% 0}}
+@media(prefers-reduced-motion:reduce){.hooks-status-track .is-now{animation:none}}
+.hooks-status li[data-failed] .hooks-status-track span{color:#f6babc;background:#2a1c1f;border-color:#6c3c40}
+.hooks-status-stopped{color:#f2a1a3;font-size:12px}
+
+/* Skeleton while the coin loads */
+.hooks-skeleton{display:grid;gap:12px;margin:6px 0 14px}
+.hooks-skeleton i{display:block;border-radius:10px;background:linear-gradient(90deg,var(--surface2) 25%,color-mix(in srgb,var(--surface2) 60%,var(--border)) 50%,var(--surface2) 75%);background-size:200% 100%;animation:hooks-shimmer 1.3s linear infinite}
+.hooks-skeleton .is-tabs{height:40px}.hooks-skeleton .is-field{height:74px}.hooks-skeleton .is-button{height:50px}
+@keyframes hooks-shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
+@media(prefers-reduced-motion:reduce){.hooks-skeleton i{animation:none}}
+
+/* Size buttons */
+.hooks-trade .trade-quick-actions button[aria-pressed=true]{border-color:var(--green);color:var(--text)}
+
+/* Live total burned */
+.hooks-burned{display:flex;align-items:center;gap:12px;margin:14px 0 0;padding:12px 14px;border-radius:12px;border:1px solid color-mix(in srgb,var(--hook-burn) 30%,transparent);background:color-mix(in srgb,var(--hook-burn) 8%,transparent);color:var(--hook-burn)}
+.hooks-burned div{display:grid;gap:2px}
+.hooks-burned span{font-size:12px;color:var(--muted)}
+.hooks-burned strong{font-size:18px;color:var(--text);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.hooks-burned small{font-size:11.5px;color:var(--dim)}
+
+/* Phones: the trade box is a bottom sheet with thumb-sized controls */
+.hooks-sheet-handle{display:none}
+@media(max-width:640px){
+  .hooks-trade.hooks-sheet{position:fixed;left:0;right:0;bottom:0;z-index:60;margin:0;max-height:88svh;overflow:auto;border-radius:18px 18px 0 0;border-bottom:0;
+    padding:6px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:0 -12px 40px #000a;transform:translateY(calc(100% - 118px));transition:transform .28s cubic-bezier(.2,.8,.2,1);background:var(--surface)}
+  .hooks-trade.hooks-sheet.is-open{transform:translateY(0)}
+  @media(prefers-reduced-motion:reduce){.hooks-trade.hooks-sheet{transition:none}}
+  .hooks-sheet-handle{display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;min-height:52px;padding:6px 0 10px;border:0;background:none;color:var(--text);font:inherit;font-size:15px;font-weight:700;cursor:pointer}
+  .hooks-sheet-handle span{width:40px;height:4px;border-radius:2px;background:var(--border-strong)}
+  .hooks-trade .trade-tabs button,.hooks-trade .trade-quick-actions button,.hooks-trade .hooks-slippage button{min-height:44px}
+  .hooks-trade .trade-submit{min-height:52px;font-size:16px}
+  .hooks-coin-layout{padding-bottom:132px}
+  .hook-chip{min-height:44px}
+}
+
+/* Launch: presets, live limit, blocked reason, live preview */
+.hlf-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0 0 20px}
+.hlf-preset{--c:var(--green);display:grid;gap:4px;text-align:left;min-height:64px;padding:12px 14px;border-radius:12px;border:1px solid var(--line,var(--border));background:var(--field,var(--surface2));color:var(--text);font:inherit;cursor:pointer;transition:border-color .15s,background .15s}
+.hlf-preset strong{font-size:14px}.hlf-preset small{font-size:12px;color:var(--muted)}
+.hlf-preset.is-burn{--c:var(--hook-burn)}.hlf-preset.is-holders{--c:var(--hook-holders)}.hlf-preset.is-creator{--c:var(--hook-creator)}
+@media(hover:hover){.hlf-preset:hover:not(:disabled){border-color:color-mix(in srgb,var(--c) 60%,transparent)}}
+.hlf-preset[aria-pressed=true]{border-color:var(--c);background:color-mix(in srgb,var(--c) 10%,var(--field,var(--surface2)))}
+.hlf-preset:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:520px){.hlf-presets{grid-template-columns:1fr}.hlf-preset{min-height:56px}}
+.hlf-limit{display:flex;align-items:center;gap:10px;margin:12px 0 0;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.hlf-limit-bar{flex:1;height:6px;border-radius:99px;background:var(--line-strong,var(--border));overflow:hidden}
+.hlf-limit-bar i{display:block;height:100%;width:var(--fill);background:var(--green);border-radius:inherit;transition:width .15s}
+.hlf-limit.is-over{color:#f2a1a3}.hlf-limit.is-over .hlf-limit-bar i{background:#f28485}
+.hlf-block-reason{margin:10px 0 0;padding:10px 12px;border-radius:10px;font-size:13px;color:#f6babc;background:#2a1c1f;border:1px solid #6c3c40}
+.hlf-preview-fee{margin:12px 0 0;font-size:14px;font-weight:650}

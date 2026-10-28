@@ -47,7 +47,7 @@ test('nothing is read while site launches are off', async () => {
 test('a row names the coin, its image only when it has a profile, and its rules with the full fee', () => {
   const base = { id: 'r1', mint: 'm1', name: 'Smoke', symbol: 'SMK', capBps: 200, creatorFeeBps: 200, burnBps: 300, stats: null }
   assert.deepEqual(hookCoinRow({ ...base, profile: null }), { mint: 'm1', name: 'Smoke', symbol: 'SMK', image: null,
-    rules: 'Max 2% per wallet · 5% total fee (2% creator + 3% burn)', stats: null })
+    rules: 'Max 2% per wallet · 5% total fee (2% creator + 3% burn)', stats: null, capBps: 200, creatorFeeBps: 200, burnBps: 300, holderBps: 0 })
   assert.match(hookCoinRow({ ...base, profile: {} }).image, /r1\/image\?w=128$/)
   assert.equal(hookCoinRow({ ...base, burnBps: 0, profile: null }).rules, 'Max 2% per wallet · 2% creator fee')
 })

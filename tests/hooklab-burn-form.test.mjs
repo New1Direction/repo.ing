@@ -68,12 +68,14 @@ test('the review screen shows the burn and the total a trade pays', () => {
   assert.doesNotMatch(words, /buy ?back/i)
 })
 
-test('a burning coin\'s trade summary shows the coins each trade burns, as a token burn', async () => {
-  const { HookTradeSummary } = await appModule('app/components/hooklab-trade-panel.jsx')
-  const market = { decimals: 6, creatorFeeBps: 500, burnBuyBps: 500, burnSellBps: 500 }
-  const estimate = { minAmountOut: 9_000_000n, priceImpactBps: 10, creatorFee: 50_000n, burned: 490_000n }
-  const words = text(html(h(HookTradeSummary, { market, symbol: 'BURN', buying: true, estimate, native: true })))
-  assert.match(words, /Token burn \(5%\) 0\.49 BURN/)
+test('a burning coin\'s trade preview shows the coins each trade burns, before signing', async () => {
+  // The burn line moved from the summary to the pre-sign preview (owner UI pass 2026-10-28).
+  const { HookTradePreview } = await appModule('app/components/hooklab-trade-ux.jsx')
+  const market = { decimals: 6, symbol: 'BURN', creatorFeeBps: 500, burnBuyBps: 500, burnSellBps: 500 }
+  const estimate = { delivered: 9_310_000n, minAmountOut: 9_000_000n, priceImpactBps: 10, creatorFee: 50_000n, burned: 490_000n }
+  const words = text(html(h(HookTradePreview, { market, estimate, side: 'buy', amount: 1_000_000n })))
+  assert.match(words, /Burned \(5%\) 0\.49 \$BURN/)
+  assert.match(words, /You pay 0\.001 SOL/); assert.match(words, /You receive 9 \$BURN/)
   assert.doesNotMatch(words, /buy ?back/i)
-  assert.doesNotMatch(text(html(h(HookTradeSummary, { market: { ...market, burnBuyBps: 0, burnSellBps: 0 }, symbol: 'BURN', buying: true, estimate: { ...estimate, burned: 0n }, native: true }))), /Token burn/)
+  assert.doesNotMatch(text(html(h(HookTradePreview, { market: { ...market, burnBuyBps: 0, burnSellBps: 0 }, estimate: { ...estimate, burned: 0n }, side: 'buy', amount: 1_000_000n }))), /Burned/)
 })

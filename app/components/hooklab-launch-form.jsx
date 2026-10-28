@@ -12,6 +12,8 @@ import { OPEN_LAUNCH_NOTE, SELECTED_HOOK_NOTE, openFeeSplit, openLaunchCosts } f
 import { HookCatalogSelector } from './hooklab-hook-catalog'
 import { HookSelectedEconomics } from './hooklab-coin-form'
 import { HooksOperationError } from './hooks-ui'
+import { HookTypeBadges } from './hooks-badges'
+import { LAUNCH_PRESETS, activePreset, feeHeadline, launchLimit, presetFields } from '../lib/hooklab-ux.mjs'
 import './hooklab-launch-form.css'
 
 const LAMPORTS_PER_SOL = 1_000_000_000n
@@ -121,6 +123,7 @@ function CreatorFee({ coin, set, disabled, menus }) {
     <p id="creator-fee-split" className="hlf-hint"><strong>You receive 75% · repo.ing receives 25%</strong>
       {split && <span>At {percent(split.feeBps)}: {share(split.creatorBps)} to you + {share(split.platformBps)} to repo.ing of every buy and sell, in SOL.</span>}
       {max !== null && <span>Any fee from 0% to {percent(max)}, in steps of 0.01%.</span>}</p>
+    <LimitMeter totalBps={coin.creatorFeeBps} maxBps={max ?? undefined}/>
   </>
 }
 
@@ -149,14 +152,40 @@ function BurnFee({ coin, set, disabled, menus }) {
     </dl>
     <p className="hlf-fee-note">{now.lines && <strong>{now.lines.total}</strong>}
       Your part is paid in SOL: you keep 75% and repo.ing takes 25%. {burnBps > 0 ? 'The burned part destroys coins on every trade, so the supply shrinks.' : 'Slide the burn up to destroy coins on every trade and shrink the supply.'}</p>
+    <LimitMeter totalBps={totalBps} maxBps={max}/>
     {now.problem && <p className="inline-error" role="alert">{now.problem}</p>}
   </>
+}
+
+// The live limit: "7% of 10% max" with a bar that turns red past the ceiling (the launch button says why it's blocked).
+function LimitMeter({ totalBps, maxBps }) {
+  if (!Number.isInteger(maxBps)) return null
+  const limit = launchLimit({ totalBps, maxBps })
+  return <div className={`hlf-limit${limit.ok ? '' : ' is-over'}`} role="status" aria-live="polite">
+    <span className="hlf-limit-bar" aria-hidden="true"><i style={{ '--fill': `${limit.fill * 100}%` }}/></span><span>{limit.text}</span></div>
+}
+
+// Three starting points the sliders then fine-tune. Holder rewards waits for Holders Earn; a burn coin needs Burn on.
+function LaunchPresets({ coin, set, disabled, menus }) {
+  const burnEnabled = menus?.burnEnabled === true, now = burnEnabled ? burnFeeChange(menus, coin, {}) : null
+  const active = activePreset({ burnEnabled, totalBps: now?.feeTotalBps, burnShareBps: now?.burnShareBps, creatorFeeBps: coin.creatorFeeBps })
+  const apply = preset => {
+    const fields = presetFields(preset, { burnEnabled, maxCreatorFeeBps: menus?.maxCreatorFeeBps })
+    if (!fields) return
+    if (burnEnabled) { const { problem: _, lines: __, maxTotalBps: ___, ...next } = burnFeeChange(menus, coin, fields); set(next) } else set(fields)
+  }
+  return <div className="hlf-presets" role="group" aria-label="Start from a preset">{LAUNCH_PRESETS.map(preset => {
+    const off = preset.soon || !presetFields(preset, { burnEnabled, maxCreatorFeeBps: menus?.maxCreatorFeeBps })
+    return <button key={preset.id} type="button" className={`hlf-preset is-${preset.id}`} aria-pressed={active === preset.id} disabled={disabled || off} onClick={() => apply(preset)}>
+      <strong>{preset.label}</strong><small>{preset.soon ? 'Soon' : off ? 'Needs Burn' : preset.hint}</small></button>
+  })}</div>
 }
 
 function TradingRules({ coin, set, disabled, menus, allowSelectedHook }) {
   const selected = isSelected(coin), caps = menus?.capBps ?? [], burn = !selected && menus?.burnEnabled === true
   return <section className="hlf-section" aria-labelledby="hlf-rules">
     <h2 id="hlf-rules"><span>02</span>Trading rules</h2>
+    {!selected && <LaunchPresets coin={coin} set={set} disabled={disabled} menus={menus}/>}
     <div className="hlf-rule"><label htmlFor={selected ? 'selected-creator-fee' : burn ? 'fee-total-percent' : 'creator-fee-percent'}>{burn ? 'Total fee' : 'Creator fee'}</label><div>
       {burn ? <BurnFee coin={coin} set={set} disabled={disabled} menus={menus}/> : selected ? <>
         <div className="hlf-percent"><input id="selected-creator-fee" aria-label="Creator fee (bps)" type="number" min={0} max={menus?.maxCreatorFeeBps} step={1} required value={coin.creatorFeeBps}
@@ -189,17 +218,19 @@ function TradingRules({ coin, set, disabled, menus, allowSelectedHook }) {
 }
 
 // The right column: the coin as people will see it, then what launching costs and the one action.
-export function HookLaunchSummary({ coin, openCreation, costs, disabled, busyLabel, error = '', errorRef = null }) {
+export function HookLaunchSummary({ coin, openCreation, costs, disabled, busyLabel, error = '', errorRef = null, blockReason = '' }) {
   const selected = isSelected(coin), split = selected ? null : feeBreakdown(coin.creatorFeeBps), burnBps = openCreation?.burnEnabled ? burnOf(coin) : 0
   const { rows, total, need } = openLaunchCosts(selected ? { launchFeeLamports: openCreation?.launchFeeLamports } : openCreation, selected ? {} : costs)
   const [failed, setFailed] = useState(null)
   return <aside className="hlf-summary" aria-label="Coin preview and launch cost">
     <div className="hlf-card hlf-preview">
-      <p className="hlf-kicker">Coin preview</p>
+      <p className="hlf-kicker">Live preview of your coin page</p>
       <div className="hlf-preview-head">
         <div className="hlf-avatar">{coin.image && coin.image !== failed ? <img src={coin.image} alt="" onError={() => setFailed(coin.image)}/> : <ImageIcon size={22} aria-hidden="true"/>}</div>
         <div><strong>{coin.name.trim() || 'Your coin'}</strong><span>${coin.symbol || 'TICKER'}</span></div>
       </div>
+      {!selected && coin.creatorFeeBps !== '' && <p className="hlf-preview-fee">{feeHeadline({ creatorFeeBps: coin.creatorFeeBps, burnBps }).text}</p>}
+      {!selected && <HookTypeBadges coin={{ capBps: coin.capBps, burnBps, creatorFeeBps: Number(coin.creatorFeeBps) || 0 }}/>}
       <dl>
         {burnBps > 0 && <div><dt>Total fee</dt><dd>{coin.creatorFeeBps === '' ? '—' : percent(coin.creatorFeeBps + burnBps)}</dd></div>}
         <div><dt>Creator fee</dt><dd>{coin.creatorFeeBps === '' ? '—' : selected ? `${coin.creatorFeeBps} bps` : percent(coin.creatorFeeBps)}</dd></div>
@@ -217,7 +248,8 @@ export function HookLaunchSummary({ coin, openCreation, costs, disabled, busyLab
       <div className="hlf-total"><span>Estimated total</span><strong>{total ?? 'Shown at review'}</strong></div>
       <p className="hlf-fine">{need ? `Keep at least ${need} in your wallet. Exact amounts are shown at review and in your wallet.` : 'Exact amounts are shown at review and in your wallet.'} The launch opens trading; buy your own coin from its page once it’s live.</p>
       <div ref={errorRef} className="hlf-error">{error && <HooksOperationError error={error}/>}</div>
-      <button type="submit" className="hlf-primary" disabled={disabled}>{busyLabel ?? <>Review launch <ArrowRight size={18} aria-hidden="true"/></>}</button>
+      {blockReason && <p className="hlf-block-reason" role="status">{blockReason}</p>}
+      <button type="submit" className="hlf-primary" disabled={disabled || !!blockReason}>{busyLabel ?? <>Review launch <ArrowRight size={18} aria-hidden="true"/></>}</button>
       <p className="hlf-fine hlf-center">Review first. Nothing is signed yet.</p>
     </div>
     <div className="hlf-card hlf-notice">
@@ -231,12 +263,28 @@ export function HookLaunchSummary({ coin, openCreation, costs, disabled, busyLab
   </aside>
 }
 
+// Why the launch button is blocked right now, in plain words, or '': the total over its ceiling, or a split the chain
+// would refuse (the same checks the review runs).
+export function launchBlockReason(coin, menus) {
+  if (isSelected(coin)) return ''
+  if (menus?.burnEnabled === true) {
+    const now = burnFeeChange(menus, coin, {}), limit = launchLimit({ totalBps: now.feeTotalBps, maxBps: now.maxTotalBps })
+    return !limit.ok ? limit.reason : now.problem || ''
+  }
+  if (menus?.continuousCreatorFee && Number.isInteger(menus?.maxCreatorFeeBps)) {
+    const limit = launchLimit({ totalBps: coin.creatorFeeBps, maxBps: menus.maxCreatorFeeBps })
+    return limit.ok ? '' : limit.reason.replace('total fee', 'creator fee')
+  }
+  return ''
+}
+
 // The whole first step. Submitting runs the caller's checks and moves to the existing review.
 export function HookLaunchForm({ coin, set, disabled, onImageBusy, imageBusy, menus, openCreation, costs, onSubmit, notices, error = '', allowSelectedHook = false }) {
   const busyLabel = imageBusy ? 'Preparing image…' : null, errorRef = useRef(null)
   // A refusal shows by the action; on a phone that is below the fields, so bring it into view.
   useEffect(() => { if (error) errorRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }) }, [error])
   const { total } = openLaunchCosts(isSelected(coin) ? { launchFeeLamports: openCreation?.launchFeeLamports } : openCreation, isSelected(coin) ? {} : costs)
+  const blockReason = launchBlockReason(coin, menus)
   return <form className="hlf" onSubmit={onSubmit} noValidate>
     <div className="hlf-main">
       {notices}
@@ -245,10 +293,10 @@ export function HookLaunchForm({ coin, set, disabled, onImageBusy, imageBusy, me
         <TradingRules coin={coin} set={set} disabled={disabled} menus={menus} allowSelectedHook={allowSelectedHook}/>
       </fieldset>
     </div>
-    <HookLaunchSummary coin={coin} openCreation={openCreation} costs={costs} disabled={disabled || imageBusy} busyLabel={busyLabel} error={error} errorRef={errorRef}/>
+    <HookLaunchSummary coin={coin} openCreation={openCreation} costs={costs} disabled={disabled || imageBusy} busyLabel={busyLabel} error={error} errorRef={errorRef} blockReason={blockReason}/>
     <div className="hlf-mobile-bar">
       <div><span>Estimated total</span><strong>{total ?? 'At review'}</strong></div>
-      <button type="submit" className="hlf-primary" disabled={disabled || imageBusy}>{busyLabel ?? <>Review launch <ArrowRight size={18} aria-hidden="true"/></>}</button>
+      <button type="submit" className="hlf-primary" disabled={disabled || imageBusy || !!blockReason} title={blockReason || undefined}>{busyLabel ?? <>Review launch <ArrowRight size={18} aria-hidden="true"/></>}</button>
     </div>
   </form>
 }

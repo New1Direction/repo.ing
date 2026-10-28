@@ -82,7 +82,8 @@ export function estimateTrade(market, { side, amount, coinBalance = 0n, slippage
     const graduates = fill !== null && amount === fill
     // Without an exact fill no buy can stop at the graduation point, so one that gets there would overshoot it.
     if (curveBuy && !graduates && isReady(quote.after, market.graduationQuote)) return { error: 'That would take the coin past graduation. Try a smaller amount.' }
-    return { delivered: quote.delivered, minAmountOut, creatorFee: quote.fees.grossQuote, burned: quote.burned, priceImpactBps: Number(quote.priceImpactBps), graduates,
+    // after: the pool's reserves once this trade lands (display only; the review re-reads the chain).
+    return { delivered: quote.delivered, minAmountOut, creatorFee: quote.fees.grossQuote, burned: quote.burned, priceImpactBps: Number(quote.priceImpactBps), graduates, after: quote.after,
       ...(selected?{minAmountOut:null,hookDeductionsUnmeasured:true}:{}) }
   } catch (error) {
     if (curveBuy && error?.message === 'INSUFFICIENT_LIQUIDITY') return { error: 'That’s more than this coin’s curve has left. Try a smaller amount.' }
