@@ -854,3 +854,64 @@ test('slots: only a probe may restart a slot, only the inactive one, and only by
   await f.request('/stats', { headers: probe('a') })
   assert.equal(f.runtime.starts, starts + 1)
 })
+
+// Holders Earn (owner, 2026-10-27): an optional switch like Burn, off unless 'true'; forwarded only with Hooks and open
+// launches on; a binding that is neither 'true' nor 'false' closes the site.
+test('HOOK_HOLDERS_ENABLED is off by default and forwarded only with Hooks and open launches on', async () => {
+  const f = await fixture()
+  Object.assign(f.env, { EXISTING_MARKET_TRADING_STAGE: 'live' }, hookBindings())
+  const forwarded = async () => { const response = await f.request('/hooks/new'); assert.equal(response.status, 200); return f.runtime.calls.at(-1).env.HOOK_HOLDERS_ENABLED }
+  assert.equal(await forwarded(), 'false', 'absent: off, and Hooks stay on')
+  f.env.HOOK_HOLDERS_ENABLED = 'false'; assert.equal(await forwarded(), 'false')
+  f.env.HOOK_HOLDERS_ENABLED = 'true'; assert.equal(await forwarded(), 'true')
+  f.env.HOOK_OPEN_LAUNCHES = 'false'; assert.equal(await forwarded(), 'false', 'no open launches, no Holders Earn')
+  Object.assign(f.env, hookBindings(), { HOOK_HOLDERS_ENABLED: 'yes' })
+  assert.equal((await f.request('/explore')).status, 503)
+  Object.assign(f.env, { HOOK_HOLDERS_ENABLED: 'true', HOOKS_RECOVERY_ENABLED: 'false' })
+  assert.equal((await (await f.request()).json()).HOOK_HOLDERS_ENABLED, 'false', 'Hooks off: off')
+})
+
+test('slots: an unset Holders switch leaves a running container\'s identity as it was (no restart)', async () => {
+  const f = await fixture()
+  Object.assign(f.env, { EXISTING_MARKET_TRADING_STAGE: 'live' }, hookBindings())
+  await f.request('/hooks/new')
+  const starts = f.runtime.starts, identity = f.storage.get('review-bindings-sha256')
+  for (const name of ['HOOK_HOLDERS_ENABLED_A', 'HOOK_HOLDERS_ENABLED_B', 'HOOKLAB_STACK_BUNDLE_SHA256_B']) {
+    f.env[name] = name.startsWith('HOOKLAB') ? 'c'.repeat(64) : 'true'
+    if (name.endsWith('_A')) { delete f.env[name]; continue }
+    await f.request('/hooks/new')
+  }
+  assert.equal(f.runtime.starts, starts, 'slot b names never touch slot a'); assert.equal(f.storage.get('review-bindings-sha256'), identity)
+})
+
+// A release that carries a new stack bundle (or a new switch) names it for its own slot. The live slot's bindings stay
+// byte-for-byte as they were, so the deploy never restarts it; the release slot starts with its own.
+test('slots: a slot-scoped bundle hash and Holders switch reach only their slot; the other slot is not restarted', async () => {
+  const f = await fixture()
+  Object.assign(f.env, { EXISTING_MARKET_TRADING_STAGE: 'live' }, hookBindings(), { SLOT_PROBE_TOKEN: PROBE_TOKEN })
+  const seen = []
+  f.env.PUBLIC_SITE_B = { getByName() { return { async fetchWithReviewBindings(request, bindings) { seen.push(bindings); return new Response('slot b') } } } }
+  await f.request('/hooks/new')
+  const starts = f.runtime.starts, destroys = f.runtime.destroys ?? 0, identity = f.storage.get('review-bindings-sha256')
+  Object.assign(f.env, { HOOKLAB_STACK_BUNDLE_SHA256_B: 'c'.repeat(64), HOOK_HOLDERS_ENABLED_B: 'true' })
+  const live = await f.request('/hooks/new')
+  assert.equal(live.headers.get('x-repoing-slot'), 'a')
+  assert.equal(f.runtime.starts, starts); assert.equal(f.runtime.destroys ?? 0, destroys); assert.equal(f.storage.get('review-bindings-sha256'), identity)
+  const env = f.runtime.calls.at(-1).env
+  assert.equal(env.HOOKLAB_STACK_BUNDLE_SHA256, 'b'.repeat(64)); assert.equal(env.HOOK_HOLDERS_ENABLED, 'false')
+  assert.equal((await f.request('/hooks/new', { headers: probe('b') })).headers.get('x-repoing-slot'), 'b')
+  assert.equal(seen.at(-1).HOOKLAB_STACK_BUNDLE_SHA256, 'c'.repeat(64)); assert.equal(seen.at(-1).HOOK_HOLDERS_ENABLED, 'true')
+  // Flip to b and back: slot a's identity is still the same, so it is still not restarted.
+  f.env.ACTIVE_SLOT = 'b'
+  assert.equal((await f.request('/hooks/new')).headers.get('x-repoing-slot'), 'b')
+  assert.equal(seen.at(-1).HOOKLAB_STACK_BUNDLE_SHA256, 'c'.repeat(64))
+  f.env.ACTIVE_SLOT = 'a'; await f.request('/hooks/new')
+  assert.equal(f.runtime.starts, starts); assert.equal(f.storage.get('review-bindings-sha256'), identity)
+  // A slot-a name restarts slot a with it (that slot's own release), and a bad value closes only that slot.
+  f.env.HOOKLAB_STACK_BUNDLE_SHA256_A = 'd'.repeat(64)
+  await f.request('/hooks/new', { headers: probe('a') })
+  assert.equal(f.runtime.starts, starts + 1); assert.equal(f.runtime.calls.at(-1).env.HOOKLAB_STACK_BUNDLE_SHA256, 'd'.repeat(64))
+  f.env.HOOKLAB_STACK_BUNDLE_SHA256_A = 'not-a-hash'
+  assert.equal((await f.request('/hooks/new', { headers: probe('a') })).status, 503)
+  assert.equal((await f.request('/hooks/new', { headers: probe('b') })).status, 200)
+})
