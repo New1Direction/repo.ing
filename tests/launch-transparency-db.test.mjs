@@ -234,10 +234,12 @@ test('real PostgreSQL: funding sources link fresh sibling wallets and direct fun
     const connection = {
       getSignaturesForAddress: async key => (historyReads.push(key.toBase58()), busy.has(key.toBase58())) ? Array.from({ length: FUNDING_LIMITS.historyLimit }, (_, i) => ({ signature: `b${i}` }))
         : [{ signature: `new-${key.toBase58()}`, blockTime: 1760000000 }, { signature: `first-${key.toBase58()}`, blockTime: 1750000000 }],
-      getParsedTransaction: async signature => {
+      // The raw RPC read (src/finalized-transaction.mjs rawTransaction, jsonParsed): any transaction version.
+      _rpcRequest: async (method, [signature]) => {
         const owner = signature.split('-')[1], source = signature.startsWith('first-') ? firstTx[owner] : null
         const transfer = source ? { source, destination: owner, lamports: 50_000_000 } : { source: owner, destination: exchange, lamports: 1 }
-        return { meta: { err: null, innerInstructions: [] }, transaction: { message: { instructions: [{ programId: '11111111111111111111111111111111', parsed: { type: 'transfer', info: transfer } }] } } }
+        return { result: { version: 0, slot: 1, meta: { err: null, innerInstructions: [] },
+          transaction: { signatures: [signature], message: { instructions: [{ programId: '11111111111111111111111111111111', parsed: { type: 'transfer', info: transfer } }] } } } }
       },
     }
     for (const w of [x, y, z, big, small]) await checkWalletFunding(pool, connection, w)

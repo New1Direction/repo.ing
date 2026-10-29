@@ -1,3 +1,4 @@
+import bs58 from 'bs58'
 import { PublicKey } from '@solana/web3.js'
 import { rpcFetch } from './rpc-usage.mjs'
 
@@ -19,6 +20,29 @@ export function normalizeFinalizedTransaction(raw, signature) {
   ].map(address => new PublicKey(address))
   return { ...raw, transaction: { ...raw.transaction,
     message: { ...raw.transaction.message, accountKeys: keys } } }
+}
+
+// A normalized transaction (any version) in the shape web3.js gives a VersionedTransactionResponse, for decoders written
+// against it: getAccountKeys() over every key (static then loaded, already merged above) and compiledInstructions with
+// programIdIndex, accountKeyIndexes and data bytes. Inner instructions are the RPC's own shape in both.
+export function asVersionedShape(tx) {
+  const keys = tx.transaction.message.accountKeys
+  const message = { ...tx.transaction.message, addressTableLookups: [],
+    getAccountKeys: () => ({ length: keys.length, get: i => keys[i], staticAccountKeys: keys }),
+    compiledInstructions: tx.transaction.message.instructions.map(ix => ({ programIdIndex: ix.programIdIndex, accountKeyIndexes: ix.accounts, data: bs58.decode(ix.data) })) }
+  return { ...tx, transaction: { ...tx.transaction, message } }
+}
+
+// One transaction of any version through `connection`'s own transport (its fetch, so test fixtures and metering apply),
+// skipping web3.js's response parsing, which rejects version 1. encoding 'json' is normalized; 'jsonParsed' is returned as
+// the RPC sent it (parsed instructions). null when the transaction is not found.
+export async function rawTransaction(connection, signature, { commitment = 'finalized', encoding = 'json' } = {}) {
+  const response = await connection._rpcRequest('getTransaction', [signature, { commitment, encoding, maxSupportedTransactionVersion: 1 }])
+  if (response.error) throw new Error(`Solana RPC transaction read failed with code ${response.error.code ?? 'unknown'}`)
+  if (encoding === 'json') return normalizeFinalizedTransaction(response.result ?? null, signature)
+  const raw = response.result ?? null
+  if (raw && (!['legacy', 0, 1].includes(raw.version) || raw.transaction?.signatures?.[0] !== signature || !raw.meta)) throw new Error(UNSUPPORTED_TRANSACTION_SHAPE)
+  return raw
 }
 
 export function loadFinalizedTransaction(connection, signature, fetchImpl, delays) {

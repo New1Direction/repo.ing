@@ -1,4 +1,5 @@
 import { PublicKey } from '@solana/web3.js'
+import { rawTransaction } from './finalized-transaction.mjs'
 
 // Funding-source links (docs/LAUNCH_TRANSPARENCY.md#linked-wallets): where a trading wallet's first SOL came from. A wallet's oldest
 // transactions are read (only for wallets with a short history: a fresh wallet is what a sybil or wash-trading setup creates) and the
@@ -54,7 +55,8 @@ export async function checkWalletFunding(db, connection, wallet, { limits = FUND
     if (signatures.length >= limits.historyLimit) return store('long-history')
     for (const entry of signatures.slice(-limits.oldestChecked).reverse()) {
       if (entry.err) continue
-      const tx = await connection.getParsedTransaction(entry.signature, { maxSupportedTransactionVersion: 1, commitment: 'finalized' })
+      // Any version, parsed: web3.js rejects version 1 transactions, which would leave the wallet stored as an error forever.
+      const tx = await rawTransaction(connection, entry.signature, { encoding: 'jsonParsed' })
       const found = firstFunding(tx, wallet)
       if (found && found.funder !== wallet) {
         return store('found', { ...found, signature: entry.signature, at: entry.blockTime ? new Date(entry.blockTime * 1000) : null, busy: await funderBusy(found.funder) })

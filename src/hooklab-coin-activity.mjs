@@ -5,6 +5,7 @@ import bs58 from 'bs58'
 import { PublicKey } from '@solana/web3.js'
 import { binding } from './hooklab-owner-driver/artifacts.mjs'
 import { holdingAddress } from './hooklab-owner-driver/pins.mjs'
+import { asVersionedShape, rawTransaction } from './finalized-transaction.mjs'
 
 const fail = code => { throw Object.assign(Error(code), { code }) }
 const check = (ok, code) => { if (!ok) fail(code) }
@@ -17,7 +18,9 @@ export const HOLDING = Object.freeze({ size: 204, mint: 10, owner: 42, amount: 7
 export function hookActivityRpc(connection, { programs = null } = {}) {
   return Object.freeze({
     signatures: (pool, { before, until, limit }) => connection.getSignaturesForAddress(new PublicKey(pool), { before, until, limit }, 'finalized'),
-    transaction: signature => connection.getTransaction(signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 }),
+    // Any version: web3.js rejects version 1 transactions (Jupiter routes, for one), and one unreadable transaction would stop
+    // the coin's trade walk for good. The raw answer is shaped as decodeHookTrades expects.
+    transaction: async signature => { const tx = await rawTransaction(connection, signature); return tx && asVersionedShape(tx) },
     // Every holding of one mint under the coin's token program, up to its amount: filtered by size and by the mint at its offset.
     holdings: (mint, { token = programs?.token } = {}) => connection.getProgramAccounts(new PublicKey(token ?? fail('HOOK_HOLDERS_PROGRAMS_MISSING')), { commitment: 'confirmed', encoding: 'base64', withContext: true,
       dataSlice: { offset: 0, length: HOLDING.read }, filters: [{ dataSize: HOLDING.size }, { memcmp: { offset: HOLDING.mint, bytes: mint } }] }),

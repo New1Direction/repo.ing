@@ -102,3 +102,11 @@ test('a native swap whose two events disagree, or that misses one, stops the dec
   // Without the native expectation (a legacy coin), a lone Swapped is a bridged-SOL trade as before.
   assert.equal(decode(ownSwap({ n: 1, slot: 100, lone: true }), { ...own, expectNative: false })()[0].quoteAsset, 'bridged-sol')
 })
+
+test('a version 1 transaction decodes to the same trades as the web3.js path (raw read, shaped as web3)', async () => {
+  const { asVersionedShape, normalizeFinalizedTransaction } = await import('../src/finalized-transaction.mjs')
+  const viaWeb3 = decodeHookTrades(await read(CANARY_BUY), { signature: CANARY_BUY, pool, programs: PROGRAMS })
+  const raw = clone(canary.transactions[CANARY_BUY]), v1 = { ...raw, version: 1 }
+  assert.deepEqual(decodeHookTrades(asVersionedShape(normalizeFinalizedTransaction(raw, CANARY_BUY)), { signature: CANARY_BUY, pool, programs: PROGRAMS }), viaWeb3)
+  assert.deepEqual(decodeHookTrades(asVersionedShape(normalizeFinalizedTransaction(v1, CANARY_BUY)), { signature: CANARY_BUY, pool, programs: PROGRAMS }), viaWeb3)
+})
