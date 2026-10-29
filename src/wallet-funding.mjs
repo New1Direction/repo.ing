@@ -54,7 +54,7 @@ export async function checkWalletFunding(db, connection, wallet, { limits = FUND
     if (signatures.length >= limits.historyLimit) return store('long-history')
     for (const entry of signatures.slice(-limits.oldestChecked).reverse()) {
       if (entry.err) continue
-      const tx = await connection.getParsedTransaction(entry.signature, { maxSupportedTransactionVersion: 0, commitment: 'finalized' })
+      const tx = await connection.getParsedTransaction(entry.signature, { maxSupportedTransactionVersion: 1, commitment: 'finalized' })
       const found = firstFunding(tx, wallet)
       if (found && found.funder !== wallet) {
         return store('found', { ...found, signature: entry.signature, at: entry.blockTime ? new Date(entry.blockTime * 1000) : null, busy: await funderBusy(found.funder) })
