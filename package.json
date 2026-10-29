@@ -27,7 +27,7 @@
     "test:github-verification": "node --test tests/github-verification.test.mjs",
     "github:verify-live": "node scripts/github-live-callback.mjs",
     "test:wallet-binding": "node --test tests/wallet-binding.test.mjs",
-    "test:neurons:release": "NEURONS_RELEASE_REQUIRED=true node --test tests/dependency-security.test.mjs tests/neuron-bot-protection.test.mjs tests/neurons-publishing.test.mjs tests/neurons-preview.test.mjs tests/hooklab-wallet-identity-http.test.mjs tests/hooklab-wallet-identity-client.test.mjs tests/rpc-failover.test.mjs tests/wallet-token-2022.test.mjs tests/solana-wallet.test.mjs tests/mcp-readonly.test.mjs",
+    "test:neurons:release": "NEURONS_RELEASE_REQUIRED=true node --test tests/dependency-security.test.mjs tests/neuron-bot-protection.test.mjs tests/neurons-publishing.test.mjs tests/neurons-preview.test.mjs tests/neuron-chat.test.mjs tests/neuron-chat-ui.test.mjs tests/hooklab-wallet-identity-http.test.mjs tests/hooklab-wallet-identity-client.test.mjs tests/rpc-failover.test.mjs tests/wallet-token-2022.test.mjs tests/solana-wallet.test.mjs tests/mcp-readonly.test.mjs",
     "test:claim": "node --test tests/claim.test.mjs",
     "test:discovery": "node --test tests/discovery-rules.test.mjs tests/discovery-claims.test.mjs",
     "test:reconcile": "node --test tests/reconcile.test.mjs",

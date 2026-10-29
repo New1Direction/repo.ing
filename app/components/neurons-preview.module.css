@@ -249,6 +249,12 @@
 .chatHeading strong { display: block; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatHeading div > span { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); }
 .chatHeading > svg { color: var(--dim); }
+.recipeChatIdentity { padding: 12px 16px 0; }
+.recipeChatIdentity :global(.inner-card) { margin: 0; padding: 12px; }
+.recipeChatIdentity :global(.hooks-signin-row) { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.recipeChatIdentity :global(.button) { font-size: 12px; padding: 0 12px; }
+.recipeChatIdentity :global(h3) { font-size: 14px; }
+.recipeChatIdentity :global(p) { font-size: 12px; line-height: 1.5; }
 .chatLog { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 19px 20px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .chatDate { text-align: center; font-size: 11px; letter-spacing: .04em; color: var(--muted); margin-bottom: 24px; }
 .assistantBubble, .userBubble { width: fit-content; max-width: 88%; padding: 12px 16px; border-radius: 20px; font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }

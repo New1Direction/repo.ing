@@ -13,7 +13,9 @@ deployed settings until the owner approves the separate activation below.
 - `/neurons/import`: bounded, versioned Qwen3-8B recipe imports; see the
   [format and limitations](NEURON_PUBLISHING.md#bring-your-own-personality-configuration-import).
 - `/neurons/UUID`: stable approved profile; presets have labelled scripted chat,
-  imports have unverified settings/examples, JSON download and no connected chat.
+  imports have unverified settings/examples and JSON download. An optional
+  [private mock connection](NEURON_CHAT.md) tests chat wiring, not live inference;
+  it is disabled by default and cannot be activated on a public domain.
 - PostgreSQL ownership, immutable metadata hash, review history, shared quotas,
   Turnstile proofs and authenticated rate-limiting proxy enforcement.
 - **No tokens, trading, earnings, fees, claims, buybacks, live AI or GPU calls.**

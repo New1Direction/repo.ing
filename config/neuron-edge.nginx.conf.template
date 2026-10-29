@@ -26,7 +26,7 @@ http {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header CF-Connecting-IP "";
     proxy_set_header X-Neuron-Edge-Secret "${NEURONS_EDGE_SECRET}";
-    location ~ ^/(neurons(/|$)|api/neuron-characters(/|$)|api/hook-lab/wallet-identity(/|$)) {
+    location ~ ^/(neurons(/|$)|api/neuron-characters(/|$)|api/neuron-chat(/|$)|api/hook-lab/wallet-identity(/|$)) {
       limit_req zone=neuron_ip burst=10 nodelay;
       limit_req zone=neuron_global burst=30 nodelay;
       limit_conn neuron_connections 8;
