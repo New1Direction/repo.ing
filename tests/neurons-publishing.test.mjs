@@ -9,12 +9,14 @@ import { createNeuronPublishingHandler, neuronPublishingConfiguration } from '..
 import { walletIdentityQuota } from '../app/lib/hooklab-wallet-identity.mjs'
 import { walletPrincipalStore } from '../src/hooklab-wallet-principal.mjs'
 import { HOOK_MAINNET_GENESIS } from '../src/hooklab-execution-contract.mjs'
+import { parsePersonalityImport, PERSONALITY_IMPORT_TEMPLATE } from '../app/lib/neuron-import.mjs'
 
 if (process.env.NEURONS_RELEASE_REQUIRED === 'true' && !process.env.NEURONS_TEST_DATABASE_URL) {
   throw Error('NEURONS_TEST_DATABASE_URL is required for the publishing release gate; database tests must not be skipped.')
 }
 
 const draft = () => ({ personaId: 'crab', name: 'Sideways Club', ticker: 'SIDE', story: 'An ocean explorer with sideways ideas.', consent: true, requestId: randomUUID() })
+const imported = () => ({ personality: { ...structuredClone(PERSONALITY_IMPORT_TEMPLATE), model: { id: 'Qwen/Qwen3-8B', revision: 'a'.repeat(40) } }, consent: true, requestId: randomUUID() })
 const origin = 'https://neurons-tests.onamp.dev'
 test('publishing is explicit opt-in and rejects financial fields, overrides and unapproved content shapes', async () => {
   const handler = createNeuronPublishingHandler({ env: {}, database: () => assert.fail('DB') })
@@ -27,6 +29,58 @@ test('publishing is explicit opt-in and rejects financial fields, overrides and 
   assert.equal(first.snapshot.chatMode, 'reviewed-scripts-v1')
   assert.equal(first.snapshot.recipe.modelRevision, null)
   assert.notEqual(first.metadataSha256, second.metadataSha256)
+})
+
+test('personality imports validate a bounded data-only format without claiming inference or accepting financial overrides', () => {
+  const input = imported(), personality = input.personality
+  const value = characterSubmission(input)
+  assert.equal(value.snapshot.version, 2)
+  assert.equal(value.snapshot.chatMode, 'unavailable')
+  assert.equal(value.snapshot.personality.model.revision, 'a'.repeat(40))
+  assert.deepEqual(parsePersonalityImport(JSON.stringify(value.snapshot.personality, null, 2)), personality)
+  const reordered = Object.fromEntries(Object.entries(personality).reverse())
+  assert.equal(characterSubmission({ ...input, personality: reordered }).metadataSha256, value.metadataSha256)
+  for (const change of [{ name: 'A different name' }, { model: { ...personality.model, revision: 'b'.repeat(40) } },
+    { steering: { ...personality.steering, direction: 'down' } }, { examples: [] }]) {
+    assert.notEqual(characterSubmission({ ...input, personality: { ...personality, ...change } }).metadataSha256, value.metadataSha256)
+  }
+  for (const change of [{ format: 'pickle' }, { version: 2 }, { mint: 'forged' }, { code: 'exec()' }, { name: '\u202eunsafe' },
+    { model: { id: 'other', revision: 'a'.repeat(40) } }, { model: { ...personality.model, revision: 'main' } },
+    { attribution: { author: 'test', url: 'javascript:alert(1)' } }, { attribution: { author: 'test', url: 'not a URL' } },
+    { attribution: { author: 'test', url: 'https://user:password@example.com' } },
+    { examples: [{ prompt: 'Hello', reply: 'x'.repeat(501) }] }, { examples: Array(4).fill(personality.examples[0]) }]) {
+    assert.throws(() => characterSubmission({ ...input, personality: { ...personality, ...change } }))
+  }
+  for (const steering of [{ layer: -1 }, { layer: 36 }, { layer: 1.5 }, { neuron: -1 }, { neuron: 12288 },
+    { alpha: 0 }, { alpha: -1 }, { alpha: 10.01 }, { alpha: Infinity }, { direction: 'sideways' }]) {
+    assert.throws(() => characterSubmission({ ...input, personality: { ...personality, steering: { ...personality.steering, ...steering } } }))
+  }
+  for (const steering of [{ layer: 0, neuron: 0, direction: 'down', alpha: 0.01 }, { layer: 35, neuron: 12287, direction: 'up', alpha: 10 }]) {
+    assert.deepEqual(characterSubmission({ ...input, personality: { ...personality, steering } }).snapshot.personality.steering, steering)
+  }
+  for (const change of [{ personaId: 'crab' }, { status: 'published' }, { mint: 'forged' }, { creatorWallet: 'forged' }, { consent: false }]) assert.throws(() => characterSubmission({ ...input, ...change }))
+  assert.throws(() => parsePersonalityImport('{broken'), /valid JSON/)
+  assert.throws(() => parsePersonalityImport(' '.repeat(8193)), /8 KiB/)
+  assert.throws(() => parsePersonalityImport(JSON.stringify({ ...personality, examples: Array(3).fill({ prompt: '界'.repeat(500), reply: '界'.repeat(500) }) })), /8 KiB/)
+})
+
+test('associated concepts are optional, bounded provenance claims covered by the immutable hash', () => {
+  const input = imported()
+  delete input.personality.associatedConcepts
+  const legacy = characterSubmission(input)
+  assert.equal(Object.hasOwn(legacy.snapshot.personality, 'associatedConcepts'), false)
+  assert.deepEqual(parsePersonalityImport(JSON.stringify(legacy.snapshot.personality)), input.personality)
+  const concepts = { terms: ['pirate', '海盗'], method: 'j-lens', sourceUrl: 'https://example.com/analysis' }
+  const tagged = changes => characterSubmission({ ...input, personality: { ...input.personality, associatedConcepts: { ...concepts, ...changes } } })
+  const first = tagged({})
+  assert.deepEqual(first.snapshot.personality.associatedConcepts, concepts)
+  assert.notEqual(first.metadataSha256, legacy.metadataSha256)
+  for (const change of [{ terms: ['horse'] }, { method: 'r-lens' }, { sourceUrl: 'https://example.com/other' }]) assert.notEqual(tagged(change).metadataSha256, first.metadataSha256)
+  for (const method of ['j-lens', 'r-lens', 'logit-lens', 'creator']) assert.equal(tagged({ method }).snapshot.personality.associatedConcepts.method, method)
+  assert.equal(tagged({ terms: Array.from({ length: 12 }, (_, i) => `${i}${'界'.repeat(38)}`) }).snapshot.personality.associatedConcepts.terms.length, 12)
+  for (const change of [{ terms: [] }, { terms: Array.from({ length: 13 }, (_, i) => `${i}`) }, { terms: ['x'.repeat(41)] },
+    { terms: [' '] }, { terms: ['pirate', ' Pirate '] }, { terms: ['\u202epirate'] }, { method: 'verified' },
+    { sourceUrl: 'javascript:alert(1)' }, { sourceUrl: 'https://user:password@example.com' }, { verified: true }, { terms: [{ term: 'pirate', rank: 1 }] }]) assert.throws(() => tagged(change))
 })
 
 test('PostgreSQL publishing enforces authenticated ownership, review visibility, replay and concurrent caps', { skip: !process.env.NEURONS_TEST_DATABASE_URL }, async t => {
@@ -79,6 +133,39 @@ test('PostgreSQL publishing enforces authenticated ownership, review visibility,
       assert.equal((await pool.query('select count(*)::int as count from neuron_character_reviews')).rows[0].count, 2)
     })
     await reset()
+    await t.test('imported recipes remain private until review; exports round-trip and removal revokes downloads', async () => {
+      const input = imported()
+      // Valid UTF-8 import above the previous 4 KiB cap must survive HTTP and export.
+      input.personality.examples = Array.from({ length: 3 }, () => ({ prompt: 'é'.repeat(400), reply: 'ç'.repeat(400) }))
+      assert.ok(Buffer.byteLength(JSON.stringify(input)) > 4096)
+      assert.equal((await call({ ...input, mint: 'forged' }, bob)).status, 400)
+      assert.equal((await handler(new Request(`${origin}/api/neuron-characters`, { method: 'POST',
+        headers: { origin, 'content-type': 'application/json' }, body: ' '.repeat(9217) }))).status, 400)
+      const submitted = await call(input, bob), { character } = await submitted.json()
+      assert.equal(submitted.status, 201)
+      assert.equal(character.status, 'pending'); assert.equal(character.chatMode, 'unavailable')
+      assert.equal(character.mint, null); assert.equal(character.financialExecutionEnabled, false)
+      const download = () => call(null, null, { query: `?export=${character.id}` })
+      assert.equal((await download()).status, 404)
+      assert.deepEqual((await (await call(null, alice, { query: '?scope=mine' })).json()).characters, [])
+      await store.review(character.id, 'published', 'Reviewed all imported fields and creator supplied examples.')
+      const exported = await download()
+      assert.equal(exported.status, 200)
+      assert.match(exported.headers.get('content-disposition'), /attachment; filename="TIDE-personality.json"/)
+      const roundTrip = parsePersonalityImport(await exported.text())
+      assert.deepEqual(roundTrip, input.personality)
+      assert.equal(characterSubmission({ ...input, personality: roundTrip }).metadataSha256, character.metadataSha256)
+      assert.equal((await (await call(input, bob)).json()).character.id, character.id)
+      assert.equal((await call({ ...input, personality: { ...roundTrip, steering: { ...roundTrip.steering, neuron: 123 } } }, bob)).status, 409)
+      const another = await store.submit(bob.wallet, { ...input, requestId: randomUUID(), personality: { ...roundTrip, name: 'New version' } })
+      assert.equal(another.status, 'pending'); assert.notEqual(another.metadataSha256, character.metadataSha256)
+      assert.equal((await store.publicById(character.id)).name, input.personality.name)
+      await store.review(character.id, 'rejected', 'Removed following source attribution review.')
+      assert.equal((await download()).status, 404)
+      await pool.query("update neuron_characters set snapshot=jsonb_set(snapshot,'{personality,steering,neuron}','123') where id=$1", [another.id])
+      await assert.rejects(store.review(another.id, 'published', 'Corrupted imports must not pass review.'))
+    })
+    await reset()
     await t.test('public submissions require a fresh valid publishing proof; rejects never persist a character', async () => {
       const publicEnv = { ...env, NEURONS_PREVIEW_ONLY: 'false', NEURONS_TURNSTILE_SITE_KEY: 'site-key-fixture',
         NEURONS_TURNSTILE_SECRET_KEY: 'server-key-fixture', NEURONS_EDGE_SECRET: 'e'.repeat(48) }
@@ -91,7 +178,7 @@ test('PostgreSQL publishing enforces authenticated ownership, review visibility,
       } })
       const submit = token => publicHandler(new Request(`${origin}/api/neuron-characters`, { method: 'POST',
         headers: { origin, 'content-type': 'application/json', cookie: `__Host-hook-wallet-session=${alice.token}`,
-          'x-neuron-edge-secret': publicEnv.NEURONS_EDGE_SECRET, 'x-neuron-bot-token': token }, body: JSON.stringify(draft()) }))
+          'x-neuron-edge-secret': publicEnv.NEURONS_EDGE_SECRET, 'x-neuron-bot-token': token }, body: JSON.stringify(imported()) }))
       for (const token of ['', 'forged', 'unavailable']) assert.equal((await submit(token)).status, token === 'unavailable' ? 503 : 403)
       assert.equal((await store.list(alice.wallet)).length, 0)
       assert.equal((await submit('valid-once')).status, 201)

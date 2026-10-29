@@ -8,6 +8,7 @@ import { walletIdentityConfiguration, walletIdentitySessionToken, walletIdentity
 import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 import { assertSameOrigin } from './auth.mjs'
 import { assertNeuronEdge, neuronBotConfiguration, verifyNeuronBot } from './neuron-bot-protection.mjs'
+import { PERSONALITY_IMPORT_BYTES } from './neuron-import.mjs'
 
 export function neuronPublishingConfiguration(env = process.env) {
   if (env.NEURONS_PUBLISHING_ENABLED !== 'true') return null
@@ -34,7 +35,7 @@ export function createNeuronPublishingHandler({ env = process.env, database = cr
       if (request.method === 'POST') {
         try { assertSameOrigin(request, config.origin) } catch { return response({ error: 'Use the configured site.' }, 403) }
         if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') return response({ error: 'JSON required.' }, 415)
-        try { body = JSON.parse((await readLimitedBody(request, 4096)).toString('utf8')); characterSubmission(body) }
+        try { body = JSON.parse((await readLimitedBody(request, PERSONALITY_IMPORT_BYTES + 1024)).toString('utf8')); characterSubmission(body) }
         catch { return response({ error: 'Invalid character details or oversized request.' }, 400) }
       }
       const token = mine || body ? walletIdentitySessionToken(request) : null
@@ -48,6 +49,14 @@ export function createNeuronPublishingHandler({ env = process.env, database = cr
       if (body) {
         await verifyNeuronBot(request, bot, 'neuron-publish', fetcher)
         return response({ character: await store.submit(principal.wallet, body) }, 201)
+      }
+      if (url.searchParams.has('export')) {
+        const character = await store.publicById(url.searchParams.get('export'))
+        if (!character?.personality) return response({ error: 'Published personality import not found.' }, 404)
+        return new Response(JSON.stringify(character.personality, null, 2), { headers: {
+          'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="${character.ticker}-personality.json"`,
+          'Cache-Control': 'private, no-store', Vary: 'Cookie', 'X-Content-Type-Options': 'nosniff',
+        } })
       }
       return response({ characters: await store.list(mine ? principal.wallet : null) })
     } catch (error) {

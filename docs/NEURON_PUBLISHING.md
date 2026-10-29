@@ -3,9 +3,10 @@
 Implemented in the isolated `feature/neuron-launch-integration` worktree. This
 adds real PostgreSQL records and public profiles, not token launches. Financial
 execution remains disabled; no mint, curve, pool, balances, fees, claims, buybacks,
-RPC calls, GPU or paid model calls are added. Chat is explicitly labelled as
-reviewed fixed scripts, not live neuron steering. Custom names/stories change
-presentation, not the base persona's replies.
+RPC calls, GPU or paid model calls are added. Preset chat is explicitly labelled
+as reviewed fixed scripts, not live neuron steering. Custom names/stories change
+presentation, not the base persona's replies. User-imported recipes have no chat
+engine connected and never borrow preset replies.
 
 The [publishing-only release packet](NEURON_RELEASE.md) contains the required CI
 gate, least-privilege database grants, activation approvals, real-domain
@@ -35,6 +36,81 @@ from browser drafts. Names/tickers are not unique asset identifiers: UUIDs are.
 The public profile includes the creator's wallet identity and a canonical metadata
 SHA-256. A hash is an integrity receipt, not an on-chain attestation or a signature
 of the profile. Moderation approval is not model/persona evaluation.
+
+## Bring your own personality (configuration import)
+
+Open `/neurons/import` from the library. Upload or paste an at-most-8-KiB JSON
+file, validate it, inspect the exact recipe/attribution/examples, then sign in
+and consent to review. This is data import, not uploaded model hosting. No URL
+is fetched, code executed, weights loaded, or inference called. The downloadable
+template deliberately has an invalid revision placeholder: replace it with the
+actual lowercase 40-hex model commit. Its existence/compatibility is not verified.
+Secrets and private conversations must never be included.
+
+Format `repoing-personality`, version `1` is defined by
+`app/lib/neuron-import.mjs`. It accepts only these fields:
+
+- `name` (1–40 characters), `ticker` (2–10 uppercase letters/digits, letter first),
+  `story` (10–280 characters).
+- `model: {id: "Qwen/Qwen3-8B", revision: "<40 lowercase hex characters>"}`.
+- `steering: {layer, neuron, direction, alpha}`: zero-based decoder layer 0–35,
+  MLP neuron 0–12287, `up|down`, and finite 0 < alpha ≤ 10. These are import
+  bounds, not evidence that any value is safe/effective. Qwen's published
+  [config](https://huggingface.co/Qwen/Qwen3-8B/blob/main/config.json) specifies
+  36 layers and intermediate size 12288; runtime compatibility still needs
+  checking against the imported pinned revision before inference is supported.
+- `attribution: {author, url}`: author 1–80 characters, HTTPS URL up to 1000
+  characters, no embedded credentials. This is a creator claim, not verified
+  ownership or permission. Review the destination before approving public links.
+- `examples`: 0–3 `{prompt, reply}` objects, 1–500 characters per field. These
+  are unverified creator-supplied samples, escaped as text and shown separately,
+  never served as chat replies. Review every sample, not just name/story.
+- Optional `associatedConcepts: {terms, method, sourceUrl}`: 1–12 distinct terms
+  of 1–40 characters (multilingual text supported), a creator-declared method
+  `j-lens|r-lens|logit-lens|creator`, and an HTTPS source URL with the same bounds
+  as attribution URLs. Omit the object when unavailable; existing imports and
+  their hashes remain unchanged. The template uses manual tags, not computed
+  lens results. Import inspection and the public Source DNA panel label these
+  as creator-supplied associations, **not verified personality traits**. Method
+  names and source links are claims, not analysis performed by this app; no
+  ranks, confidence scores, evaluation flags or inferred safety are accepted.
+  Review all terms and the linked provenance before approval. Links are never
+  fetched server-side. Terms and provenance survive JSON exports and are covered
+  by the immutable submission hash. No GPU, paid calls or database migration.
+
+Version 1 means single-neuron residual-norm steering: after decoder layer L,
+add c * W_down[:, n], with c = ±alpha * r_L / ||W_down[:, n]|| and r_L the median
+post-layer prompt residual norm excluding the first token; use the chat template
+with thinking disabled. This defines the intended recipe semantics only; the
+integration does not run it. Prompt personas, adapters, arbitrary architectures,
+additional steering methods, executables and financial fields are rejected.
+
+Unknown keys (including nested keys) are refused on client and server. Both
+input and pretty-printed exported JSON must fit 8 KiB (UTF-8 bytes). The API
+allows 9 KiB including request UUID/consent envelope. Browser recovery drafts
+are separate from preset drafts and are optional for publishing.
+
+Imports use immutable snapshot version 2 in the existing JSONB registry: no SQL
+migration or new privileges are needed. Each submission gets a UUID and
+canonical SHA-256 covering identity, model revision, steering, attribution,
+examples, optional associated concepts and unavailable chat mode. Editing means another pending submission;
+there is no mutable version history, lineage, or claim of exclusive ownership.
+Preset version-1 hashes/records retain their previous behavior. **Older binaries
+cannot read version-2 imports**: a rollback must retain the v2 reader or disable
+registry publishing/reads; never rewrite or delete imported records to roll back.
+Likewise, binaries without associated-concept support cannot read tagged imports;
+retain the updated reader or disable registry reads during rollback.
+
+After review, imports appear in Community and the Community recipes category.
+Their public `/neurons/UUID` pages show pinned settings and unverified examples,
+with no chat composer. Download via `GET /api/neuron-characters?export=UUID`:
+only currently published imports export; pending, rejected, missing and preset
+IDs return 404. Exports contain the portable personality, not creator wallet,
+moderator notes, sessions or financial state. Removing approval also revokes
+subsequent downloads; already downloaded copies cannot be recalled. Reimporting
+an export preserves its configuration, not proof of authorship or exclusivity.
+Existing authentication, Turnstile, edge checks, storage and submission quotas
+apply unchanged. Import structure validation is not evaluation or rights clearance.
 
 ## Explicit setup (not run against production)
 
@@ -161,8 +237,8 @@ non-owner roles; see the [release packet](NEURON_RELEASE.md#activation-checklist
   while the submission panel is mounted; a fresh wizard is a new submission.
 - Shared HTTP quotas: 600 registry requests per ten minutes globally, 90 per IP
   hint. Forwarded IP is never identity. Existing wallet-identity quotas also apply.
-- Strict whitelisted JSON, a 4 KiB request cap, name/ticker/story length bounds,
-  escaped text rendering, server-owned source DNA, fail-closed database errors,
+- Strict whitelisted JSON, a 9 KiB request cap (8 KiB personality), field bounds,
+  escaped text rendering, server-owned preset DNA / unverified imported DNA, fail-closed database errors,
   bounded query deadlines, and lists limited to the newest 100 records.
 - Zero paid inference/moderation/chain execution. Hosting/storage still cost money
   outside this orb. Wallet identities are Sybil-able: limits bound work, not prove

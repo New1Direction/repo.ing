@@ -4,10 +4,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, Clock3, LoaderCircle } from 'lucide-react'
 import { HookWalletSignIn, useHookWalletSession } from './hooklab-wallet-signin'
 import { NeuronBotCheck } from './neuron-bot-check'
-import { NEURON_DRAFT_KEY, findPersona } from '../lib/neurons-preview.mjs'
+import { NEURON_DRAFT_KEY, characterPersona } from '../lib/neurons-preview.mjs'
 import styles from './neurons-preview.module.css'
 
-export function NeuronPublishAction({ draft, genesisHash, botSiteKey = null, request, onSubmitted, onBusyChange }) {
+export function NeuronPublishAction({ draft, genesisHash, botSiteKey = null, request, onSubmitted, onBusyChange, draftStorageKey = NEURON_DRAFT_KEY }) {
   const session = useHookWalletSession(genesisHash)
   const [consent, setConsent] = useState(false), [busy, setBusy] = useState(false)
   const [error, setError] = useState(''), [saved, setSaved] = useState(null)
@@ -18,7 +18,7 @@ export function NeuronPublishAction({ draft, genesisHash, botSiteKey = null, req
     working.current = true; setBusy(true); onBusyChange?.(true); setError('')
     try {
       const fingerprint = JSON.stringify(draft)
-      try { localStorage.setItem(NEURON_DRAFT_KEY, fingerprint) } catch {}
+      try { localStorage.setItem(draftStorageKey, fingerprint) } catch {}
       if (request.current?.fingerprint !== fingerprint) request.current = { fingerprint, id: crypto.randomUUID() }
       if (botSiteKey && !botCheck.current) throw Error('Security check is loading. Please try again.')
       const botToken = botSiteKey ? await botCheck.current() : null
@@ -28,23 +28,22 @@ export function NeuronPublishAction({ draft, genesisHash, botSiteKey = null, req
       if (!response.ok) throw Error(value.error || 'Submission failed. Your draft is saved; try again.')
       setSaved(value.character)
       onSubmitted?.()
-      try { if (localStorage.getItem(NEURON_DRAFT_KEY) === fingerprint) localStorage.removeItem(NEURON_DRAFT_KEY) } catch {}
+      try { if (localStorage.getItem(draftStorageKey) === fingerprint) localStorage.removeItem(draftStorageKey) } catch {}
     } catch (cause) { setError(cause.message || 'Submission failed. Try again.') }
     finally { working.current = false; setBusy(false); onBusyChange?.(false) }
   }
   if (saved) return <section className={styles.submissionReceipt} aria-label="Submission receipt" tabIndex={-1} ref={receipt}>
     <span className={styles.successIcon}><Check size={26}/></span>
     <h3>{saved.status === 'published' ? 'Your character is published.' : 'Your character is in the queue.'}</h3>
-    <p>{saved.status === 'published' ? 'Your profile is ready to share.' : 'Saved to your wallet. A moderator will review the name, story, and attribution before it becomes public.'}</p>
+    <p>{saved.status === 'published' ? 'Your profile is ready to share.' : draft.personality ? 'Saved to your wallet. A moderator will review your recipe, attribution, and examples before they become public.' : 'Saved to your wallet. A moderator will review the name, story, and attribution before it becomes public.'}</p>
     <ol className={styles.publicationJourney}><li data-complete="true"><Check size={15}/>Created</li><li aria-current={saved.status === 'published' ? undefined : 'step'}><Clock3 size={15}/>{saved.status === 'published' ? 'Reviewed' : 'Awaiting review'}</li><li><Check size={15}/>{saved.status === 'published' ? 'Published' : 'Public profile'}</li></ol>
     <Link className="button primary" href={saved.status === 'published' ? `/neurons/${saved.id}` : '/neurons/mine'}>{saved.status === 'published' ? 'Open public profile' : 'View my characters'} →</Link>
     <small>No token was created. No funds were moved.</small>
   </section>
   return <section className={styles.publishBox} aria-label="Publish character">
-    <h3>Make it official.</h3>
-    <p>Sign a free message to link this profile to your wallet. No transaction, token, or spending permission.</p>
-    <HookWalletSignIn genesisHash={genesisHash} session={session}/>
-    <label className={styles.checkbox}><input type="checkbox" checked={consent} disabled={busy} onChange={event => setConsent(event.target.checked)}/>I have the right to publish this name and story. After review, the profile and creator wallet will be public, with scripted—not neuron-steered—chat.</label>
+    {!draft.personality && <><h3>Make it official.</h3><p>Sign a free message to link this profile to your wallet. No transaction, token, or spending permission.</p></>}
+    {draft.personality ? <HookWalletSignIn genesisHash={genesisHash} session={session} title="Claim your character">Sign a free message. No transaction or spending permission.</HookWalletSignIn> : <HookWalletSignIn genesisHash={genesisHash} session={session}/>}
+    <label className={styles.checkbox}><input type="checkbox" checked={consent} disabled={busy} onChange={event => setConsent(event.target.checked)}/>{draft.personality ? 'I can share this recipe and its examples. After review, they, the attribution, and my creator wallet become public. The recipe is unverified; chat is offline.' : 'I have the right to publish this name and story. After review, the profile and creator wallet will be public, with scripted—not neuron-steered—chat.'}</label>
     <button type="button" className={`button primary ${styles.publishSubmit}`} disabled={!session.signedIn || !consent || busy} onClick={publish}>{busy && <LoaderCircle className={styles.spinner} size={17}/>} {busy ? 'Submitting for review…' : error ? 'Try submission again' : 'Submit for public review'}</button>
     <p className={styles.nextStep} role="status">{busy ? 'Please keep this page open while we save your character.' : !session.signedIn ? 'First, sign in with your wallet above.' : !consent ? 'One last step: confirm your publishing rights above.' : 'Ready. Your profile will stay private while it is reviewed.'}</p>
     {error && <p className={styles.error} role="alert">{error}</p>}
@@ -81,7 +80,7 @@ export function MyNeuronCharacters({ genesisHash }) {
       {error && <p className={styles.error} role="alert">{error}</p>}
       {busy && characters.length === 0 && <div className={styles.loadingState} role="status"><LoaderCircle size={22} className={styles.spinner}/><span>Loading your characters…</span></div>}
       <div className={styles.cardGrid}>{characters.map(character => <article className={styles.submissionCard} key={character.id}>
-        <div className={styles.cardTop}><span className={styles.avatar} style={{ '--persona-color': findPersona(character.personaId)?.color }}>{findPersona(character.personaId)?.icon}</span><span className={styles.pill} data-status={character.status}>{character.status === 'pending' ? 'Awaiting review' : character.status === 'published' ? 'Published' : 'Not approved'}</span></div>
+        <div className={styles.cardTop}><span className={styles.avatar} style={{ '--persona-color': characterPersona(character)?.color }}>{characterPersona(character)?.icon}</span><span className={styles.pill} data-status={character.status}>{character.status === 'pending' ? 'Awaiting review' : character.status === 'published' ? 'Published' : 'Not approved'}</span></div>
         <h2>{character.name} <small>${character.ticker}</small></h2><p>{character.story}</p><small>{character.status === 'pending' ? 'Private until a moderator approves this profile.' : character.status === 'rejected' ? 'Not public. Review the content policy before creating a new submission.' : 'Public profile · no token or trading.'}</small>
         {character.status === 'published' && <Link className="button primary" href={`/neurons/${character.id}`}>Open public profile →</Link>}
         <code title={character.metadataSha256}>SHA-256 {character.metadataSha256.slice(0, 16)}…</code>

@@ -10,7 +10,10 @@ deployed settings until the owner approves the separate activation below.
 - `/neurons`: six attributed source personas and approved community profiles.
 - `/neurons/new`: customize a character, free wallet-message sign-in, consent,
   submit for manual review. `/neurons/mine`: private submission status.
-- `/neurons/UUID`: stable approved profile and clearly labelled scripted chat.
+- `/neurons/import`: bounded, versioned Qwen3-8B recipe imports; see the
+  [format and limitations](NEURON_PUBLISHING.md#bring-your-own-personality-configuration-import).
+- `/neurons/UUID`: stable approved profile; presets have labelled scripted chat,
+  imports have unverified settings/examples, JSON download and no connected chat.
 - PostgreSQL ownership, immutable metadata hash, review history, shared quotas,
   Turnstile proofs and authenticated rate-limiting proxy enforcement.
 - **No tokens, trading, earnings, fees, claims, buybacks, live AI or GPU calls.**
@@ -118,6 +121,7 @@ IDs without recording private credentials. No on-chain transaction is involved.
 | Wallet sign-in | Exact-domain identity-only message; reject/cancel safely, retry, sign out, expire session; zero transaction requests. |
 | Submit and retry | One pending row for identical retries, private to its owner; different wallet cannot view it. |
 | Moderator approval / removal | Approved UUID appears publicly; rejection hides it and retains both review records. |
+| Personality import / export | Invalid/oversized recipes refused; pending/rejected imports not downloadable; approved exports reimport exactly; samples are text, never chat. |
 | Invalid/expired/replayed proof, wrong action/host | Rejected, no new challenge or character. |
 | Direct origin and forged forwarding headers | Rejected; no origin/network bypass. |
 | Burst, oversized body, quotas | Bounded 413/429 responses; no duplicate records or uncapped work. |
@@ -140,7 +144,8 @@ the proposed GitHub job or real-domain rehearsal has already run.
   profiles become unavailable; source previews may remain. Keep network/edge
   restrictions in place and assess the shared identity route separately.
 - Revert to the reviewed prior application revision only after checking schema
-  compatibility. Do not drop tables, erase review history, restore over current
+  and snapshot compatibility: older readers cannot read version-2 imports. Keep
+  the v2 reader or disable registry access before rolling back. Do not drop tables, erase review history, restore over current
   submissions or alter the shared market/financial ledgers as a rollback shortcut.
 - Periodically remove expired/consumed authentication data and expired quota
   buckets in bounded operator batches, with an agreed retention policy. Preserve

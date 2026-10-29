@@ -2,7 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
 import { appModule, h, html } from './fixtures/render-jsx.mjs'
-import { findPersona, searchPersonas, validateNeuronDraft } from '../app/lib/neurons-preview.mjs'
+import { characterPersona, findPersona, searchPersonas, validateNeuronDraft } from '../app/lib/neurons-preview.mjs'
+import { PERSONALITY_IMPORT_TEMPLATE, PERSONALITY_IMPORT_DRAFT_KEY } from '../app/lib/neuron-import.mjs'
 
 const { NeuronsLibrary, NeuronCharacterPreview, NeuronLaunchPreview } = await appModule('app/components/neurons-preview.jsx')
 const documentFor = element => new JSDOM(html(element)).window.document
@@ -19,6 +20,129 @@ test('library search combines case-insensitive names/tickers, source DNA and cat
   assert.equal(doc.querySelectorAll('article').length, 6)
   assert.equal(doc.querySelector('nav a[aria-current="page"]').getAttribute('href'), '/neurons')
   assert.ok(doc.querySelector('input[aria-label="Search personas"]'))
+})
+
+test('imported profiles expose their recipe and provenance without borrowing preset chat or implying token execution', () => {
+  const personality = { ...structuredClone(PERSONALITY_IMPORT_TEMPLATE), model: { id: 'Qwen/Qwen3-8B', revision: 'b'.repeat(40) },
+    examples: [{ prompt: 'Your name?', reply: '<script>Never execute me</script>' }] }
+  const character = { id: '70621973-a55f-41dc-b90e-5aba6eec1fc9', name: personality.name, ticker: personality.ticker,
+    story: personality.story, personality, creatorWallet: 'PublicCreatorWallet', metadataSha256: 'c'.repeat(64), reviewedAt: '2026-10-29T12:00:00Z' }
+  const library = documentFor(h(NeuronsLibrary, { publishedCharacters: [character] }))
+  const card = library.querySelector('section[aria-label="Published characters"] article')
+  assert.match(card.textContent, /IMPORTED RECIPE · UNVERIFIED/)
+  assert.match(card.textContent, /Attributed to Your name or handle/)
+  assert.ok(card.querySelector(`a[href="/api/neuron-characters?export=${character.id}"]`))
+  assert.ok(library.querySelector('a[href="/neurons/import"]'))
+  const profile = documentFor(h(NeuronCharacterPreview, { persona: characterPersona(character), character }))
+  assert.equal(profile.querySelector('h1').textContent, personality.name)
+  assert.ok(profile.querySelector('section[aria-label="Imported personality chat unavailable"]'))
+  assert.equal(profile.querySelector('textarea'), null)
+  assert.equal(profile.querySelector('[role="log"]'), null)
+  assert.equal(profile.querySelector('script'), null)
+  assert.ok(profile.body.textContent.includes(personality.model.revision))
+  assert.match(profile.body.textContent, /not verification of the model revision/)
+  assert.ok([...profile.querySelectorAll('button')].find(button => button.textContent.includes('Buying available')).disabled)
+})
+
+test('personality import validates before review, recovers separately, and submits only the reviewed data with retry safety', async () => {
+  const { act } = await import('react')
+  const { NeuronPersonalityImport } = await appModule('app/components/neuron-import.jsx')
+  const { WalletProvider } = await appModule('app/components/wallet.jsx')
+  const dom = new JSDOM('<div id="root"></div>', { url: 'https://repo.ing/neurons/import' })
+  const globals = { window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
+    self: dom.window, localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true }
+  const previous = Object.fromEntries(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
+  const originalFetch = globalThis.fetch, requests = []
+  let root
+  try {
+    for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value })
+    const personality = { ...structuredClone(PERSONALITY_IMPORT_TEMPLATE), model: { id: 'Qwen/Qwen3-8B', revision: 'b'.repeat(40) },
+      associatedConcepts: { terms: ['pirate', '海盗', '<script>x</script>'], method: 'j-lens', sourceUrl: 'https://example.com/analysis' } }
+    localStorage.setItem(PERSONALITY_IMPORT_DRAFT_KEY, JSON.stringify({ personality }))
+    localStorage.setItem('repoing-neuron-preview-v1', 'preset draft must survive')
+    globalThis.fetch = async (url, init) => {
+      if (url === '/api/hook-lab/wallet-identity') return Response.json({ signedIn: true, principal: { wallet: '11111111111111111111111111111111', expiresAt: new Date(Date.now() + 60000).toISOString() } })
+      assert.equal(url, '/api/neuron-characters')
+      requests.push(JSON.parse(init.body))
+      return requests.length === 1 ? Response.json({ error: 'Temporary outage' }, { status: 503 }) : Response.json({ character: { id: 'fixture-id', status: 'pending' } })
+    }
+    const { createRoot } = await import('react-dom/client')
+    root = createRoot(document.getElementById('root'))
+    await act(async () => root.render(h(WalletProvider, null, h(NeuronPersonalityImport, { publishing: { genesisHash: 'fixture' } }))))
+    const click = async text => {
+      const button = [...document.querySelectorAll('button')].find(element => element.textContent.includes(text))
+      assert.ok(button, text); assert.equal(button.disabled, false, text)
+      await act(async () => button.click())
+    }
+    const fill = async value => act(async () => {
+      const input = document.querySelector('textarea')
+      Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, 'value').set.call(input, value)
+      input.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+    })
+    await click('CONTINUE SAVED CHARACTER')
+    assert.equal(document.activeElement.textContent, 'Meet your character.')
+    const concepts = () => document.querySelector('[aria-label="Associated concepts"]')
+    assert.deepEqual([...concepts().querySelectorAll('li')].map(term => term.textContent), personality.associatedConcepts.terms)
+    assert.match(concepts().textContent, /J-lens · Creator-supplied, not verified traits/)
+    assert.equal(concepts().querySelector('script'), null)
+    assert.equal(document.querySelector('[aria-label="Publish character"]'), null)
+    await click('Change recipe')
+    assert.equal(JSON.parse(document.querySelector('textarea').value).name, personality.name)
+    await fill(JSON.stringify({ ...personality, model: { ...personality.model, revision: 'main' } }))
+    await click('Load character')
+    assert.match(document.querySelector('[role="alert"]').textContent, /model.revision/)
+    assert.equal(requests.length, 0)
+    await fill(JSON.stringify(personality)); await click('Load character')
+    assert.equal(document.activeElement.textContent, 'Meet your character.')
+    assert.match(document.body.textContent, /Unverified recipe/)
+    await click('Change recipe')
+    assert.deepEqual(JSON.parse(document.querySelector('textarea').value), personality)
+    const fileInput = document.querySelector('input[type="file"]')
+    Object.defineProperty(fileInput, 'files', { configurable: true, value: [{ size: 8193, text: async () => JSON.stringify(personality) }] })
+    await act(async () => fileInput.dispatchEvent(new dom.window.Event('change', { bubbles: true })))
+    assert.match(document.querySelector('[role="alert"]').textContent, /8 KiB/)
+    assert.equal(document.querySelector('[aria-label="Publish character"]'), null)
+    assert.equal(document.querySelector('textarea').value, '')
+    Object.defineProperty(fileInput, 'files', { configurable: true, value: [{ size: 1000, text: async () => JSON.stringify(personality) }] })
+    await act(async () => fileInput.dispatchEvent(new dom.window.Event('change', { bubbles: true })))
+    assert.equal(document.activeElement.textContent, 'Meet your character.')
+    assert.equal(requests.length, 0)
+    await click('Continue to publish')
+    assert.equal(document.activeElement.textContent, 'Ready for the library.')
+    await click('Back to character')
+    assert.equal(document.querySelector('[aria-label="Publish character"]'), null)
+    await click('Continue to publish')
+    await act(async () => document.querySelector('input[type="checkbox"]').click())
+    await click('Submit for public review')
+    assert.match(document.querySelector('[role="alert"]').textContent, /Temporary outage/)
+    await click('Try submission again')
+    assert.deepEqual(requests[0], requests[1])
+    assert.deepEqual(requests[1].personality, personality)
+    assert.equal(Object.hasOwn(requests[1], 'personaId'), false)
+    assert.equal(localStorage.getItem(PERSONALITY_IMPORT_DRAFT_KEY), null)
+    assert.equal(localStorage.getItem('repoing-neuron-preview-v1'), 'preset draft must survive')
+    assert.match(document.querySelector('[aria-label="Submission receipt"]').textContent, /in the queue/)
+    assert.equal([...document.querySelectorAll('button')].some(button => button.textContent.includes('Back to character')), false)
+    const character = { id: 'fixture-id', personality, name: personality.name, ticker: personality.ticker, story: personality.story,
+      creatorWallet: '11111111111111111111111111111111', metadataSha256: 'c'.repeat(64), reviewedAt: '2026-10-29T12:00:00Z' }
+    await act(async () => root.render(h(NeuronCharacterPreview, { persona: characterPersona(character), character })))
+    await click('Source DNA')
+    assert.deepEqual([...concepts().querySelectorAll('li')].map(term => term.textContent), personality.associatedConcepts.terms)
+    assert.equal(concepts().querySelector('a').href, personality.associatedConcepts.sourceUrl)
+    assert.match(concepts().textContent, /not verified traits/)
+    assert.equal(concepts().querySelector('script'), null)
+    delete character.personality.associatedConcepts
+    await act(async () => root.render(h(NeuronCharacterPreview, { persona: characterPersona(character), character })))
+    assert.equal(concepts(), null)
+  } finally {
+    if (root) await act(async () => root.unmount())
+    globalThis.fetch = originalFetch
+    for (const [key, descriptor] of Object.entries(previous)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor)
+      else delete globalThis[key]
+    }
+    dom.window.close()
+  }
 })
 
 test('saved drafts accept bounded identity fields, never wallet, mint or executable fee terms', () => {

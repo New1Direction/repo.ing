@@ -172,8 +172,13 @@
 .inputPrefix input { border: 0; background: transparent; }
 .reviewList { margin: 0; }
 .reviewList > div { display: flex; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
-.reviewList dt { color: var(--muted); }
+.reviewList dt { color: var(--muted); flex-shrink: 0; max-width: 45%; }
 .reviewList dd { margin: 0; text-align: right; overflow-wrap: anywhere; min-width: 0; }
+.formPanel, .launchAside, .dnaGrid dd { overflow-wrap: anywhere; min-width: 0; }
+.chatUnavailable { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; padding: 32px; text-align: center; }
+.chatUnavailable > svg { color: var(--neuron-accent); }
+.chatUnavailable h2 { font-size: 24px; letter-spacing: -.035em; margin: 20px 0 0; }
+.chatUnavailable p { color: var(--muted); font-size: 14px; line-height: 1.8; margin: 16px 0 24px; max-width: 330px; }
 .feePolicy { margin: 22px 0; padding: 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); }
 .feePolicy > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
 .feePolicy[open] > summary { margin-bottom: 18px; }
@@ -281,6 +286,13 @@
 .dnaGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 23px 15px; margin: 20px 0; }
 .dnaGrid dt { font-size: 12px; color: var(--muted); margin-bottom: 7px; }
 .dnaGrid dd { font-size: 13px; margin: 0; }
+.associatedConcepts { padding: 16px; margin: 16px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); min-width: 0; }
+.associatedConcepts > div { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
+.associatedConcepts h3 { margin: 0; font-size: 13px; font-weight: 550; letter-spacing: -.01em; }
+.associatedConcepts a { color: var(--neuron-accent); font-size: 11px; padding: 5px 0; }
+.associatedConcepts ul { display: flex; flex-wrap: wrap; gap: 7px; list-style: none; padding: 0; margin: 12px 0; }
+.associatedConcepts li { padding: 5px 9px; border: 1px solid color-mix(in srgb, var(--green) 20%, var(--border)); border-radius: 6px; color: var(--text); background: color-mix(in srgb, var(--green) 5%, var(--surface)); font-size: 12px; overflow-wrap: anywhere; max-width: 100%; }
+.associatedConcepts > p { color: var(--muted); font-size: 11px; line-height: 1.6; margin: 0; }
 .tradePanel { padding: 19px; }
 .tradeTabs { display: flex; gap: 6px; margin-bottom: 20px; }
 .tradeTabs button { flex: 1; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); padding: 9px; font-size: 12px; background: transparent; }

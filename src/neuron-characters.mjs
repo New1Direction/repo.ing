@@ -2,9 +2,13 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { findPersona, validateNeuronDraft } from '../app/lib/neurons-preview.mjs'
+import { personalityImportSchema } from '../app/lib/neuron-import.mjs'
 
-const submission = z.object({ requestId: z.string().uuid(), personaId: z.string().max(40),
-  name: z.string().max(40), ticker: z.string().max(10), story: z.string().max(280), consent: z.literal(true) }).strict()
+const submission = z.union([
+  z.object({ requestId: z.string().uuid(), personaId: z.string().max(40),
+    name: z.string().max(40), ticker: z.string().max(10), story: z.string().max(280), consent: z.literal(true) }).strict(),
+  z.object({ requestId: z.string().uuid(), personality: personalityImportSchema, consent: z.literal(true) }).strict(),
+])
 export const characterId = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 const fail = (message, status) => Object.assign(Error(message), { status })
 const hash = snapshot => createHash('sha256').update(JSON.stringify(snapshot, (_key, value) =>
@@ -12,7 +16,13 @@ const hash = snapshot => createHash('sha256').update(JSON.stringify(snapshot, (_
     ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : value)).digest('hex')
 
 export function characterSubmission(input) {
-  const value = submission.parse(input), draft = validateNeuronDraft(value)
+  const value = submission.parse(input)
+  if (value.personality) {
+    const { name, ticker, story } = value.personality
+    const snapshot = { version: 2, name, ticker, story, personality: value.personality, chatMode: 'unavailable' }
+    return { requestId: value.requestId, snapshot, metadataSha256: hash(snapshot) }
+  }
+  const draft = validateNeuronDraft(value)
   if (!draft || /[\u0000-\u0008\u000b-\u001f\u007f\u202a-\u202e\u2066-\u2069]/u.test(draft.name + draft.story)) throw fail('Invalid character details.', 400)
   const persona = findPersona(draft.personaId)
   const snapshot = { version: 1, ...draft, chatMode: 'reviewed-scripts-v1', source: 'https://qwen-neurons-site.vercel.app',
@@ -23,7 +33,8 @@ export function characterSubmission(input) {
 function view(row) {
   if (!row) return null
   const { personaId, name, ticker, story } = row.snapshot
-  const canonical = characterSubmission({ personaId, name, ticker, story, requestId: row.request_id, consent: true })
+  const canonical = characterSubmission({ ...(row.snapshot.version === 2 ? { personality: row.snapshot.personality }
+    : { personaId, name, ticker, story }), requestId: row.request_id, consent: true })
   if (canonical.metadataSha256 !== row.metadata_sha256 || hash(row.snapshot) !== row.metadata_sha256) throw Error('Character integrity check failed')
   return { id: row.id, ...canonical.snapshot, creatorWallet: row.creator_wallet, metadataSha256: row.metadata_sha256,
     status: row.status, createdAt: new Date(row.created_at).toISOString(), reviewedAt: row.reviewed_at ? new Date(row.reviewed_at).toISOString() : null,

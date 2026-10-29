@@ -16,6 +16,15 @@ export const SIMULATION_DISCLOSURE = 'Scripted preview · not activation-steered
 
 export function findPersona(id) { return NEURON_PERSONAS.find(persona => persona.id === id) }
 
+export function characterPersona(character) {
+  if (!character.personality) return findPersona(character.personaId)
+  const { model, steering, attribution } = character.personality
+  return { id: character.id, name: character.name, ticker: character.ticker, description: character.story,
+    icon: '✳', color: '#a8d4a2', category: 'Community recipes', tags: ['imported', 'unverified'],
+    ...steering, model: model.id, modelRevision: model.revision, attribution,
+    greeting: 'Chat is not connected for this imported personality.', replies: [], imported: true }
+}
+
 export function searchPersonas(query = '', category = 'All') {
   const term = query.trim().replace(/^\$/, '').toLowerCase()
   return NEURON_PERSONAS.filter(persona => (category === 'All' || persona.category === category) &&
