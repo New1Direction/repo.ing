@@ -53,7 +53,7 @@ try { custodyRecovery = readCustody() } catch (error) { report({ status: 'CONFIG
 // GRADUATION_PROFILE=1: each pass line also says where the time went (RPC calls by provider and method, database queries,
 // curve reads and reconciliation), for tuning the pass length against the 5 min public-progress window.
 const profiling = env.GRADUATION_PROFILE === '1'
-const profile = { rpc: {}, db: { n: 0, ms: 0 }, readState: { n: 0, ms: 0 }, reconcile: { n: 0, ms: 0 } }
+const profile = { rpc: {}, sql: {}, connect: { n: 0, ms: 0 }, db: { n: 0, ms: 0 }, readState: { n: 0, ms: 0 }, reconcile: { n: 0, ms: 0 } }
 const tally = (bucket, ms) => { bucket.n += 1; bucket.ms += ms }
 const timed = (bucket, fn) => async (...args) => { const t = Date.now(); try { return await fn(...args) } finally { tally(bucket, Date.now() - t) } }
 const profiled = (name, fetchImpl) => !profiling ? fetchImpl : async (url, options) => {
@@ -64,7 +64,9 @@ const profiled = (name, fetchImpl) => !profiling ? fetchImpl : async (url, optio
 const profileReport = () => {
   const top = Object.entries(profile.rpc).sort((a, b) => b[1].ms - a[1].ms).slice(0, 8).map(([k, v]) => `${k} ${v.n}x ${Math.round(v.ms / 1000)}s`)
   const out = { rpc: top, db: `${profile.db.n}x ${Math.round(profile.db.ms / 1000)}s`, readState: `${profile.readState.n}x ${Math.round(profile.readState.ms / 1000)}s`,
-    reconcile: `${profile.reconcile.n}x ${Math.round(profile.reconcile.ms / 1000)}s` }
+    reconcile: `${profile.reconcile.n}x ${Math.round(profile.reconcile.ms / 1000)}s`, connect: `${profile.connect.n}x ${Math.round(profile.connect.ms / 1000)}s`,
+    sql: Object.entries(profile.sql).sort((a, b) => b[1].ms - a[1].ms).slice(0, 8).map(([k, v]) => `${v.n}x ${Math.round(v.ms / 1000)}s ${k}`) }
+  profile.sql = {}; Object.assign(profile.connect, { n: 0, ms: 0 })
   for (const bucket of [profile.db, profile.readState, profile.reconcile]) Object.assign(bucket, { n: 0, ms: 0 })
   profile.rpc = {}
   return out
@@ -113,7 +115,23 @@ function recorder(pool) {
 const PASS_GAP_MS = 5_000, MARKET_PAUSE_MS = 250
 const once = dryRun || process.argv.includes('--once')
 const pool = createDatabasePool({ connectionString: databaseUrl, max: 3, statement_timeout: 15_000 })
-if (profiling) { const query = pool.query.bind(pool); pool.query = timed(profile.db, query) }
+// Per-statement timing (first words of the SQL), for pool queries and pooled clients alike.
+const sqlKey = text => String(typeof text === 'string' ? text : text?.text ?? '').replace(/\/\*.*?\*\//g, '').replace(/\s+/g, ' ').trim().slice(0, 60)
+const timedQuery = query => async (text, params) => {
+  const t = Date.now()
+  try { return await query(text, params) } finally { const ms = Date.now() - t; tally(profile.db, ms); tally(profile.sql[sqlKey(text)] ??= { n: 0, ms: 0 }, ms) }
+}
+if (profiling) {
+  pool.query = timedQuery(pool.query.bind(pool))
+  const connect = pool.connect.bind(pool)
+  // pg calls connect(callback) internally for pool.query: only the promise form (checked-out clients) is wrapped.
+  pool.connect = (...args) => args.length ? connect(...args) : (async () => {
+    const t = Date.now(), client = await connect()
+    tally(profile.connect, Date.now() - t)
+    if (!client.timed) { client.query = timedQuery(client.query.bind(client)); client.timed = true }
+    return client
+  })()
+}
 const recording = dryRun ? recorder(pool) : null
 function profiledReconciler(reconciler) {
   return profiling ? { ...reconciler, reconcile: timed(profile.reconcile, reconciler.reconcile.bind(reconciler)) } : reconciler
