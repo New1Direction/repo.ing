@@ -10,21 +10,28 @@ import { ThemeToggle } from './theme-toggle'
 import { MobileNav } from './mobile-nav'
 import { WatchButton, WatchNotifications } from './watchlist'
 import { ForkOfLabel, NewRepoLabel, OfficialBadge } from './market-signals'
-import { formatSolDisplay, formatUsdEstimate } from '../lib/format.mjs'
+import { formatSolDisplay } from '../lib/format.mjs'
 import { OFFICIAL_TOKEN } from '../lib/official-token.mjs'
-import { bondingProgress, marketCapDisplay } from '../lib/market-display.mjs'
+import { bondingProgress, compactFigure, marketCapDisplay } from '../lib/market-display.mjs'
 import { stockRowDisplay } from '../lib/stock-display.mjs'
 import { isModelMarket, modelLikes, modelPageUrl, modelSummary, modelView } from '../lib/hf-model-display.mjs'
 import { HuggingFaceLink, ModelDisclaimer, ModelLikesCell, ModelMark, ModelSourceChip, ModelStats } from './hf/model-ui'
 
+// Under 0.01 SOL (about a dollar) a list cell shows nothing: no dust figures like "<$0.01" or "0.000099 SOL".
+const MIN_SHOWN_LAMPORTS = 10_000_000n
+const LAMPORTS = /^\d+$/
+const shownLamports = value => LAMPORTS.test(String(value ?? '')) && BigInt(value) >= MIN_SHOWN_LAMPORTS ? BigInt(value) : null
+// "$4.50" under $10, "$76" and "$222" under $1,000, "$5.4k" from there (compactFigure rounds before picking the suffix).
+const shortUsd = value => value < 10 ? `$${value.toFixed(2)}` : `$${compactFigure(value, 0)}`
+// One short figure: what the repository's builders earned in total, in USD when the SOL price is known ("$5.4k"), else SOL.
 function MarketEarnings({ market, usdPerSol }) {
   // A stock pair earns no SOL: its fees are paid in its stock (launcher share and the stock's accumulator).
   if (market.stock) return <span className="table-earnings" title={`This market's trading fees are paid in ${market.stock.symbol ?? 'its stock'}.`}><strong>—</strong><small>{`Fees in ${market.stock.symbol ?? 'its stock'}`}</small></span>
-  const usd = formatUsdEstimate(market.earned, usdPerSol)
-  return <span className={`table-earnings${BigInt(market.earned ?? 0) > 0n ? ' has-earnings' : ''}`} title={`${formatSolDisplay(market.earned)} SOL earned in total · ${formatSolDisplay(market.claimed)} SOL paid · ${formatSolDisplay(market.remaining)} SOL available. USD estimate at the current SOL price.`}>
-    <strong>{usd ?? `${formatSolDisplay(market.earned)} SOL`}</strong>
-    <small>{BigInt(market.claimed) > 0n ? `${formatSolDisplay(market.claimed)} SOL paid` : `${formatSolDisplay(market.remaining)} SOL available`}</small>
-  </span>
+  const earned = shownLamports(market.earned)
+  if (earned === null) return <span className="table-earnings unavailable-metric">—</span>
+  const sol = `${formatSolDisplay(earned)} SOL`
+  const usd = Number.isFinite(usdPerSol) && usdPerSol > 0 ? shortUsd(Number(earned) / 1e9 * usdPerSol) : null
+  return <span className="table-earnings has-earnings" title={usd ? `${sol} earned in total. USD at the current SOL price.` : undefined}><strong>{usd ?? sol}</strong></span>
 }
 function MarketCap({ market, usdPerSol }) {
   // A stock pair's cap is in its stock (USD at the stock's price), from the row's stock figures.
@@ -33,7 +40,10 @@ function MarketCap({ market, usdPerSol }) {
   return <span className="table-mcap" title={cap?.title ?? (market.priceSol ? 'Supply not read yet' : 'No trades recorded yet')}>{cap?.value ?? '—'}</span>
 }
 function MarketVolume({ market }) {
-  if (!market.stock) return <span className="table-volume">{formatSolDisplay(market.volume24hLamports)} SOL</span>
+  if (!market.stock) {
+    const volume = shownLamports(market.volume24hLamports)
+    return volume === null ? <span className="table-volume unavailable-metric">—</span> : <span className="table-volume">{formatSolDisplay(volume)} SOL</span>
+  }
   const view = stockRowDisplay(market.stock, market.supply)
   return <span className="table-volume" title={view.volumeTitle}>{view.volume}</span>
 }
@@ -105,10 +115,10 @@ const MIXED_HEADINGS = ['#', 'Repo / model', 'Token', 'Market cap', '24h Volume'
 // model's Hugging Face page) where a repository shows stars. No "New repo" label or GitHub copy.
 function MarketRow({ market, index, usdPerSol }) {
   const model = isModelMarket(market)
-  return <div className={model ? 'market-row is-model' : 'market-row'}><span className="row-index">{index + 1}</span><MarketLink mint={market.mint} className="table-repo"><RepoAvatar repo={market}/><span><span className="table-repo-name"><strong>{market.fullName}</strong><span className="table-repo-ticker">${market.symbol}</span>{model && <ModelSourceChip/>}{market.officialLaunch ? <OfficialBadge/> : <Badge tone={market.wasVerified ? 'verified' : 'muted'}>{market.wasVerified ? 'Verified' : 'Unverified'}</Badge>}{!model && market.newRepo && <NewRepoLabel/>}{!model && <ForkOfLabel parent={market.forkParent} compact/>}<PulseBadge badge={market.pulse?.badge}/></span><small>{model ? modelSummary(market) : market.description || 'Public repository'}</small></span></MarketLink><span className="table-token"><strong>{market.symbol}</strong><small>{market.tokenName}</small></span><MarketCap market={market} usdPerSol={usdPerSol}/><MarketVolume market={market}/><MarketEarnings market={market} usdPerSol={usdPerSol}/>{model ? <ModelLikesCell likes={modelLikes(market)} url={modelPageUrl(market.fullName)} path={market.fullName}/> : <span className="table-stars"><Star size={15}/>{typeof market.stars === 'number' ? market.stars.toLocaleString('en-US') : '—'}</span>}<span className="table-actions"><WatchButton market={market} compact/><MarketLink mint={market.mint} className="button outline table-action">Trade<ChevronRight size={15}/></MarketLink></span><BondingLine market={market}/></div>
+  return <div className={model ? 'market-row is-model' : 'market-row'}><span className="row-index">{index + 1}</span><MarketLink mint={market.mint} className="table-repo"><RepoAvatar repo={market}/><span><span className="table-repo-name"><strong>{market.fullName}</strong><span className="table-repo-ticker">${market.symbol}</span>{model && <ModelSourceChip/>}{market.officialLaunch ? <OfficialBadge/> : <Badge tone={market.wasVerified ? 'verified' : 'muted'}>{market.wasVerified ? 'Verified' : 'Unverified'}</Badge>}{!model && market.newRepo && <NewRepoLabel/>}{!model && <ForkOfLabel parent={market.forkParent} compact/>}<PulseBadge badge={market.pulse?.badge}/></span>{(model || market.description) && <small>{model ? modelSummary(market) : market.description}</small>}</span></MarketLink><span className="table-token"><strong>{market.symbol}</strong><small>{market.tokenName}</small></span><MarketCap market={market} usdPerSol={usdPerSol}/><MarketVolume market={market}/><MarketEarnings market={market} usdPerSol={usdPerSol}/>{model ? <ModelLikesCell likes={modelLikes(market)} url={modelPageUrl(market.fullName)} path={market.fullName}/> : <span className="table-stars"><Star size={15}/>{typeof market.stars === 'number' ? market.stars.toLocaleString('en-US') : '—'}</span>}<span className="table-actions"><WatchButton market={market} compact/><MarketLink mint={market.mint} className="button outline table-action">Trade<ChevronRight size={15}/></MarketLink></span><BondingLine market={market}/></div>
 }
 // A table with model rows ends with the full disclaimer (the rows carry the short badge).
-export function MarketTable({ markets = [], usdPerSol = null, empty = 'No indexed markets yet.' }) {
+export function MarketTable({ markets = [], usdPerSol = null, empty = 'No markets yet.' }) {
   const models = markets.some(isModelMarket)
   const table = <div className="market-table-scroll"><div className="market-table"><div className="market-head">{(models ? MIXED_HEADINGS : MARKET_HEADINGS).map(heading => <span key={heading}>{heading}</span>)}<span className="actions-heading">Action</span></div>{markets.length ? markets.map((market, index) => <MarketRow key={market.mint} market={market} index={index} usdPerSol={usdPerSol}/>) : <div className="table-empty">{empty}</div>}</div></div>
   return models ? <>{table}<ModelDisclaimer className="table-disclaimer"/></> : table

@@ -1,0 +1,5 @@
+/* Token page: the Earnings tab's folded fine print (collections and custody). */
+.earnings-fine-print{margin:4px 0 12px;font-size:12px;color:var(--muted)}
+.earnings-fine-print summary{cursor:pointer;min-height:36px;align-content:center;color:var(--text);font-size:13px;width:fit-content}
+.earnings-card .earnings-fine-print p{min-height:0;margin:6px 0 0;font-size:12px;line-height:1.6}
+.earnings-fine-print a{text-decoration:underline;text-underline-offset:3px}

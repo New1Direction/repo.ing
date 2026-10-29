@@ -19,7 +19,7 @@ export default async function BuildersPage({ searchParams }) {
   const lookup = await ownerLookup(query.owner)
   return <><AppHeader active="builders"/><main className="section-wrap builders-page">
     <FunnelBeacon event="builders_view"/>
-    <div className="builders-intro"><h1>Builder dashboard</h1><p>Your repositories. Your earnings. One place to claim.</p><Link href="/waiting" className="launch-find-link">See repositories with builder fees waiting for maintainers <ArrowRight size={15} aria-hidden="true"/></Link></div>
+    <div className="builders-intro"><h1>Builder dashboard</h1><p>Claim the fees from all your repositories in one place.</p><Link href="/waiting" className="launch-find-link">See repositories with builder fees waiting for maintainers <ArrowRight size={15} aria-hidden="true"/></Link></div>
     <OwnerLookup owner={lookup.owner} defaultOwner={session?.githubLogin ?? ''} rows={lookup.rows} unavailable={lookup.unavailable}/>
     <BuilderDashboard signedIn={Boolean(session)} githubLogin={session?.githubLogin ?? null} errorCode={query.error}/>
   </main><Footer/></>

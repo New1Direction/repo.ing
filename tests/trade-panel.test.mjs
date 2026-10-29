@@ -69,10 +69,10 @@ test('a linked buyer appears in Recent trades as @handle; other rows are unchang
   const linked = html(h(RecentTradeRow, { trade, symbol: 'WTR', now, x: LINK }))
   assert.match(linked, /href="https:\/\/x.com\/builder_jo"/)
   assert.match(linked, /@builder_jo/)
-  assert.match(linked, /0.2563 SOL/)
+  assert.match(linked, /0.256 SOL/)
   const plain = html(h(RecentTradeRow, { trade, symbol: 'WTR', now }))
   assert.doesNotMatch(plain, /x\.com/)
-  assert.match(plain, /589,127.44 WTR/)
+  assert.match(plain, /589.1K WTR/)
 })
 
 test('trading as: the linked @handle, else a Connect X prompt, and nothing before the wallet\'s link is known', () => {

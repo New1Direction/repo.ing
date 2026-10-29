@@ -14,7 +14,7 @@ import { ClaimPageDecision } from '../../../components/maintainer-declined'
 import { ClaimBuilderTools } from '../../../components/builder-tools'
 import { cachedAppSettingsUrl, cachedInstallationStatus } from '../../../lib/claim-github-cache.mjs'
 import { marketByRepo, feeStatus, database, claimsDatabase, chain, creatorSigner } from '../../../lib/server.mjs'
-import { claimWindow, owedLamports, payoutControls } from '../../../../src/builder-payouts.mjs'
+import { UNCLAIMED_AFTER_MONTHS, claimWindow, owedLamports, payoutControls } from '../../../../src/builder-payouts.mjs'
 import { displayRepository } from '../../../lib/repository-display.mjs'
 import { formatUnits, formatSolDisplay, formatUsdEstimate } from '../../../lib/format.mjs'
 import { solUsdPrice } from '../../../lib/sol-usd.mjs'
@@ -49,7 +49,7 @@ export default async function ClaimPage({ params, searchParams }) {
   return <><AppHeader/><main className="section-wrap claim-page">
     <FunnelBeacon event="claim_view" repoId={market.repoId}/>
     <Link href={`/token/${market.mint}`} className="back-link"><ArrowLeft size={18}/>Back to repository</Link>
-    <div className="claim-intro has-art"><div><h1>Claim builder fees</h1><Link href="/builders" className="claim-text-button">Claim across all your repositories →</Link><p>Verify your GitHub access, set a payout wallet, and receive your repository’s earnings.</p><small>Part of each trade fee is set aside for this repository, whether or not you’ve signed up.</small></div><IconArt name="earnings-wallet" size={132}/></div>
+    <div className="claim-intro has-art"><div><h1>Claim builder fees</h1><Link href="/builders" className="claim-text-button">Claim across all your repositories →</Link><p>Verify your GitHub access, set a payout wallet, and receive your repository’s earnings.</p></div><IconArt name="earnings-wallet" size={132}/></div>
     <div className="claim-repo-card"><div><RepoIdentity repo={repo}/><RepoStats repo={repo}/></div><GitHubLink repo={repo}/></div>
     <Suspense fallback={<div className="inner-card claim-loading" role="status" aria-busy="true">Checking available fees and GitHub access…</div>}>
       <ClaimContent market={market} repo={repo} query={query}/>
@@ -107,7 +107,6 @@ async function ClaimContent({ market, repo, query }) {
     repoId, wallet: beneficiary.wallet, boundAt: new Date(beneficiary.boundAt).toISOString(),
     amount: claimable, includeGraduatedFees: fees.graduated === true, paid: market.claimed, platformCollected: market.platformCollected, expiresAt: Math.min(session.expiresAt, Date.now() + 10 * 60_000),
   }) : null
-  const usdEstimate = claimable === null ? null : formatUsdEstimate(claimable, usdPerSol)
   let reinvestEnabled = false
   // Builder reinvest never takes an early access market (owner decision; src/builder-reinvest.mjs refuses it).
   if (verifiedUser && !isEarlyAccessMarket(market) && process.env.BUILDER_REINVEST_ENABLED === 'true' && process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL) {
@@ -118,22 +117,31 @@ async function ClaimContent({ market, repo, query }) {
   }
   // "Claim as AI credits" (src/credits-web.mjs): dark unless switched on; only for the verified admin.
   const credits = verifiedUser && database() ? creditsWebSettings() : null
-  const summary = <div className="claim-amount-summary inner-card">
-    <div><span>Available to claim</span><strong title={claimable === null ? undefined : `${formatUnits(claimable)} SOL`}>{claimable === null ? '—' : `${formatSolDisplay(claimable)} SOL`}</strong>{usdEstimate && <small>≈ {usdEstimate}</small>}</div>
-    {followsLater > 0n && <p className="muted claim-follows">Then {formatSolDisplay(followsLater.toString())} SOL of graduated pool fees in a second claim: an early
-      access payout claims its curve fees and its graduated pool fees one at a time.</p>}
-    <div className="claim-fee-history"><span>Total earned <strong title={`${formatUnits(market.earned)} SOL`}>{formatSolDisplay(market.earned)} SOL</strong></span><span>Already paid <strong title={`${formatUnits(market.claimed)} SOL`}>{formatSolDisplay(market.claimed)} SOL</strong></span></div>
-    {BigInt(market.platformCollected ?? '0') > 0n && <p>Platform collections: <strong title={`${formatUnits(market.platformCollected)} SOL`}>{formatSolDisplay(market.platformCollected)} SOL</strong>, not paid to the owner. <Link href="/how-it-works#builder-collections">Collection policy</Link></p>}
-  </div>
   // Builder payouts from the capped payout wallet (src/builder-payouts.mjs): the ledger's owed amount, the claim window and the switch.
-  // Fail closed: anything unreadable (no claims pool, a database error) shows payouts paused. The claim tables are read through
-  // the claims role only; the page's display reads stay on the read-only pool.
+  // Fail closed: anything unreadable (no claims pool, a database error) shows payouts paused, and the owed amount is left out
+  // (amountUnknown) rather than shown as 0. The claim tables are read through the claims role only; the page's display reads
+  // stay on the read-only pool.
   const claims = claimsDatabase()
   const payoutClaim = await Promise.all([owedLamports(claims, repoId), claimWindow(claims, repoId), payoutControls(claims)])
     .then(([owed, windowRow, controls]) => ({ owedLamports: owed.toString(), paused: !controls.enabled,
-      claimWindow: windowRow && { openedAt: new Date(windowRow.openedAt).toISOString(), unclaimedAfter: windowRow.unclaimedAfter.toISOString() } }))
-    .catch(() => ({ owedLamports: '0', paused: true, claimWindow: null }))
-  return <ClaimSteps payoutClaim={payoutClaim} summary={summary} repoId={repoId} mint={market.mint} repoName={repo.fullName} appAccess={access} appSettingsUrl={appSettingsUrl}
+      claimWindow: windowRow && { openedAt: new Date(windowRow.openedAt).toISOString(), unclaimedAfter: windowRow.unclaimedAfter.toISOString(),
+        unclaimedAfterMonths: UNCLAIMED_AFTER_MONTHS } }))
+    .catch(() => ({ owedLamports: '0', paused: true, claimWindow: null, amountUnknown: true }))
+  // One "available" figure on the page: what step 3 pays (the payout wallet's owed amount); left out when it is zero or can't
+  // be read (step 3 then says why).
+  const available = payoutClaim.amountUnknown || payoutClaim.owedLamports === '0' ? null : payoutClaim.owedLamports
+  const usdEstimate = available === null ? null : formatUsdEstimate(available, usdPerSol)
+  const summary = <div className="claim-amount-summary inner-card">
+    {available !== null && <div><span>Available to claim</span><strong title={`${formatUnits(available)} SOL`}>{formatSolDisplay(available)} SOL</strong>{usdEstimate && <small>≈ {usdEstimate}</small>}</div>}
+    {followsLater > 0n && <p className="muted claim-follows">Then {formatSolDisplay(followsLater.toString())} SOL of graduated pool fees in a second claim: an early
+      access payout claims its curve fees and its graduated pool fees one at a time.</p>}
+    <div className="claim-fee-history"><span>Total earned <strong title={`${formatUnits(market.earned)} SOL`}>{formatSolDisplay(market.earned)} SOL</strong></span><span>Already paid <strong title={`${formatUnits(market.claimed)} SOL`}>{formatSolDisplay(market.claimed)} SOL</strong></span></div>
+  </div>
+  const finePrint = <>
+    <p>Part of each trade fee is set aside for this repository, whether or not you’ve signed up.</p>
+    {BigInt(market.platformCollected ?? '0') > 0n && <p>Platform collections: <strong title={`${formatUnits(market.platformCollected)} SOL`}>{formatSolDisplay(market.platformCollected)} SOL</strong>, not paid to the owner. <Link href="/how-it-works#builder-collections">Collection policy</Link></p>}
+  </>
+  return <ClaimSteps payoutClaim={payoutClaim} summary={summary} finePrint={finePrint} waitingLamports={available} repoId={repoId} mint={market.mint} repoName={repo.fullName} appAccess={access} appSettingsUrl={appSettingsUrl}
     verifiedUser={verifiedUser} beneficiaryWallet={beneficiary?.wallet ?? null} beneficiaryMethod={beneficiary?.method ?? 'signature'}
     beneficiaryBoundAt={beneficiary?.boundAt ?? null} pendingAddress={pendingAddress || null} claimable={claimable} usdEstimate={usdEstimate}
     feeStatus={fees.status} payoutReady={funded} settledClaim={receipt} review={review}

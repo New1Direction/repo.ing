@@ -20,11 +20,13 @@ test('recent trades skip rows without a valid direction, signature or time', () 
   assert.deepEqual(list.map(row => row.signature), [sig(0)])
 })
 
-test('recent trade amounts use exact base units and tolerate missing token amounts', () => {
+test('recent trade amounts read from base units (compact from 1,000 tokens) and tolerate missing token amounts', () => {
   assert.equal(recentTradeSol(trade(0)), '1.5 SOL')
   assert.equal(recentTradeSol(trade(0, { solLamports: null })), '—')
   assert.equal(recentTradeTokens(trade(0)), '2.5')
-  assert.equal(recentTradeTokens(trade(0, { tokenBaseUnits: '9775865476267' })), '9,775,865.47')
+  assert.equal(recentTradeTokens(trade(0, { tokenBaseUnits: '9775865476267' })), '9.7M', 'compact and floored from 1,000 tokens up')
+  assert.equal(recentTradeTokens(trade(0, { tokenBaseUnits: '705460370000' })), '705.4K')
+  assert.equal(recentTradeTokens(trade(0, { tokenBaseUnits: '999990000' })), '999.99')
   assert.equal(recentTradeTokens(trade(0, { tokenBaseUnits: '9999' })), '<0.01')
   assert.equal(recentTradeTokens(trade(0, { tokenBaseUnits: null })), null)
   assert.equal(recentTradeTokens(trade(0, { tokenBaseUnits: '1.5' })), null)

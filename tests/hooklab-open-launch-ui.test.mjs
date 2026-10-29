@@ -260,7 +260,8 @@ test('with no fee menu on chain the creator types a fee from 0% to the ceiling, 
   assert.match(markup, /id="creator-fee-percent"/)
   assert.match(markup, /min="0" max="5" step="0.01"/)
   assert.match(markup, /value="1.37"/)
-  assert.match(text(markup), /from 0% to 5%/)
+  // The range is the slider's two ends (the separate "Any fee from 0% to 5%" line was cut as a repeat).
+  assert.match(text(markup), /Creator fee % 0% 5%/)
 })
 test('the launch-requests API sends whether the creator fee is continuous', async () => {
   const { publicOpenCreation } = await import('../app/lib/hooklab-launch-requests.mjs')

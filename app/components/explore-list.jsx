@@ -6,7 +6,6 @@ import { MarketTable } from './ui'
 import { orderMarkets } from '../lib/market-order.mjs'
 import { orderByShipping } from '../lib/pulse-rank.mjs'
 import { MARKET_CATEGORIES, marketCategories } from '../lib/market-categories.mjs'
-import { PROMOTION_MIN_PERCENT } from '../lib/repo-quality.mjs'
 import { isModelMarket } from '../lib/hf-model-display.mjs'
 import { useWatchlist, WatchlistSettings } from './watchlist'
 
@@ -56,8 +55,8 @@ export function ExploreList({ markets, usdPerSol, modelsEnabled = false }) {
     </div></div>
     {tab === 'watchlist' && <WatchlistSettings/>}
     {storageError && tab !== 'watchlist' && <p className="subtle-notice" role="status">{storageError}</p>}
-    <div className="discovery-caption"><span>{tab === 'new' ? 'Latest launches' : tab === 'shipping' ? 'Ranked by code shipped this week: commits, merged pull requests and releases' : tab === 'watchlist' ? 'Repositories you’re watching' : tab === 'mcap' ? `Ranked by market cap (last trade price × 1B supply) · new repos below ${PROMOTION_MIN_PERCENT}% of their graduation target come last` : `Ranked by 24h volume · new repos below ${PROMOTION_MIN_PERCENT}% of their graduation target come last`}</span>{(source !== 'all' || category !== 'all' || ownership !== 'all' || query) && <button type="button" onClick={() => { setQuery(''); router.replace(`/explore${tab !== 'trending' ? `?view=${tab}` : ''}`, { scroll: false }) }}>Clear filters</button>}</div>
+    <div className="discovery-caption"><span>{tab === 'new' ? 'Latest launches' : tab === 'shipping' ? 'Ranked by code shipped this week: commits, merged pull requests and releases' : tab === 'watchlist' ? 'Repositories you’re watching' : tab === 'mcap' ? 'Ranked by market cap' : 'Ranked by 24h volume'}</span>{(source !== 'all' || category !== 'all' || ownership !== 'all' || query) && <button type="button" onClick={() => { setQuery(''); router.replace(`/explore${tab !== 'trending' ? `?view=${tab}` : ''}`, { scroll: false }) }}>Clear filters</button>}</div>
     <MarketTable markets={tab === 'watchlist' && !ready ? [] : shown} usdPerSol={usdPerSol} empty={!ready && tab === 'watchlist' ? 'Loading your watchlist…' : empty}/>
-    <div className="table-count">Showing {shown.length} of {markets.length} indexed markets{ownership === 'verified' && ' · Verification records repository admin access, not token endorsement.'}{ownership === 'official' && ' · Official: the verified maintainer launched the market from their payout wallet. Not an endorsement of the token.'}</div>
+    <div className="table-count">Showing {shown.length} of {markets.length} markets{ownership === 'verified' && ' · Verification records repository admin access, not token endorsement.'}{ownership === 'official' && ' · Official: the verified maintainer launched the market from their payout wallet. Not an endorsement of the token.'}</div>
   </>
 }

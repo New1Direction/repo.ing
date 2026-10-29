@@ -18,3 +18,9 @@
 [data-theme=light] .claim-next-action{background:#eef8f1;border-color:#b8d8c3}[data-theme=light] .claim-next-action p{color:#2b4535}[data-theme=light] .claim-next-action strong{color:#17663a}
 [data-theme=light] .claim-not-admin{background:#fbf3e6;border-color:#e0c59a;color:#5c4320}[data-theme=light] .claim-not-admin li>span:first-child{color:#4a3415}
 .builder-empty-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}
+/* Claim page fine print: policy lines folded under one summary (app/components/claim-steps.jsx). */
+.claim-fine-print{margin:0 0 10px 77px;color:var(--muted);font-size:13px;line-height:1.5}
+.claim-fine-print summary{cursor:pointer}.claim-fine-print summary svg{vertical-align:-3px;margin:0 6px 0 4px}
+.claim-fine-print p{margin:8px 0 0;max-width:720px}
+@media(max-width:700px){.claim-fine-print{margin-left:0}}
+.builder-fine-print{margin:18px 0 0}

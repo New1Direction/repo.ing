@@ -19,7 +19,7 @@ export function HooksLaunchPage() {
   const local = localAcceptanceNetwork() && <p role="status" className="inner-card"><strong>LOCAL ACCEPTANCE · synthetic funds only.</strong> Real SBF programs on one isolated validator, accessed through two local proxies—not independent production providers. Mainnet submission is blocked. The 100 bps creator fee and wallet cap are test terms, not production approval.</p>
   if (open) return <>
     <header className="hlf-head">
-      <div><h1>Launch a coin <span className="hlf-tag">HOOKS</span></h1><p>Make it yours. Set the rules. Go live.</p></div>
+      <div><h1>Launch a coin <span className="hlf-tag">HOOKS</span></h1><p>Pick a fee and a wallet limit, then go live.</p></div>
       <nav className="hlf-links-row" aria-label="Hooks coins"><Link href="/hooks/trade">Buy &amp; sell</Link><Link href="/hooks/mine">My coins &amp; claims</Link></nav>
     </header>
     {local}

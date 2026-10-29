@@ -15,5 +15,5 @@ export async function VerificationBonusStats() {
     <div className="eyebrow">VERIFICATION BONUSES</div><h2 id="verification-bonus-title">Verification bonuses</h2>
     <p>Launchers earn a one-time bonus from platform revenue when the repository’s maintainer verifies within 30 days of launch. Every bonus is reviewed before it is paid.</p>
   </div><div className="analytics-token-state"><span>Paid to launchers</span><strong>{formatSolDisplay(totals.lamports)} SOL</strong>
-    <small>{totals.count} {totals.count === 1 ? 'bonus' : 'bonuses'} · finalized receipts</small></div></section>
+    <small>{totals.count} {totals.count === 1 ? 'bonus' : 'bonuses'}</small></div></section>
 }

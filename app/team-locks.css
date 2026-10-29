@@ -1,0 +1,24 @@
+/* Token locks (components/team-token-locks.jsx): a compact list, with terms and schedules folded. Base card and heading
+   styles are .team-locks / .team-locks-heading in globals.css. */
+.team-locks-list{list-style:none;margin:16px 0 0;padding:0;border-top:1px solid var(--border)}
+.team-locks-row{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(64px,.6fr) minmax(0,1.6fr) auto;align-items:center;gap:6px 16px;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px}
+.team-locks-name{display:flex;flex-direction:column;gap:2px;min-width:0}
+.team-locks-name strong{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.team-locks-name small,.team-locks-dates{color:var(--muted);font-size:12px}
+.team-locks-amount{font-variant-numeric:tabular-nums;text-align:right}
+.team-locks-row a{display:inline-flex;align-items:center;gap:4px;min-height:36px;color:var(--muted);font-size:12px;text-decoration:underline;text-underline-offset:3px}
+.team-locks-details{margin-top:12px;font-size:12px;color:var(--muted)}
+.team-locks-details summary{cursor:pointer;min-height:36px;align-content:center;color:var(--text);font-size:13px;width:fit-content}
+.team-locks-details>p{max-width:860px;line-height:1.65}
+.team-locks-terms-row{padding:10px 0;border-top:1px solid var(--border)}
+.team-locks-terms-row h3{font-size:13px;margin:0 0 6px;color:var(--text)}
+.team-locks-terms-row p{margin:4px 0}
+.team-locks-wallet{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.team-locks-terms-row ol{list-style:none;margin:6px 0 0;padding:0}
+.team-locks-terms-row li{display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;padding:4px 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+@media(hover:hover){.team-locks-row a:hover{color:var(--text)}}
+@media(max-width:700px){
+  .team-locks-row{grid-template-columns:minmax(0,1fr) auto;gap:2px 12px}
+  .team-locks-dates{grid-column:1}
+  .team-locks-row a{grid-column:2;grid-row:2;justify-self:end;min-height:44px}
+}

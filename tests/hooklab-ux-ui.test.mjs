@@ -15,7 +15,7 @@ const form = props => html(h(HookLaunchForm, { coin, set() {}, disabled: false, 
 
 test('launch: three presets (holder rewards marked soon), a live "5% of 10% max" and an open launch button', () => {
   const markup = form(), words = text(markup)
-  assert.match(words, /Burn coin 5% fee: 3% burned, 2% creator/); assert.match(words, /Holder rewards Soon/); assert.match(words, /Creator coin 2% fee, all to the creator/)
+  assert.match(words, /Burn coin 5% fee: 3% burned, 2% creator/); assert.match(words, /Holder rewards Soon/); assert.match(words, /Creator coin 2% creator fee/)
   assert.match(markup, /<button type="button" class="hlf-preset is-holders" aria-pressed="false" disabled=""/)
   assert.match(markup, /class="hlf-preset is-burn" aria-pressed="true"/)
   assert.match(words, /5% of 10% max/)

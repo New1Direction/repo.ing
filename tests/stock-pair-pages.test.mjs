@@ -114,13 +114,13 @@ test('the token page of a stock pair shows its fee routing instead of the claim 
   assert.match(markup, /id="fee-routing"/)
   assert.ok(markup.includes('Fee routing') && markup.includes('To the launcher, forever') && markup.includes('permanent $REPOING / METAx liquidity'))
   assert.ok(markup.includes('Stock pair: no owner claim'), 'the trust panel row')
-  assert.doesNotMatch(markup, /Claim builder fees|Invite repository owner|Maintainer\? Verify here|Total repository earnings/)
+  assert.doesNotMatch(markup, /Claim builder fees|Invite repository owner|Maintainer\? Verify here|Builder earnings/)
   assert.deepEqual(feeStatusReads, [], 'no SOL fee status for a stock pair')
 })
 
 test('control: the token page of a SOL market keeps its claim link, invitation and earnings', async () => {
   const markup = decoded(html(await resolveServer(await tokenPage.default({ params: Promise.resolve({ mint: 'MintSolHello' }), searchParams: Promise.resolve({}) })), { wallet: true }))
-  assert.ok(markup.includes('Claim builder fees') && markup.includes('Total repository earnings') && markup.includes('Maintainer? '))
+  assert.ok(markup.includes('Claim builder fees') && markup.includes('Builder earnings') && markup.includes('Maintainer? '))
   assert.doesNotMatch(markup, /Fee routing|no owner claim/)
 })
 

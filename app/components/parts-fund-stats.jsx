@@ -9,7 +9,8 @@ export async function PartsFundStats() {
   if (!partsEnabled()) return null
   let stats = null
   try { stats = await partsStats() } catch (error) { if (error?.code !== '42P01') console.error('parts stats unavailable', { error: error.message }) }
-  if (!stats) return <section className="analytics-token" aria-labelledby="parts-title"><div><h2 id="parts-title">Parts funds</h2><p>Parts fund totals are temporarily unavailable.</p></div></section>
+  // Unreadable totals leave the section out rather than show a stuck notice.
+  if (!stats) return null
   const lists = stats.activeLists + stats.fundedLists + stats.refundedLists
   return <section className="analytics-token parts-stats" aria-labelledby="parts-title"><div>
     <div className="eyebrow">PARTS FUNDS</div><h2 id="parts-title">Parts funds</h2>
@@ -21,7 +22,7 @@ export async function PartsFundStats() {
     </div>
     {stats.recent.length > 0 && <details className="analytics-data"><summary>View receipts</summary><ul>{stats.recent.map(r => <li key={`${r.kind}:${r.signature}`}>
       <a href={`https://solscan.io/tx/${r.signature}`} target="_blank" rel="noopener noreferrer">{LABEL[r.kind]} · {formatTokenAmount(r.amount, r.decimals)} {r.symbol} · {r.fullName} · {day(r.at)} ↗</a></li>)}</ul>
-      <p>A pledge counts once its finalized receipt shows the tip wallet received the exact amount with its memo.</p></details>}
+      <p>A pledge counts once it is confirmed on-chain at the exact amount, with its memo.</p></details>}
   </div><div className="analytics-token-state"><span>Pledged in total</span>
     <strong>{formatCents(Number(stats.activeCents) + Number(stats.fundedCents) + Number(stats.refundedCents))}</strong>
     <small>{lists ? `${lists} ${lists === 1 ? 'list' : 'lists'} · USD at pledge time` : 'No parts lists yet'}</small></div></section>

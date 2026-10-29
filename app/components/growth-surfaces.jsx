@@ -60,13 +60,15 @@ function useGrowthData(initial){
   },[])
   return data
 }
+// /explore's highlights: the newest markets and the top builder earners (the graduation race above already shows who is
+// closest to graduating). Top discoverers only once a discoverer has earned something: no table of 0 SOL rows.
+const hasEarned=row=>/^\d+$/.test(String(row.earned??''))&&BigInt(row.earned)>0n
 export function ExploreGrowth({data:initial}){
   const data=useGrowthData(initial)
   return <div className="explore-growth">
-    <div className="growth-grid"><section className="growth-section"><h2>New Markets</h2><GrowthMarketList markets={data.newMarkets}/></section>
-      <section className="growth-section"><h2>Closest to Graduation</h2><GrowthMarketList markets={data.closest} kind="graduation" empty="Graduation progress is being verified."/></section>
-      <section className="growth-section"><h2>Top Builder Earners</h2><GrowthMarketList markets={data.earners} kind="earned"/></section>
+    <div className="growth-grid is-pair"><section className="growth-section"><h2>New markets</h2><GrowthMarketList markets={data.newMarkets}/></section>
+      <section className="growth-section"><h2>Top builder earners</h2><GrowthMarketList markets={data.earners} kind="earned"/></section>
     </div>
-    <section className="growth-section"><div className="growth-heading"><h2>Top Discoverers</h2><Link href="/discoverers">View all →</Link></div><DiscovererTable leaders={data.leaders} compact/>{data.leaderboardPartial&&<p className="growth-footnote">Some market attribution is being verified.</p>}</section>
+    {data.leaders.some(hasEarned)&&<section className="growth-section"><div className="growth-heading"><h2>Top discoverers</h2><Link href="/discoverers">View all →</Link></div><DiscovererTable leaders={data.leaders} compact/></section>}
   </div>
 }

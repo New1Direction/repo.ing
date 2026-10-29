@@ -74,8 +74,14 @@ export function newestLaunches(markets, { limit = WATCH_LIMIT, excludeMints = []
       launched: chartTradeAge(new Date(launchedAt(market)).toISOString(), now) }))
 }
 
-// Floor so 99.9% never reads as 100% before the target is reached. Formats from raw lamports.
-export const graduationPercentLabel = percent => `${Math.floor(percent)}%`
+// Floor so 99.9% never reads as 100% before the target is reached: whole percents from 10% up, one decimal below, and
+// "<0.1%" for a start too small to show (never "0%" for a market that has reserves).
+const PERCENT_WHOLE_FROM = 10, PERCENT_SMALLEST = 0.1
+export const graduationPercentLabel = percent => {
+  if (!(percent > 0)) return '0%'
+  if (percent >= PERCENT_WHOLE_FROM) return `${Math.floor(percent)}%`
+  return percent < PERCENT_SMALLEST ? `<${PERCENT_SMALLEST}%` : `${Math.floor(percent * 10) / 10}%`
+}
 export const remainingLabel = market => `${formatSolDisplay(market.remainingLamports)} SOL to go`
 export const graduationSummary = market => `${graduationPercentLabel(market.progressPercent)} · ${remainingLabel(market)}`
 // Screen-reader name for a whole-row link (the bar inside it is decorative).

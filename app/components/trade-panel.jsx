@@ -514,7 +514,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null, 
       {buying && !stock && (!curve || curve.status === 'active') && <TradeSizeGuide repoId={market.repoId} disabled={busy} onSelect={chooseAmount}/>}
       {launchFeeNote && <p className="trade-impact-warning trade-launch-fee" role="status">{launchFeeNote}</p>}
       {liveQuote?.priceImpactPercent >= 5 && <p className="trade-impact-warning" role="status">High price impact. This trade moves the execution price by about {liveQuote.priceImpactPercent.toFixed(2)}% before fees. Consider a smaller amount.</p>}
-      <p className="sr-only" id="trade-quote-hint">{minimumReceive ? `Minimum after ${slippageLabel(shownSlippage)} slippage: ${formatUnits(minimumReceive, receiveDecimals, 6)} ${receiveUnit}. Refreshed before wallet confirmation.` : 'Quote updates as you enter an amount.'}</p>
+      <p className="sr-only" id="trade-quote-hint">{minimumReceive ? `Minimum after ${slippageLabel(shownSlippage)} slippage: ${formatUnits(minimumReceive, receiveDecimals, 6)} ${receiveUnit}. Refreshed before wallet confirmation.` : ''}</p>
       <button className="button primary trade-submit" type="submit" disabled={reviewOnly || busy || !available || !tradingOpen || !units || !validAmount || buyExceedsBalance || costShortfall || quoteShortfall || sellExceedsBalance || resultCard?.state === 'pending'}>{busy && <LoadingSignal/>}{reviewOnly ? 'Review only — signing disabled' : busy ? stage || 'Preparing…' : submitLabel}</button>
       <TransactionStatus stage={busy ? stage : ''}/>
       <TradeIdentity wallet={wallet} direction={direction} x={x}/>

@@ -6,8 +6,10 @@ import { hasXHandle } from './x-handle-link'
 import { WalletIdentity } from './wallet-identity'
 import { xHandleFor } from '../lib/x-links.mjs'
 import { holderSnapshot, launcherSummary } from '../lib/trust-panel.mjs'
-import { graduationLabel, launcherLines, maintainerStatus, percentLabel, TOP_HOLDERS } from '../../src/trust-signals.mjs'
-import { holdingLabel, shortWallet } from '../lib/holder-note-format.mjs'
+import { FIXED_SUPPLY_BASE_UNITS, graduationLabel, launcherLines, maintainerStatus, percentLabel, sharePercent, TOP_HOLDERS } from '../../src/trust-signals.mjs'
+import { OFFICIAL_TOKEN } from '../lib/official-token.mjs'
+import { stillLockedBaseUnits } from '../lib/official-team-locks.mjs'
+import { shortWallet } from '../lib/holder-note-format.mjs'
 import { REPO_FACTS_TIP } from '../lib/repo-quality.mjs'
 import { signedPayoutWallet } from '../lib/official-launch.mjs'
 import { isModelMarket } from '../lib/hf-model-display.mjs'
@@ -32,8 +34,8 @@ function Row({ id, icon: Icon, tone = 'neutral', title, lines, tip, busy = false
 
 const TIPS = {
   maintainer: 'Verified: a GitHub admin of this repository signed in and verified it on repo.ing, so builder fees can reach them.',
-  launcher: 'From buys and sells on repo.ing (bonding curve and graduated pool). Tokens moved by transfer are not counted.',
-  holders: `On-chain: the ${TOP_HOLDERS} largest wallets' share of supply. The bonding curve or pool vault and token locks are shown separately, not counted. Refreshed about every minute.`,
+  launcher: 'From buys and sells on repo.ing (bonding curve and graduated pool). Tokens moved by transfer are not counted, and tokens the launcher locked are not counted as held.',
+  holders: `On-chain: the ${TOP_HOLDERS} largest wallets' share of supply. The bonding curve or pool and token locks are shown separately, not counted. Locked: tokens whose release date has not come yet. Refreshed about every five minutes.`,
   token: 'Read from the token mint account on Solana. With the mint authority revoked, no more tokens can ever be minted.',
   declined: 'A current GitHub admin of this repository declined this market on repo.ing. repo.ing does not promote it. Trading stays open so holders can exit, and builder fees stay claimable by the maintainer.',
   // A stock pair has no builder fees to claim (src/stock-owner-claims.mjs): its fees keep their fixed routing.
@@ -67,11 +69,11 @@ function StockPairOwnerRow({ market }) {
     lines={[`${STOCK_FEE_SPLIT.launcher} to the launcher · ${STOCK_FEE_SPLIT.accumulator} to liquidity`]} tip={noOwnerClaimMessage(market)}/>
 }
 
-// facts: repoFactsView (repo-quality.mjs). Age and stars, then the repo score, for every market; the warning tone only
-// while a new repository's market has not earned promotion.
+// facts: repoFactsView (repo-quality.mjs). Age, stars and forks for every market (the repo score is not shown here); the
+// warning tone only while a new repository's market has not earned promotion.
 function RepoRow({ facts }) {
   return <Row id="trust-repo" icon={facts.labeled ? Sprout : CalendarClock} tone={facts.tone} title={facts.title}
-    lines={[facts.counts, <span key="score" title={facts.scoreDetail}>{facts.scoreLabel}</span>]} tip={REPO_FACTS_TIP}/>
+    lines={[facts.counts]} tip={REPO_FACTS_TIP}/>
 }
 
 const launcherRow = props => <Row id="trust-launcher" icon={Rocket} tip={TIPS.launcher} {...props}/>
@@ -101,19 +103,26 @@ const holdersRow = props => <Row id="trust-holders" icon={PieChart} tip={TIPS.ho
 const tokenRow = props => <Row id="trust-token" icon={Coins} tip={TIPS.token} {...props}/>
 const HoldersFallback = () => <>{holdersRow({ busy: true, lines: [null] })}{tokenRow({ busy: true, lines: [null, null] })}</>
 
-function vaultLine(holders) {
+// lockedPercent: the official token's published locks, still locked by their schedules (the same figure as the Token
+// locks list; the on-chain read only sees the largest accounts, so it can miss smaller lock escrows); any other market's
+// lock escrows among its largest accounts.
+function vaultLine(holders, lockedPercent = holders.lockedPercent) {
   const parts = []
   if (holders.curvePercent) parts.push(`${percentLabel(holders.curvePercent)} in the curve`)
   if (holders.poolPercent) parts.push(`${percentLabel(holders.poolPercent)} in the pool`)
-  if (holders.lockedPercent) parts.push(`${percentLabel(holders.lockedPercent)} locked`)
+  if (lockedPercent) parts.push(`${percentLabel(lockedPercent)} locked`)
   return parts.length ? parts.join(' · ') : 'Nothing in the curve, pool or locks'
 }
+const officialLockedPercent = () => sharePercent(stillLockedBaseUnits(), FIXED_SUPPLY_BASE_UNITS)
 
 // Token row: mint authority as the headline, then supply (and any burned since launch), then graduation status.
 const tokenTitle = mint => mint.mintAuthorityRevoked ? 'Mint authority revoked' : 'Mint authority active: more can be minted'
+// A burn under 0.1% of supply is left out (it would read as an odd number); a larger one as a share.
 function supplyLine(mint) {
   if (mint.fixedSupply) return '1B fixed supply'
-  return mint.burnedBaseUnits !== '0' ? `1B supply · ${holdingLabel(mint.burnedBaseUnits)} burned` : 'Supply differs from 1B'
+  if (mint.burnedBaseUnits === '0') return 'Supply differs from 1B'
+  const burned = sharePercent(mint.burnedBaseUnits, FIXED_SUPPLY_BASE_UNITS)
+  return burned >= 0.1 ? `1B supply · ${percentLabel(burned)} burned` : '1B supply'
 }
 
 async function HoldersRows({ market }) {
@@ -124,7 +133,8 @@ async function HoldersRows({ market }) {
     {tokenRow({ title: 'Mint details unavailable right now', lines: ['1B supply at launch', graduation] })}</>
   const { holders, mint } = snapshot
   return <>
-    {holdersRow({ title: `Top ${holders.topCount || TOP_HOLDERS} holders own ${percentLabel(holders.topPercent)}`, lines: [vaultLine(holders)] })}
+    {holdersRow({ title: `Top ${holders.topCount || TOP_HOLDERS} holders own ${percentLabel(holders.topPercent)}`,
+      lines: [vaultLine(holders, market.mint === OFFICIAL_TOKEN.mint ? officialLockedPercent() : holders.lockedPercent)] })}
     {tokenRow({ title: tokenTitle(mint), lines: [supplyLine(mint), graduation] })}
   </>
 }
@@ -144,7 +154,7 @@ function LaunchFeeRow({ terms }) {
 export function TrustPanel({ market, launchFee = null, declined = null, repoFacts = null }) {
   const model = isModelMarket(market)
   return <section className="inner-card trust-panel" aria-labelledby="trust-panel-title">
-    <div className="trust-heading"><h3 id="trust-panel-title">Launch facts</h3><span>On-chain and repo.ing data</span></div>
+    <div className="trust-heading"><h3 id="trust-panel-title">Launch facts</h3></div>
     <ul className="trust-rows">
       {model ? <ModelOwnerRow market={market}/> : isStockPairMarket(market) ? <StockPairOwnerRow market={market}/> : <MaintainerRow market={market}/>}
       {declined && (model
@@ -156,7 +166,6 @@ export function TrustPanel({ market, launchFee = null, declined = null, repoFact
       <Suspense fallback={<LauncherFallback/>}><LauncherRow market={market}/></Suspense>
       <Suspense fallback={<HoldersFallback/>}><HoldersRows market={market}/></Suspense>
     </ul>
-    <p className="trust-foot">Facts, not advice. Launcher figures count trades on repo.ing only.</p>
-    {!model && !isStockPairMarket(market) && <a className="trust-quality-link" href="#transparency">Launch quality report: evidence, liquidity and lock states</a>}
+    {!model && !isStockPairMarket(market) && <a className="trust-quality-link" href="#transparency">Launch quality report →</a>}
   </section>
 }

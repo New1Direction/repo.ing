@@ -198,9 +198,18 @@ const baseUnits = amount => {
 // $REPOING `wallet` deposited into these locks and cannot move yet: each deposit less the releases already due (released
 // tokens are claimable, so they count as held again). The launcher row subtracts this so locked tokens never read as held.
 export function lockedBaseUnits(wallet, now = Date.now(), locks = OFFICIAL_TEAM_LOCKS) {
-  return locks.filter(lock => lock.wallet.address === wallet).reduce((sum, lock) => {
-    const released = lock.releases.filter(r => Date.parse(r.at) <= now).reduce((s, r) => s + baseUnits(r.amount), 0n)
-    const left = baseUnits(lock.deposited) - released
-    return sum + (left > 0n ? left : 0n)
-  }, 0n)
+  return stillLockedBaseUnits(now, locks.filter(lock => lock.wallet.address === wallet))
 }
+// One lock's tokens that have not released yet (its deposit less the releases already due).
+export function lockStillLocked(lock, now = Date.now()) {
+  const released = lock.releases.filter(r => Date.parse(r.at) <= now).reduce((s, r) => s + baseUnits(r.amount), 0n)
+  const left = baseUnits(lock.deposited) - released
+  return left > 0n ? left : 0n
+}
+// Every published lock's tokens that cannot move yet: the one "locked" figure the token page and /stats show (Launch
+// facts' holders row and the Token locks list), so they always agree.
+export function stillLockedBaseUnits(now = Date.now(), locks = OFFICIAL_TEAM_LOCKS) {
+  return locks.reduce((sum, lock) => sum + lockStillLocked(lock, now), 0n)
+}
+// The next release still to come: { at, amount } or null when every release is due.
+export const nextRelease = (lock, now = Date.now()) => lock.releases.find(release => Date.parse(release.at) > now) ?? null

@@ -50,6 +50,5 @@ export function RecentTrades({ mint, symbol, trades, failed, quoteLabel }) {
     {loading ? <ol className="recent-trades-list" aria-hidden="true">{Array.from({ length: ROWS }, (_, index) => <li key={index} className="recent-trade is-placeholder"><span className="skeleton-text"/></li>)}</ol>
       : !rows.length ? <p className="recent-trades-empty" role="status">{failed ? 'Recent trades are temporarily unavailable.' : 'No trades yet.'}</p>
       : <ol className="recent-trades-list">{rows.map(trade => <RecentTradeRow key={tradeKey(trade)} trade={trade} symbol={symbol} now={now} x={handles.get(tradeKey(trade)) ?? null} quoteLabel={quoteLabel}/>)}</ol>}
-    <small className="recent-trades-note">Last {ROWS} swaps · updates with the chart</small>
   </section>
 }

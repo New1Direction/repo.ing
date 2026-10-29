@@ -2,9 +2,10 @@ import { formatCount, pulseAgo, pulseStatusLabel, starsToday } from '../lib/puls
 
 const RECENT = 14 * 86_400_000
 
-// One line under the token hero: is the dev shipping? Links down to the Dev Pulse card. Nothing until GitHub was read.
+// One line under the token hero while the dev is shipping (today or this week); links down to the Dev Pulse card. Nothing
+// until GitHub was read, and nothing for a quiet repository (the card's own status says so, once).
 export function DevPulseStrip({ pulse, now = Date.now() }) {
-  if (!['shipping', 'active', 'quiet'].includes(pulse?.status)) return null
+  if (!['shipping', 'active'].includes(pulse?.status)) return null
   const today = starsToday(pulse.stars)
   const facts = [
     pulse.commits24h > 0 ? `${formatCount(pulse.commits24h)} commit${pulse.commits24h === 1 ? '' : 's'} today`

@@ -1,0 +1,8 @@
+/* /how-it-works fine print: each policy folded into a <details> (app/(site)/how-it-works/page.jsx). */
+.how-fine-print h2{font-size:22px;margin:0 0 6px}
+.how-details{border-top:1px solid var(--border);padding:14px 0;scroll-margin-top:95px}
+.how-details:last-of-type{padding-bottom:0}
+.how-details summary{cursor:pointer;font-weight:600;color:var(--text)}
+.how-details[open] summary{margin-bottom:10px}
+.how-details p{margin:0 0 10px}
+.how-details.graduation-guide{margin:0;padding:14px 0}

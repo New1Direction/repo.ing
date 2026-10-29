@@ -32,7 +32,6 @@ test('the fee breakdown is the programs’ split: repo.ing floor(gross / 4), the
 
 test('at 3% the form and its preview show 2.25% to the creator and 0.75% to repo.ing', () => {
   const markup = text(form())
-  assert.match(markup, /You receive 75% · repo\.ing receives 25%/)
   assert.match(markup, /At 3%: 2\.25% to you \+ 0\.75% to repo\.ing/)
   assert.match(markup, /You receive 2\.25%/); assert.match(markup, /repo\.ing receives 0\.75%/)
   assert.match(markup, /Max per wallet 3%/)

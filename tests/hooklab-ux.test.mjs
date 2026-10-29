@@ -32,7 +32,7 @@ test('preview = execution: the six real mainnet Burn trades replay through the t
 
 test('one fee number with a plain breakdown, the creator part last', () => {
   assert.equal(feeHeadline({ creatorFeeBps: 200, burnBps: 300 }).text, '5% fee: 3% burned, 2% creator')
-  assert.equal(feeHeadline({ creatorFeeBps: 200, burnBps: 0 }).text, '2% fee, all to the creator')
+  assert.equal(feeHeadline({ creatorFeeBps: 200, burnBps: 0 }).text, '2% creator fee')
   assert.equal(feeHeadline({ creatorFeeBps: 100, burnBps: 200, holderBps: 300 }).text, '6% fee: 2% burned, 3% to holders, 1% creator')
   assert.equal(feeHeadline({ creatorFeeBps: 50, burnBps: 0 }).totalBps, 50)
   assert.equal(feeHeadline({ creatorFeeBps: 0, burnBps: 0 }).text, 'No trading fee')

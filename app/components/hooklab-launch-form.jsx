@@ -120,9 +120,8 @@ function CreatorFee({ coin, set, disabled, menus }) {
         aria-label="Creator fee slider" aria-valuetext={percent(coin.creatorFeeBps || 0)} onChange={e => set({ creatorFeeBps: Number(e.target.value) })}
         style={{ '--fill': `${max ? (Number(coin.creatorFeeBps) || 0) / max * 100 : 0}%` }}/>
       <span>{max === null ? '—' : percent(max)}</span></div>
-    <p id="creator-fee-split" className="hlf-hint"><strong>You receive 75% · repo.ing receives 25%</strong>
-      {split && <span>At {percent(split.feeBps)}: {share(split.creatorBps)} to you + {share(split.platformBps)} to repo.ing of every buy and sell, in SOL.</span>}
-      {max !== null && <span>Any fee from 0% to {percent(max)}, in steps of 0.01%.</span>}</p>
+    {/* One line from the current setting (the slider already shows the 0 to max range). */}
+    {split && <p id="creator-fee-split" className="hlf-hint"><span>At {percent(split.feeBps)}: {share(split.creatorBps)} to you + {share(split.platformBps)} to repo.ing of every buy and sell, in SOL.</span></p>}
     <LimitMeter totalBps={coin.creatorFeeBps} maxBps={max ?? undefined}/>
   </>
 }
@@ -150,8 +149,9 @@ function BurnFee({ coin, set, disabled, menus }) {
       <div><dt>repo.ing receives</dt><dd>{split ? share(split.platformBps) : '—'}</dd></div>
       <div><dt>Burned</dt><dd>{percent(burnBps)}</dd></div>
     </dl>
+    {/* The current setting in words; the split above already shows your part and repo.ing's. */}
     <p className="hlf-fee-note">{now.lines && <strong>{now.lines.total}</strong>}
-      Your part is paid in SOL: you keep 75% and repo.ing takes 25%. {burnBps > 0 ? 'The burned part destroys coins on every trade, so the supply shrinks.' : 'Slide the burn up to destroy coins on every trade and shrink the supply.'}</p>
+      {burnBps > 0 ? ' Burned coins are destroyed, so the supply shrinks.' : ' Slide the burn up to destroy coins on every trade.'}</p>
     <LimitMeter totalBps={totalBps} maxBps={max}/>
     {now.problem && <p className="inline-error" role="alert">{now.problem}</p>}
   </>
@@ -231,9 +231,9 @@ export function HookLaunchSummary({ coin, openCreation, costs, disabled, busyLab
       </div>
       {!selected && coin.creatorFeeBps !== '' && <p className="hlf-preview-fee">{feeHeadline({ creatorFeeBps: coin.creatorFeeBps, burnBps }).text}</p>}
       {!selected && <HookTypeBadges coin={{ capBps: coin.capBps, burnBps, creatorFeeBps: Number(coin.creatorFeeBps) || 0 }}/>}
+      {/* The fee line above already gives the total and the creator fee; the rows below add only what it doesn't. */}
       <dl>
-        {burnBps > 0 && <div><dt>Total fee</dt><dd>{coin.creatorFeeBps === '' ? '—' : percent(coin.creatorFeeBps + burnBps)}</dd></div>}
-        <div><dt>Creator fee</dt><dd>{coin.creatorFeeBps === '' ? '—' : selected ? `${coin.creatorFeeBps} bps` : percent(coin.creatorFeeBps)}</dd></div>
+        {selected && <div><dt>Creator fee</dt><dd>{coin.creatorFeeBps === '' ? '—' : `${coin.creatorFeeBps} bps`}</dd></div>}
         {split && <><div><dt>You receive</dt><dd>{share(split.creatorBps)}</dd></div><div><dt>repo.ing receives</dt><dd>{share(split.platformBps)}</dd></div></>}
         {burnBps > 0 && <div><dt>Burned</dt><dd>{percent(burnBps)}</dd></div>}
         <div><dt>Max per wallet</dt><dd>{selected ? 'Set by hook' : percent(coin.capBps)}</dd></div>
@@ -246,7 +246,7 @@ export function HookLaunchSummary({ coin, openCreation, costs, disabled, busyLab
         <div><dt>First buy</dt><dd className="hlf-muted">After launch</dd></div>
       </dl>
       <div className="hlf-total"><span>Estimated total</span><strong>{total ?? 'Shown at review'}</strong></div>
-      <p className="hlf-fine">{need ? `Keep at least ${need} in your wallet. Exact amounts are shown at review and in your wallet.` : 'Exact amounts are shown at review and in your wallet.'} The launch opens trading; buy your own coin from its page once it’s live.</p>
+      <p className="hlf-fine">{need ? `Keep at least ${need} in your wallet; exact amounts show at review.` : 'Exact amounts show at review.'}</p>
       <div ref={errorRef} className="hlf-error">{error && <HooksOperationError error={error}/>}</div>
       {blockReason && <p className="hlf-block-reason" role="status">{blockReason}</p>}
       <button type="submit" className="hlf-primary" disabled={disabled || !!blockReason}>{busyLabel ?? <>Review launch <ArrowRight size={18} aria-hidden="true"/></>}</button>

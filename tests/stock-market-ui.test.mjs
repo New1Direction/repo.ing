@@ -27,7 +27,7 @@ test('/stats stock section: each stock in its own units with a USD estimate; a s
     // Units are keyed by asset and mint: another row of the same asset id never borrows them.
     'meta-xstock:SomeOtherMint1111111111111111111111111111': stockDisplayUnits({ ...INFO, uiMultiplier: '2' }) } })))
   assert.match(page, /Stock-paired markets/)
-  assert.match(page, /METAx 2 markets · 3 trades 4\.41 METAx ≈ \$3,135\.00 0\.007034 METAx ≈ \$5\.00 0\.001507 METAx ≈ \$1\.07 0\.005527 METAx ≈ \$3\.93/)
+  assert.match(page, /METAx 2 markets · 3 trades 4\.41 METAx ≈ \$3,135\.00 0\.00703 METAx ≈ \$5\.00 0\.00151 METAx ≈ \$1\.07 0\.00553 METAx ≈ \$3\.93/)
   assert.match(page, /MSFTx 1 market · 1 trade — — — —/)
   assert.match(page, /Past 24 hours · .* A stock whose units cannot be read right now shows —\./)
   assert.doesNotMatch(page, /SOL figures above\b.*\d SOL|lamports/i)

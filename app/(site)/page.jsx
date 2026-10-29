@@ -41,10 +41,10 @@ export default function Home() {
   const models = hfMarketsEnabled()
   const tabs = [
     { id: 'trending', label: 'Trending', note: 'Ranked by 24h volume.' },
-    { id: 'mcap', label: 'Market cap', note: 'Ranked by market cap: last trade price × on-chain supply.' },
+    { id: 'mcap', label: 'Market cap', note: 'Ranked by market cap.' },
     { id: 'new', label: 'New', note: 'The newest launches.' },
-    { id: 'graduating', label: 'Graduating', note: 'Closest to their graduation target, from verified on-chain reserves. At graduation, trading moves to a Meteora pool.' },
-    { id: 'shipping', label: 'Shipping', note: 'The repositories whose developers shipped the most code this week.' },
+    { id: 'graduating', label: 'Graduating', note: 'Closest to graduation.' },
+    { id: 'shipping', label: 'Shipping', note: 'Most code shipped this week.' },
     ...models ? [{ id: 'models', label: 'Models', note: 'Community launches for public AI models. Every trade pays the model’s owner in SOL.' }] : [],
   ]
   const panels = {
@@ -73,7 +73,7 @@ export default function Home() {
     <Suspense fallback={null}><PulseTickerContent/></Suspense>
     <HomeBoard title="Markets" tabs={tabs} panels={panels}
       action={<Link href="/explore" className="view-all">View all <ArrowRight size={18} aria-hidden="true"/></Link>}
-      footer={<Link href="/waiting" className="home-board-more">Builder fees waiting for maintainers <ArrowRight size={15} aria-hidden="true"/></Link>}/>
+      footer={<Link href="/builders" className="home-board-more">Maintainer? Claim your builder fees <ArrowRight size={15} aria-hidden="true"/></Link>}/>
     <section className="home-how" aria-labelledby="home-how-title">
       <div className="home-how-copy">
         <p className="home-kicker">How it works</p>
@@ -113,7 +113,7 @@ const homeLists = cache(async () => {
 async function MarketListContent({ tab }) {
   const { notice, usdPerSol, tabs } = await homeLists()
   return <>{notice && <p className="subtle-notice">{notice}</p>}<MarketTable markets={tabs[tab]} usdPerSol={usdPerSol}
-    empty={tab === 'Trending' ? 'Nothing has traded in the last 24 hours. See the newest launches under New.' : tab === 'Market cap' ? 'No market has traded yet.' : 'No indexed markets yet. Paste a repository above to start one.'}/></>
+    empty={tab === 'Trending' ? 'Nothing has traded in the last 24 hours. See the newest launches under New.' : tab === 'Market cap' ? 'No market has traded yet.' : 'No markets yet. Paste a repository above to start one.'}/></>
 }
 
 // Hugging Face model markets (HF_MARKETS_ENABLED only), under the same do-not-promote rule as the lists.
@@ -128,7 +128,7 @@ async function ModelsStripContent() {
 // read only for those labels, so its outage never hides a racer.
 async function GraduationRaceContent() {
   const [{ markets, unavailable }, listed] = await Promise.all([graduationRace(), listMarkets()])
-  return <GraduationRaceBoard markets={await withPulse(labeledRacers(shownMarkets(markets), listed.markets))} unavailable={unavailable} compact/>
+  return <GraduationRaceBoard markets={await withPulse(labeledRacers(shownMarkets(markets), listed.markets))} unavailable={unavailable}/>
 }
 
 // Live from GitHub: the newest releases, merges, star spikes and Hacker News stories across live markets that earned

@@ -49,8 +49,8 @@ test('the live card: price and its 24h change, the chart, market cap, volume, bu
   assert.match(markup, /<h2 id="live-market-title">\$REPOING<\/h2><span>New1Direction\/repo\.ing<\/span>/)
   assert.match(markup, /<strong>\$0\.000195<\/strong>/)
   // The close a day ago was 1.05e-6 SOL; the latest is 1.3e-6.
-  assert.match(markup, /<span class="live-change is-up"><span aria-hidden="true">▲<\/span> 23\.81%<\/span>/)
-  assert.match(markup, /<div class="live-chart is-up"><svg viewBox="0 0 320 112" preserveAspectRatio="none" role="img" aria-label="\$REPOING price over the last 24 hours, up 23\.81%">/)
+  assert.match(markup, /<span class="live-change is-up"><span aria-hidden="true">▲<\/span> 24%<\/span>/)
+  assert.match(markup, /<div class="live-chart is-up"><svg viewBox="0 0 320 112" preserveAspectRatio="none" role="img" aria-label="\$REPOING price over the last 24 hours, up 24%">/)
   assert.match(markup, /<span class="live-chart-dot" style="left:98\.75%;top:/)
   assert.match(markup, /<dt>Builders earned<\/dt><dd>31\.88 SOL<\/dd>/)
   assert.equal(markup.match(/<li class="live-trade">/g).length, LIVE_TRADE_ROWS)
@@ -61,8 +61,8 @@ test('the live card: price and its 24h change, the chart, market cap, volume, bu
 
 test('a falling market reads down, in the chart\'s label too; without a SOL price the figures stay in SOL', () => {
   const markup = html(h(LiveMarket, { market, initial: liveChart(payload(9e-7)), usdPerSol: null, renderedAt: NOW }))
-  assert.match(markup, /<span class="live-change is-down"><span aria-hidden="true">▼<\/span> −14\.29%<\/span>/)
-  assert.match(markup, /aria-label="\$REPOING price over the last 24 hours, down 14\.29%"/)
+  assert.match(markup, /<span class="live-change is-down"><span aria-hidden="true">▼<\/span> −14%<\/span>/)
+  assert.match(markup, /aria-label="\$REPOING price over the last 24 hours, down 14%"/)
   assert.match(markup, /<strong>0\.0000009 SOL<\/strong>/, 'plain decimals, never exponent notation')
 })
 

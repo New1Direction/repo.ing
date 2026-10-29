@@ -90,10 +90,10 @@ test('display units: raw × today\'s multiplier, truncated as Token-2022 truncat
   assert.equal(stockAmountLabel('100', null), '—')
 })
 
-test('stock amounts read like SOL amounts: two places from one up, about four significant digits below, never 0', () => {
+test('stock amounts read like SOL amounts: two places from one up, three significant digits below, never 0', () => {
   assert.equal(formatQuoteAmount('100000000', 8), '1')
   assert.equal(formatQuoteAmount('123456789', 8), '1.23')
-  assert.equal(formatQuoteAmount('1234567', 8), '0.01235')
+  assert.equal(formatQuoteAmount('1234567', 8), '0.0123')
   assert.equal(formatQuoteAmount('99', 8), '<0.000001')
   assert.equal(formatQuoteAmount('0', 8), '0')
   assert.equal(formatQuoteAmount(null, 8), '—')

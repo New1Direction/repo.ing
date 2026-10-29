@@ -21,7 +21,9 @@ import { PasteAddressForm, PayoutDestination, pasteSavedMessage } from './payout
 import { bindingLabel, formatUtcDateTime } from '../../src/payout-address-policy.mjs'
 import { PayoutClaim } from './payout-claim'
 
-export function ClaimSteps({ payoutClaim = null, summary, reinvestEnabled = false, reinvestAfterClaim = false, creditsEnabled = false, creditsAfterClaim = false, creditsNetwork = 'mainnet', creditsKeysLink = false, graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, beneficiaryMethod = 'signature', beneficiaryBoundAt = null, pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review, source = null, notAdmin = null }) {
+// finePrint: page-specific lines folded with the settlement note under "Fine print". waitingLamports: with payoutClaim, the
+// amount the waiting banner shows (the payout wallet's owed amount, null when unknown), so it agrees with step 3.
+export function ClaimSteps({ payoutClaim = null, summary, finePrint = null, waitingLamports = null, reinvestEnabled = false, reinvestAfterClaim = false, creditsEnabled = false, creditsAfterClaim = false, creditsNetwork = 'mainnet', creditsKeysLink = false, graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, beneficiaryMethod = 'signature', beneficiaryBoundAt = null, pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review, source = null, notAdmin = null }) {
   const router = useRouter()
   const { wallet, connect, changeWallet, provider } = useWallet()
   const [bound, setBound] = useState(beneficiaryWallet)
@@ -58,7 +60,8 @@ export function ClaimSteps({ payoutClaim = null, summary, reinvestEnabled = fals
   const open = step => currentStep === step || expanded === step
   // ?src= (app/lib/claim-funnel.mjs) travels through GitHub sign-in so the result is attributed to where the visit came from.
   const verifyHref = `/api/github/start?repo=${repoId}&mode=verify${source ? `&src=${source}` : ''}`
-  const waiting = claimable !== null && claimable !== '0' && currentStep < 3 && !justClaimed
+  const waitingAmount = payoutClaim ? waitingLamports : claimable
+  const waiting = waitingAmount !== null && waitingAmount !== '0' && currentStep < 3 && !justClaimed
   const verifyNote = errorCode === 'github-cancelled' || errorCode === 'verification-failed' ? verificationMessage(errorCode) : null
   const short = address => `${address.slice(0, 6)}…${address.slice(-4)}`
 
@@ -132,7 +135,7 @@ export function ClaimSteps({ payoutClaim = null, summary, reinvestEnabled = fals
   }
 
   return <><ClaimChecklist current={currentStep}/>{summary}
-    {waiting && <div className="claim-next-action"><p><strong>{formatSolDisplay(claimable)} SOL</strong> is waiting for {repoName}{usdEstimate ? ` (≈ ${usdEstimate})` : ''}. {currentStep === 1
+    {waiting && <div className="claim-next-action"><p><strong>{formatSolDisplay(waitingAmount)} SOL</strong> is waiting for {repoName}{usdEstimate ? ` (≈ ${usdEstimate})` : ''}. {currentStep === 1
       ? appMissing ? 'Next: give repo.ing read-only access to this repository, then verify with GitHub.' : 'Next: verify that you’re a current admin with GitHub. It takes about a minute.'
       : 'Next: choose the Solana wallet that receives it.'}</p>
       {currentStep === 1 && appReady && !githubReady && <a className={`button primary ${pendingAction ? 'disabled-link' : ''}`} aria-disabled={Boolean(pendingAction)} onClick={event => startNavigation('verify', event)} href={verifyHref}>Verify with GitHub</a>}</div>}
@@ -211,7 +214,8 @@ export function ClaimSteps({ payoutClaim = null, summary, reinvestEnabled = fals
         </div>}
       </div>
     </div>
-    <p className="claim-disclaimer"><Info size={18}/>Fees settle in SOL. USD values are estimates. A payout receipt appears only after settlement is confirmed.</p>
+    <details className="claim-fine-print"><summary><Info size={16} aria-hidden="true"/>Fine print</summary>{finePrint}
+      <p>Fees settle in SOL. USD values are estimates. A payout receipt appears only after settlement is confirmed.</p></details>
     {stage && !busy && <p className="transaction-status" role="status">{stage}</p>}
     {error && <p className="inline-error" role="alert">{error}</p>}
   </div></>

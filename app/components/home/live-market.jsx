@@ -54,8 +54,8 @@ export function LiveMarket({ market, initial, usdPerSol = null, renderedAt }) {
     metrics: usdPerSol ? { solUsd: usdPerSol } : null, now })
   const line = sparklinePath(summary.spark, W, H, PAD)
   const dot = lastPoint(line, W, H)
-  // Up or down as shown: a fall too small to show (0.00%) is not drawn as a fall.
-  const change = percentChange(summary.change), up = change === null || change.sign >= 0
+  // Up or down as shown: a fall too small to show (0.0%) is not drawn as a fall. Whole percents from 10% up, one decimal below.
+  const change = percentChange(summary.change, Math.abs(summary.change ?? 0) < 10 ? 1 : 0), up = change === null || change.sign >= 0
   const changeText = change?.value ?? null
   return <article className="live-market" aria-labelledby="live-market-title">
     <header className="live-market-head">

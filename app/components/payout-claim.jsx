@@ -4,8 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useWallet } from './wallet'
 import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
-import { formatSolDisplay } from '../lib/format.mjs'
-import { formatUtcDateTime } from '../../src/payout-address-policy.mjs'
+import { formatSolDisplay, formatUtcDay } from '../lib/format.mjs'
 
 // What the server's PayoutRefused codes mean to a builder (src/builder-payouts.mjs).
 const REFUSALS = Object.freeze({
@@ -35,19 +34,21 @@ async function post(body) {
   return result
 }
 
-/** The claim rules every builder sees (owner rules, 2026-10-26). */
+/** The claim rules every builder sees (owner rules, 2026-10-26). The unclaimed date is UNCLAIMED_AFTER_MONTHS after claims
+ *  opened (src/builder-payouts.mjs unclaimedSweepDate; the page passes the month count); both dates carry their year so the deadline reads as a deadline. */
 export function ClaimRules({ claimWindow }) {
   return <ul className="claim-rules">
     <li>A claim needs current GitHub admin access to this repository and a signature from your payout wallet. Each signature works once.</li>
     <li>Changing the payout wallet takes effect 24 hours later, and the maintainer is emailed about it.</li>
     <li>{claimWindow
-      ? `Claims opened ${formatUtcDateTime(claimWindow.openedAt)}. Anything still unclaimed on ${formatUtcDateTime(claimWindow.unclaimedAfter)} goes to the repo.ing multisig vault and is used to grow repo.ing.`
-      : 'Once claims open for this repository, any balance still unclaimed 12 months later goes to the repo.ing multisig vault and is used to grow repo.ing.'}</li>
+      ? `Claims opened ${formatUtcDay(claimWindow.openedAt)}. Anything still unclaimed on ${formatUtcDay(claimWindow.unclaimedAfter)}${claimWindow.unclaimedAfterMonths ? ` (${claimWindow.unclaimedAfterMonths} months later)` : ''} goes to the repo.ing multisig vault and is used to grow repo.ing.`
+      : `Once claims open for this repository, any balance still unclaimed 12 months later goes to the repo.ing multisig vault and is used to grow repo.ing.`}</li>
   </ul>
 }
 
 /** Step 3: the payout wallet signs a one-use claim; the server pays what the repository is owed, within the caps. */
-export function PayoutClaim({ repoId, payoutWallet, owedLamports, claimWindow, paused }) {
+// amountUnknown: the owed amount could not be read (payouts show paused), so no figure is shown rather than "0 SOL owed".
+export function PayoutClaim({ repoId, payoutWallet, owedLamports, claimWindow, paused, amountUnknown = false }) {
   const router = useRouter()
   const { wallet, connect, provider } = useWallet()
   const [busy, setBusy] = useState(false)
@@ -73,7 +74,7 @@ export function PayoutClaim({ repoId, payoutWallet, owedLamports, claimWindow, p
 
   const owed = BigInt(owedLamports ?? '0')
   return <div className="claim-review">
-    <strong className="claim-review-amount">{formatSolDisplay(owed.toString())} SOL owed</strong>
+    {!amountUnknown && <strong className="claim-review-amount">{formatSolDisplay(owed.toString())} SOL owed</strong>}
     {paid ? <p className="positive" role="status">Paid {formatSolDisplay(paid.lamports)} SOL. <a href={`https://solscan.io/tx/${paid.signature}`} target="_blank" rel="noreferrer">View the payout</a></p>
       : paused ? <p className="claim-next" role="status">{REFUSALS['payouts-off']}</p>
       : !claimWindow ? <p className="claim-next" role="status">{REFUSALS['claims-not-open']} Your fees keep accruing and wait for you.</p>

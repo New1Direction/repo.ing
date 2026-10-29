@@ -51,7 +51,7 @@ const { ReserveCoverage } = await appModule('app/components/reserve-coverage.jsx
 
 test('the notice says plainly where reserves are held, and claims a check only while one can run', () => {
   const two = html(h(ReserveCoverage, { coverage: { status: 'MULTIPLE_WALLETS', walletCount: 2 } }))
-  assert.equal(two.replaceAll('<!-- -->', ''), '<p class="subtle-notice">Reserves are held in two wallets. The figures below show the recorded allocations, not wallet balances.</p>')
+  assert.equal(two.replaceAll('<!-- -->', ''), '<p class="subtle-notice">Reserves are held in two wallets. These are recorded amounts, not wallet balances.</p>')
   assert.doesNotMatch(two, /verified|being checked|in progress/)
   assert.match(html(h(ReserveCoverage, { coverage: { status: 'MULTIPLE_WALLETS', walletCount: 12 } })).replaceAll('<!-- -->', ''), /held in 12 wallets/)
   assert.match(html(h(ReserveCoverage, { coverage: { status: 'UNVERIFIED' } })), /Reserve balances are being verified/)

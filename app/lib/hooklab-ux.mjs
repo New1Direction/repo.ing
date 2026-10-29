@@ -3,13 +3,14 @@
 
 const pct = bps => `${Number(bps) / 100}%`
 
-// One fee number with a plain breakdown: "5% fee: 3% burned, 2% creator". The creator's part is split 75/25 with repo.ing
+// One fee number with a plain breakdown: "5% fee: 3% burned, 2% creator", or "2% creator fee" when the creator fee is the
+// only part (never "all to the creator": repo.ing takes a quarter of it). The creator's part is split 75/25 with repo.ing
 // in SOL; the burned part is coins destroyed on each trade; holders' part goes to holders (Holders Earn).
 export function feeHeadline({ creatorFeeBps = 0, burnBps = 0, holderBps = 0 }) {
   const creator = Number(creatorFeeBps) || 0, burn = Number(burnBps) || 0, holders = Number(holderBps) || 0, totalBps = creator + burn + holders
   if (!totalBps) return { totalBps, text: 'No trading fee' }
   const parts = [burn && `${pct(burn)} burned`, holders && `${pct(holders)} to holders`, creator && `${pct(creator)} creator`].filter(Boolean)
-  if (parts.length === 1 && creator) return { totalBps, text: `${pct(totalBps)} fee, all to the creator` }
+  if (parts.length === 1 && creator) return { totalBps, text: `${pct(totalBps)} creator fee` }
   return { totalBps, text: `${pct(totalBps)} fee: ${parts.join(', ')}` }
 }
 
@@ -63,7 +64,7 @@ export function burnedTotal(market) {
 export const LAUNCH_PRESETS = Object.freeze([
   { id: 'burn', label: 'Burn coin', hint: '5% fee: 3% burned, 2% creator', totalBps: 500, burnShareBps: 6000 },
   { id: 'holders', label: 'Holder rewards', hint: 'Fees paid to holders', soon: true },
-  { id: 'creator', label: 'Creator coin', hint: '2% fee, all to the creator', totalBps: 200, burnShareBps: 0 },
+  { id: 'creator', label: 'Creator coin', hint: '2% creator fee', totalBps: 200, burnShareBps: 0 },
 ])
 // What a preset sets on the form, or null when it can't apply here. burnEnabled: the open launch's Burn switch.
 export function presetFields(preset, { burnEnabled = false, maxCreatorFeeBps = null } = {}) {

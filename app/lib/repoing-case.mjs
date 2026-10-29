@@ -1,5 +1,5 @@
-import { formatSolDisplay } from './format.mjs'
 import { buybackSummary, formatAgo } from './buyback-summary.mjs'
+import { formatTokenShort } from './token-amount.mjs'
 
 const LAMPORTS_PER_SOL = 1_000_000_000n
 const AMOUNT = /^\d+(\.\d+)?$/
@@ -14,8 +14,7 @@ export function formatWholeSol(lamports) {
 }
 
 // The $REPOING page's "Why hold $REPOING" facts, each only while its figure is verified:
-// - policy: the active policy's buyback share (buybackStatus().since, null while the revenue ledger is under review),
-//   plus how far published buybacks run ahead of it;
+// - policy: the active policy's buyback share (buybackStatus().since, null while the revenue ledger is under review);
 // - buybacks: every published buyback from the receipts /stats lists (platform revenue and the team wallet);
 // - volume: all-time trading and live markets from the /stats totals;
 // - shipping: the repository's Dev Pulse (commits today, else this week, and pull requests merged this week).
@@ -23,22 +22,20 @@ export function formatWholeSol(lamports) {
 export function repoingCase({ status = null, receipts = null, totals = null, pulse = null, models = false, now = Date.now() } = {}) {
   const facts = []
   if (status?.since?.basis === 'policy' && Number.isInteger(status.since.permille) && status.since.permille > 0) {
-    const ahead = AMOUNT.test(String(status.standing?.aheadLamports)) ? BigInt(String(status.standing.aheadLamports).split('.')[0]) : 0n
     facts.push({ id: 'policy', label: 'To buybacks', value: `${status.since.permille / 10}%`,
-      detail: "of every market's platform fees go to $REPOING buybacks",
-      note: ahead > 0n ? `${formatSolDisplay(ahead)} SOL bought beyond that so far` : null })
+      detail: "of every market's platform fees go to $REPOING buybacks", note: null })
   }
   const bought = buybackSummary(receipts, null)
   if (bought) {
     const latest = status?.latest ?? null
     const ago = latest ? formatAgo(latest.at, now) : null
     facts.push({ id: 'buybacks', label: 'Bought back', value: `${bought.sol} SOL`,
-      detail: `${bought.tokens} $REPOING, every buy on-chain`, note: ago ? `Last one ${ago}` : null })
+      detail: `${formatTokenShort(bought.tokenBaseUnits) ?? bought.tokens} $REPOING bought`, note: ago ? `Last one ${ago}` : null })
   }
   const volume = totals ? formatWholeSol(totals.volume) : null
   if (volume && volume !== '0' && Number.isInteger(totals.markets) && totals.markets > 0) {
     facts.push({ id: 'volume', label: 'Traded on repo.ing', value: `${volume} SOL`,
-      detail: `across ${plural(totals.markets, 'market')}. More trading, more buybacks.`,
+      detail: `across ${plural(totals.markets, 'market')}`,
       note: models ? 'Now open to Hugging Face models' : null })
   }
   if (PULSE_SHOWN.has(pulse?.status) && (pulse.commits24h > 0 || pulse.commits7d > 0)) {

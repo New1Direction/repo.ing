@@ -15,13 +15,13 @@ test('small fee balances stay readable without showing a nonzero balance as zero
   assert.equal(formatUsdEstimate('99400', null), null)
 })
 
-test('summary SOL amounts use 2 decimals from 1 SOL and ~4 significant digits below', () => {
+test('summary SOL amounts use 2 decimals from 1 SOL and 3 significant digits below', () => {
   assert.equal(formatSolDisplay('320732496000'), '320.73')
   assert.equal(formatSolDisplay('2217021660653'), '2,217.02')
   assert.equal(formatSolDisplay('13750800000'), '13.75')
   assert.equal(formatSolDisplay('1000000000'), '1')
-  assert.equal(formatSolDisplay('342812345'), '0.3428')
-  assert.equal(formatSolDisplay('41838730'), '0.04184')
+  assert.equal(formatSolDisplay('342812345'), '0.343')
+  assert.equal(formatSolDisplay('41838730'), '0.0418')
   assert.equal(formatSolDisplay('-320732496000'), '-320.73')
   // A loss too small to show keeps its minus (it read "<0.000001", a gain).
   assert.deepEqual(['-500', '-1', '500', '-1000'].map(formatSolDisplay), ['-<0.000001', '-<0.000001', '<0.000001', '-0.000001'])

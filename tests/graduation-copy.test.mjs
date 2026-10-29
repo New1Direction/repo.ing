@@ -8,13 +8,16 @@ import { stockFeeTerms } from '../src/stock-pair-copy.mjs'
 // llms.txt names the stock-pair exception to "builders claim the fees in SOL" (docs/STOCK_QUOTES.md, "Fee policy").
 const decoded = markup => markup.replaceAll('&#x27;', "'").replaceAll('&amp;', '&').replaceAll('&quot;', '"')
 
-test('the flywheel explainer says new markets graduate at 85 SOL and older ones at about 30 SOL', async () => {
+test('the flywheel explainer says about 1% goes to builders and folds the fee split and graduation targets (85 SOL new, about 30 SOL older)', async () => {
   const { FlywheelVideo } = await appModule('app/components/flywheel-video.jsx')
   const text = decoded(html(h(FlywheelVideo, {})))
-  assert.ok(text.includes('New markets graduate at 85 SOL, older ones at about 30 SOL (each market page shows its target), and platform revenue buys back $REPOING.'))
+  assert.ok(text.includes("About 1% of every trade goes to the repo's builders, who claim it in SOL.</p>"), 'one plain line under the video')
+  assert.ok(text.includes('<details><summary>Fee details</summary>'), 'the fee schedule is folded, not deleted')
+  assert.ok(text.includes("Every trade pays a 1.75% fee: 0.994% to the repo's builders."))
+  assert.ok(text.includes('New markets graduate at 85 SOL, older ones at about 30 SOL (each market page shows its target). Platform revenue buys back $REPOING.'))
   assert.doesNotMatch(text, /At 85 SOL the market graduates/)
   const fee = decoded(html(h(FlywheelVideo, { launchFee: { durationLabel: '10 minutes', startPercent: '50.00%', endPercent: '1.75%' } })))
-  assert.ok(fee.includes('buys back $REPOING. New markets also charge a launch fee in their first 10 minutes: it starts at 50.00% and falls to 1.75%.'))
+  assert.ok(fee.includes('buys back $REPOING. New markets also charge a launch fee in their first 10 minutes: it starts at 50.00% and falls to 1.75%.</p></details>'))
 })
 
 test('llms.txt: each market\'s own graduation target, and stock pairs\' fees in the stock with no owner claim', async () => {

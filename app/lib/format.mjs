@@ -16,7 +16,7 @@ export function formatSolDisplay(raw) {
   // A loss too small to show keeps its minus: "-<0.000001".
   if (amount !== 0n && amount > -1000n && amount < 1000n) return amount < 0n ? '-<0.000001' : '<0.000001'
   const sol = Number(amount) / 1e9, size = Math.abs(sol)
-  const decimals = size >= 1 || size === 0 ? 2 : Math.min(6, 3 - Math.floor(Math.log10(size)))
+  const decimals = size >= 1 || size === 0 ? 2 : Math.min(6, 2 - Math.floor(Math.log10(size)))
   return sol.toLocaleString('en-US', { maximumFractionDigits: decimals })
 }
 export function formatSolRounded(raw) {

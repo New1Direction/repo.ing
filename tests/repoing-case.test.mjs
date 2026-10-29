@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { formatWholeSol, repoingCase } from '../app/lib/repoing-case.mjs'
+import { formatTokenShort } from '../app/lib/token-amount.mjs'
 import { BUYBACK_WALLETS } from '../app/lib/buyback-receipts.mjs'
 import { OFFICIAL_TOKEN } from '../app/lib/official-token.mjs'
 
@@ -18,18 +19,17 @@ const pulse = { status: 'shipping', commits24h: 68, commits7d: 312, merged7d: 12
 
 test('every verified figure becomes a fact, in order: policy, buybacks, volume, shipping', () => {
   assert.deepEqual(repoingCase({ status, receipts, totals, pulse, models: true, now: NOW }), [
-    { id: 'policy', label: 'To buybacks', value: '60%', detail: "of every market's platform fees go to $REPOING buybacks",
-      note: '25.15 SOL bought beyond that so far' },
-    { id: 'buybacks', label: 'Bought back', value: '51.56 SOL', detail: '140.18M $REPOING, every buy on-chain',
+    { id: 'policy', label: 'To buybacks', value: '60%', detail: "of every market's platform fees go to $REPOING buybacks", note: null },
+    { id: 'buybacks', label: 'Bought back', value: '51.56 SOL', detail: '140.1M $REPOING bought',
       note: 'Last one 46 minutes ago' },
-    { id: 'volume', label: 'Traded on repo.ing', value: '6,958 SOL', detail: 'across 50 markets. More trading, more buybacks.',
+    { id: 'volume', label: 'Traded on repo.ing', value: '6,958 SOL', detail: 'across 50 markets',
       note: 'Now open to Hugging Face models' },
     { id: 'shipping', label: 'Shipped today', value: '68 commits', detail: 'built in public on GitHub',
       note: '12 PRs merged this week' },
   ])
 })
 
-test('the policy share is shown only while the revenue ledger is verified, and the extra buybacks only when ahead', () => {
+test('the policy share is shown only while the revenue ledger is verified, with no "bought beyond" note', () => {
   const ids = facts => facts.map(fact => fact.id)
   assert.deepEqual(ids(repoingCase({ status: { ...status, since: null, standing: null }, receipts, totals, pulse, now: NOW })), ['buybacks', 'volume', 'shipping'])
   assert.deepEqual(ids(repoingCase({ status: { ...status, since: { basis: 'total', lamports: '0', totalLamports: '0' } }, now: NOW })), [])
@@ -51,7 +51,7 @@ test('volume needs a positive total and markets; one market and no models read c
   assert.deepEqual(repoingCase({ totals: { volume: '5000000000', markets: 0 } }), [])
   assert.deepEqual(repoingCase({ totals: { volume: 'n/a', markets: 3 } }), [])
   assert.deepEqual(repoingCase({ totals: { volume: '2500000000', markets: 1 } }), [
-    { id: 'volume', label: 'Traded on repo.ing', value: '2 SOL', detail: 'across 1 market. More trading, more buybacks.', note: null }])
+    { id: 'volume', label: 'Traded on repo.ing', value: '2 SOL', detail: 'across 1 market', note: null }])
 })
 
 test('shipping: commits today, else this week; merged pull requests as the note; nothing before GitHub was read', () => {
@@ -62,6 +62,15 @@ test('shipping: commits today, else this week; merged pull requests as the note;
   assert.deepEqual(repoingCase({ pulse: { status: 'pending' } }), [])
   assert.deepEqual(repoingCase({ pulse: { status: 'quiet', commits24h: 0, commits7d: 0, merged7d: 4 } }), [])
   assert.deepEqual(repoingCase(), [])
+})
+
+test('token totals read at one decimal, floored', () => {
+  assert.equal(formatTokenShort('201771000000000'), '201.7M')
+  assert.equal(formatTokenShort('140180000000000'), '140.1M')
+  assert.equal(formatTokenShort('5000000000000'), '5M')
+  assert.equal(formatTokenShort('999000000'), '999')
+  assert.equal(formatTokenShort('705460370000'), '705.4K')
+  assert.equal(formatTokenShort('n/a'), null)
 })
 
 test('whole SOL is floored and never overstated; junk is rejected', () => {

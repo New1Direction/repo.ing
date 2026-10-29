@@ -13,23 +13,28 @@ import '../hooks-explore.css'
 export const EXPLORE_STRIP_COINS = 4
 const HEADINGS = ['#', 'Coin', 'Market cap', '24h Volume', 'Trades']
 const VIEWS = [['trending', 'Trending'], ['mcap', 'Market cap'], ['new', 'New']]
-const CAPTIONS = { trending: 'Ranked by 24h volume', mcap: 'Ranked by market cap (last trade price × 1B supply)', new: 'Latest launches' }
+const CAPTIONS = { trending: 'Ranked by 24h volume', mcap: 'Ranked by market cap', new: 'Latest launches' }
 const coinHref = mint => `/hooks/token/${mint}`
 
 function CoinAvatar({ image }) {
   const [failed, setFailed] = useState(false)
   return <span className="repo-avatar hook-coin-avatar">{image && !failed ? <img src={image} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)}/> : <ImageIcon size={20} aria-hidden="true"/>}</span>
 }
+// Every Hooks coin mints 1,000,000,000 tokens; its cap is the last trade price × that supply (burns move it by a sliver).
+const HOOK_COIN_SUPPLY = Object.freeze({ baseUnits: '1000000000', decimals: 0 })
+// Under 0.01 SOL a 24h volume is dust: not shown.
+const MIN_SHOWN_VOLUME_LAMPORTS = 10_000_000n
+const tradedRecently = coin => /^\d+$/.test(String(coin.stats?.volume24hLamports ?? '')) && BigInt(coin.stats.volume24hLamports) >= MIN_SHOWN_VOLUME_LAMPORTS
+const volume = coin => tradedRecently(coin) ? `${formatSolDisplay(coin.stats.volume24hLamports)} SOL` : '—'
 function Cap({ coin, usdPerSol }) {
-  const cap = marketCapDisplay(coin.stats?.priceSol, usdPerSol)
+  const cap = marketCapDisplay(coin.stats?.priceSol, HOOK_COIN_SUPPLY, usdPerSol)
   return <span className="table-mcap" title={cap?.title ?? 'No trades yet'}>{cap?.value ?? '—'}</span>
 }
-const volume = coin => coin.stats ? `${formatSolDisplay(coin.stats.volume24hLamports)} SOL` : '—'
 
 function CoinRow({ coin, index, usdPerSol }) {
   return <div className="market-row"><span className="row-index">{index + 1}</span>
     <Link href={coinHref(coin.mint)} className="table-repo"><CoinAvatar image={coin.image}/><span><span className="table-repo-name"><strong>{coin.name}</strong><span className="table-repo-ticker">${coin.symbol}</span></span><small>{feeHeadline(coin).text}</small><HookTypeBadges coin={coin} className="is-row"/></span></Link>
-    <Cap coin={coin} usdPerSol={usdPerSol}/><span className="table-volume">{volume(coin)}</span><span>{coin.stats?.totalTrades.toLocaleString('en-US') ?? '0'}</span>
+    <Cap coin={coin} usdPerSol={usdPerSol}/><span className="table-volume">{volume(coin)}</span><span>{coin.stats?.totalTrades > 0 ? coin.stats.totalTrades.toLocaleString('en-US') : '—'}</span>
     <span className="table-actions"><Link href={coinHref(coin.mint)} className="button outline table-action">Trade<ChevronRight size={15}/></Link></span></div>
 }
 
@@ -58,13 +63,14 @@ export function HookCoinExplore({ coins, usdPerSol, basePath = '/explore/hooks' 
       {shown.length ? shown.map((coin, index) => <CoinRow key={coin.mint} coin={coin} index={index} usdPerSol={usdPerSol}/>)
         : <div className="table-empty">{coins.length ? 'No coins match these filters.' : <>No Hooks coins yet. <Link href="/hooks">Launch the first one</Link>.</>}</div>}
     </div></div>
-    <div className="table-count">Showing {shown.length} of {coins.length} Hooks coins · Hooks coins trade on repo.ing in SOL.</div>
+    <div className="table-count">Showing {shown.length} of {coins.length} Hooks coins</div>
   </>
 }
 
-// The strip on /explore: the busiest few coins, linked to the full list. Nothing at all before the first coin.
+// The strip on /explore: the busiest few coins that traded in the last 24 hours, linked to the full list. Nothing at all
+// while no coin has (no row of "—" and "0 SOL 24h").
 export function HookCoinStrip({ coins, usdPerSol }) {
-  const top = orderHookCoins(coins).slice(0, EXPLORE_STRIP_COINS)
+  const top = orderHookCoins(coins.filter(tradedRecently)).slice(0, EXPLORE_STRIP_COINS)
   if (!top.length) return null
   return <section className="hooks-strip" aria-labelledby="hooks-strip-title">
     <div className="section-heading"><div><h2 id="hooks-strip-title">Hooks coins</h2><p>Coins with their own rules: max wallets, creator fees and burns.</p></div>

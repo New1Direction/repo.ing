@@ -1,5 +1,6 @@
 import { formatSolDisplay, formatUnits } from './format.mjs'
 import { chartTradeAge } from './chart-display.mjs'
+import { formatTokenShort } from './token-amount.mjs'
 
 export const RECENT_TRADE_LIMIT = 10
 const DIGITS = /^\d+$/
@@ -20,7 +21,8 @@ export function recentTradeTokens(trade, decimals = 6) {
   if (!DIGITS.test(trade.tokenBaseUnits ?? '')) return null
   const raw = BigInt(trade.tokenBaseUnits)
   if (raw > 0n && raw < 10n ** BigInt(decimals - 2)) return '<0.01'
-  return formatUnits(raw, decimals, 2)
+  // From 1,000 tokens up, compact (705.4K); smaller amounts keep two decimals.
+  return raw >= 1000n * 10n ** BigInt(decimals) ? formatTokenShort(raw, decimals) : formatUnits(raw, decimals, 2)
 }
 
 export function recentTradeAge(trade, now) {

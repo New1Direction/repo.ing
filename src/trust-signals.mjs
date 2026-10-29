@@ -26,12 +26,12 @@ export function sharePercent(amount, total) {
   return Number((a < 0n ? 0n : a) * 1_000_000_000_000n / t) / 10_000_000_000
 }
 
-// "12.3%", "4.56%", "<0.01%", "0%". Never rounds a nonzero share down to 0.
+// Whole percents from 10% up, one decimal below: "12%", "4.6%", "<0.1%", "0%". Never rounds a nonzero share down to 0.
 export function percentLabel(percent) {
   if (percent === null || percent === undefined || !Number.isFinite(percent)) return '—'
   if (percent <= 0) return '0%'
-  if (percent < 0.01) return '<0.01%'
-  const digits = percent >= 10 ? 1 : 2
+  if (percent < 0.1) return '<0.1%'
+  const digits = percent >= 10 ? 0 : 1
   return `${Number(percent.toFixed(digits)).toLocaleString('en-US', { maximumFractionDigits: digits })}%`
 }
 
@@ -64,11 +64,12 @@ export function launcherPosition(row, { supply = FIXED_SUPPLY_BASE_UNITS, locked
   }
 }
 
-// Display lines for the launcher row: { title, launch, sold }. Neutral facts from indexed swaps only.
+// Display lines for the launcher row: { title, launch, sold }. Neutral facts from indexed swaps only. Tokens the launcher
+// locked are not counted as held ("outside locks"); the panel's one locked figure is in the holders row.
 export function launcherLines(position) {
   if (!position) return null
   const title = position.state === 'no-trades' ? 'Launcher has no trades on repo.ing'
-    : `Launcher holds ${percentLabel(position.heldPercent)} of supply${position.lockedPercent ? ` · ${percentLabel(position.lockedPercent)} locked` : ''}`
+    : `Launcher holds ${percentLabel(position.heldPercent)} ${position.lockedPercent ? 'outside locks' : 'of supply'}`
   const launch = position.launchBuyPercent ? `Bought ${percentLabel(position.launchBuyPercent)} at launch` : 'No buy at launch'
   const sold = {
     'no-trades': 'No sells',
@@ -146,7 +147,7 @@ export function mintFacts(mint) {
 
 // Graduation status from the public market row stats (marketRowStats: graduated, bondingPercent).
 export function graduationLabel(market = {}) {
-  if (market.graduated) return 'Graduated to the DAMM pool'
+  if (market.graduated) return 'Graduated'
   return Number.isFinite(market.bondingPercent) ? `Bonding curve · ${Math.floor(market.bondingPercent)}% to graduation` : 'On the bonding curve'
 }
 

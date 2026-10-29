@@ -24,7 +24,7 @@ export function formatQuoteAmount(raw, decimals) {
   const amount = BigInt(raw), floor = 10n ** BigInt(Math.max(0, decimals - 6))
   if (amount !== 0n && amount > -floor && amount < floor) return amount < 0n ? '-<0.000001' : '<0.000001'
   const value = Number(amount) / 10 ** decimals, size = Math.abs(value)
-  const places = size >= 1 || size === 0 ? 2 : Math.min(6, 3 - Math.floor(Math.log10(size)))
+  const places = size >= 1 || size === 0 ? 2 : Math.min(6, 2 - Math.floor(Math.log10(size)))
   return value.toLocaleString('en-US', { maximumFractionDigits: places })
 }
 

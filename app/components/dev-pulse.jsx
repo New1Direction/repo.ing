@@ -7,6 +7,13 @@ import { visiblePolling } from '../lib/visible-polling.mjs'
 import { formatCount, pulseAgo, pulseStatusLabel, starsToday } from '../lib/pulse-format.mjs'
 
 const POLL_MS = 120_000
+const FEED_SHOWN = 3
+
+// One short line per feed item: no raw commit messages or pull request titles (the link opens them on GitHub).
+function feedTitle(item) {
+  if (item.kind === 'merge') return `Merged pull request${/^#\d+/.test(item.title) ? ` ${item.title.match(/^#\d+/)[0]}` : ''}`
+  return item.title
+}
 
 // Dev Pulse card on the token page: what the repository's developers shipped, from public GitHub activity collected
 // by the worker. Polls while visible and hands new events to the price chart ('repoing:pulse-updated').
@@ -35,6 +42,11 @@ export function DevPulse({ mint, initial, repoUrl }) {
   const days = pulse.days ?? []
   const busiest = Math.max(1, ...days.map(day => day.commits))
   const today = starsToday(pulse.stars)
+  // Only tiles with something to say: no zero counts and no empty release slot. Total stars are the hero's (live from
+  // GitHub), so this card shows only today's gain.
+  const commits = pulse.commits24h > 0 ? { value: pulse.commits24h, label: pulse.commits24h === 1 ? 'commit today' : 'commits today', sub: pulse.commits7d > pulse.commits24h ? `${formatCount(pulse.commits7d)} this week` : null }
+    : pulse.commits7d > 0 ? { value: pulse.commits7d, label: pulse.commits7d === 1 ? 'commit this week' : 'commits this week', sub: null } : null
+  const feed = (pulse.feed ?? []).slice(0, FEED_SHOWN)
   return <section className={`dev-pulse is-${pulse.status}`} id="dev-pulse" aria-labelledby="dev-pulse-title">
     <header className="dev-pulse-head">
       <div><span className="dev-pulse-eyebrow"><Activity size={14} aria-hidden="true"/>Dev Pulse</span><h2 id="dev-pulse-title">What the builders are shipping</h2></div>
@@ -45,27 +57,27 @@ export function DevPulse({ mint, initial, repoUrl }) {
         <span className="pulse-dot"><PulseIcon kind="hn" size={16}/></span><span className="dev-pulse-hn-copy"><b>On Hacker News</b><span>{pulse.hn.title}</span></span>
         <strong>{formatCount(pulse.hn.points)} pts</strong><ArrowUpRight size={15} aria-hidden="true"/></a>}
       <div className="dev-pulse-stats">
-        <Stat kind="commits" value={formatCount(pulse.commits24h)} label={pulse.commits24h === 1 ? 'commit today' : 'commits today'} sub={`${formatCount(pulse.commits7d)} this week`}/>
-        <Stat kind="devs" value={formatCount(pulse.devs7d ?? 0)} label={pulse.devs7d === 1 ? 'developer this week' : 'developers this week'}/>
-        <Stat kind="release" value={pulse.release?.title ?? 'None yet'} label={pulse.release ? `released ${pulseAgo(pulse.release.at, now)}` : 'latest release'} href={pulse.release?.url}/>
-        <Stat kind="stars" value={today ?? (pulse.stars ? formatCount(pulse.stars.total) : '—')} label={today ? 'stars today' : 'stars'} sub={today && pulse.stars ? `${formatCount(pulse.stars.total)} total` : null}/>
-        <Stat kind="merge" value={formatCount(pulse.merged7d)} label={pulse.merged7d === 1 ? 'PR merged this week' : 'PRs merged this week'}/>
+        {commits && <Stat kind="commits" value={formatCount(commits.value)} label={commits.label} sub={commits.sub}/>}
+        {pulse.devs7d > 0 && <Stat kind="devs" value={formatCount(pulse.devs7d)} label={pulse.devs7d === 1 ? 'developer this week' : 'developers this week'}/>}
+        {pulse.release && <Stat kind="release" value={pulse.release.title} label={`released ${pulseAgo(pulse.release.at, now)}`} href={pulse.release.url}/>}
+        {today && pulse.stars?.today > 0 && <Stat kind="stars" value={today} label="stars today"/>}
+        {pulse.merged7d > 0 && <Stat kind="merge" value={formatCount(pulse.merged7d)} label={pulse.merged7d === 1 ? 'PR merged this week' : 'PRs merged this week'}/>}
         <Maintainer maintainer={pulse.maintainer}/>
       </div>
-      <div className="dev-pulse-rhythm">
+      {days.some(day => day.commits > 0) && <div className="dev-pulse-rhythm">
         <div className="dev-pulse-bars" role="img" aria-label={`Commits per day, last 14 days: ${days.map(day => day.commits).join(', ')}`}>
           {days.map((day, index) => <span key={day.day} className={[day.commits ? 'has-commits' : '', index === days.length - 1 ? 'is-today' : ''].join(' ').trim() || undefined}
             style={{ '--level': day.commits / busiest, '--i': index }} title={`${day.day}: ${day.commits} commit${day.commits === 1 ? '' : 's'}`}/>)}
         </div>
         <span className="dev-pulse-rhythm-label"><span>Commits · last 14 days</span><span>today</span></span>
-      </div>
-      {pulse.feed?.length ? <ol className="dev-pulse-feed" aria-label="Recent developer activity">{pulse.feed.map(item => <li key={item.id} className={`pulse-kind-${item.kind}`}>
+      </div>}
+      {feed.length ? <ol className="dev-pulse-feed" aria-label="Recent developer activity">{feed.map(item => <li key={item.id} className={`pulse-kind-${item.kind}`}>
         <span className="pulse-dot"><PulseIcon kind={item.kind} size={14}/></span>
-        <div className="pulse-copy"><strong>{item.title}</strong><small><time dateTime={item.at}>{pulseAgo(item.at, now)}</time>{item.detail && <> · {item.detail}</>}</small></div>
-        {item.url ? <a href={item.url} target="_blank" rel="noreferrer" aria-label={`Open ${item.title}`}><ArrowUpRight size={15} aria-hidden="true"/></a> : <span/>}
+        <div className="pulse-copy"><strong>{feedTitle(item)}</strong><small><time dateTime={item.at}>{pulseAgo(item.at, now)}</time></small></div>
+        {item.url ? <a href={item.url} target="_blank" rel="noreferrer" aria-label={`Open ${feedTitle(item)} on ${item.kind === 'paid' ? 'Solscan' : 'GitHub'}`}><ArrowUpRight size={15} aria-hidden="true"/></a> : <span/>}
       </li>)}</ol> : <p className="dev-pulse-note">No public commits, merged pull requests or releases in the last 30 days.</p>}
     </>}
-    <footer className="dev-pulse-foot"><span>Public GitHub activity{pulse.checkedAt ? ` · checked ${pulseAgo(pulse.checkedAt, now)}` : ''}</span>
+    <footer className="dev-pulse-foot"><span>Public GitHub activity</span>
       <a href={repoUrl} target="_blank" rel="noreferrer">View on GitHub <ArrowUpRight size={14} aria-hidden="true"/></a></footer>
   </section>
 }

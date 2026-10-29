@@ -15,7 +15,8 @@ export async function TipStats() {
   try { stats = await tipStats() } catch { stats = null }
   // Tippers who linked X show their @handle; payouts and refunds stay wallet-free.
   if (stats) try { handles = await xHandlesFor(stats.recent.filter(r => r.kind === 'tip').map(r => r.wallet)) } catch { handles = new Map() }
-  if (!stats) return <section className="analytics-token" aria-labelledby="tips-title"><div><h2 id="tips-title">Tips</h2><p>Tip totals are temporarily unavailable.</p></div></section>
+  // Unreadable totals leave the section out rather than show a stuck notice.
+  if (!stats) return null
   const waiting = formatUsdValue(stats.usdWaiting), received = formatUsdValue(stats.usdReceived)
   return <section className="analytics-token tip-stats" aria-labelledby="tips-title"><div>
     <div className="eyebrow">TIP WALLET</div><h2 id="tips-title">Tips</h2>
@@ -28,7 +29,7 @@ export async function TipStats() {
     </tbody></table></div>}
     {stats.recent.length > 0 && <details className="analytics-data"><summary>View receipts</summary><ul>{stats.recent.map(r => <li key={`${r.kind}:${r.signature}`}>
       <a href={`https://solscan.io/tx/${r.signature}`} target="_blank" rel="noopener noreferrer">{LABEL[r.kind]} · {formatTokenAmount(r.amount, r.decimals)} {r.symbol} · {r.fullName} · {day(r.at)} ↗</a>{r.kind === 'tip' && handles.get(r.wallet) && <> <span className="tip-stats-from">from <XHandleLink link={handles.get(r.wallet)}/></span></>}</li>)}</ul>
-      <p>Tips count once their finalized receipt shows the tip wallet received the exact amount. <Link href="/explore">Find a repository to tip →</Link></p></details>}
+      <p>A tip counts once it is confirmed on-chain at the exact amount. <Link href="/explore">Find a repository to tip →</Link></p></details>}
   </div><div className="analytics-token-state"><span>Waiting for maintainers</span><strong>{stats.byToken.length ? waiting ?? '—' : '$0.00'}</strong>
     <small>{stats.byToken.length ? `${received ? `≈ ${received} tipped in total` : 'Totals by token at left'} · USD at today’s prices` : 'No tips yet'}</small></div></section>
 }

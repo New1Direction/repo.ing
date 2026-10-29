@@ -62,6 +62,11 @@ test('labels floor the percent and format remaining SOL from lamports', () => {
   assert.equal(graduationSummary(whale), '69% · 1,234 SOL to go')
 })
 
+test('under 10% the percent keeps one decimal (floored), and a market with reserves never reads 0%', () => {
+  assert.deepEqual([6.33, 1.52, 0.84, 0.05, 0].map(progressPercent => graduationSummary({ progressPercent, remainingLamports: '83700000000' }).split(' · ')[0]),
+    ['6.3%', '1.5%', '0.8%', '<0.1%', '0%'])
+})
+
 test('repositories on the do-not-promote list never race and are never listed as new launches', t => {
   const racer = (mint, repoId, reserveSol) => ({ ...row(mint, { reserveSol }), repoId })
   const rows = [racer('leader', '1103012935', 70n), racer('second', '7', 20n)]

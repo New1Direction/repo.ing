@@ -590,8 +590,9 @@
 .claim-checklist .current{color:var(--text);font-weight:650}.claim-checklist .current .claim-checklist-mark{border-color:var(--green);background:var(--green);color:#101713}
 .claim-page .claim-checklist{margin:22px 0 0}
 .wallet-explainer{display:block;margin:0 0 14px;font-size:13px;color:var(--muted)}
-.wallet-explainer summary{width:fit-content;cursor:pointer;color:var(--green-dark);text-decoration:underline;text-underline-offset:2px}
-.wallet-explainer summary:focus-visible{outline:2px solid var(--green);outline-offset:2px;border-radius:2px}
+.flywheel-video details{margin:8px 0 0;font-size:13px;color:var(--muted)}
+.wallet-explainer summary,.flywheel-video summary{width:fit-content;cursor:pointer;color:var(--green-dark);text-decoration:underline;text-underline-offset:2px}
+.wallet-explainer summary:focus-visible,.flywheel-video summary:focus-visible{outline:2px solid var(--green);outline-offset:2px;border-radius:2px}
 .wallet-explainer p{margin:8px 0 0;max-width:560px;line-height:1.5}
 .builder-setup .wallet-explainer{margin:10px 0 0}
 .claim-intro small{display:block;margin-top:8px;color:var(--muted);font-size:14px}
@@ -889,3 +890,10 @@ body{overflow-x:clip}
 .nav-new-badge{display:inline-block;width:auto;height:20px;margin-left:6px;vertical-align:-5px;image-rendering:pixelated}
 /* Phones: no room for the badge beside Hooks, so it becomes a small teal dot. */
 @media(max-width:429px){.nav-new-badge{display:none}.app-header nav>a.nav-hooks{position:relative}.app-header nav>a.nav-hooks::before{content:'';position:absolute;top:calc(50% - 11px);right:0;width:6px;height:6px;border-radius:50%;background:#26f5c4}}
+/* Desktop header: a nav label never wraps ("How it works" on one line). Seven links fit one row from 1241px with tighter
+   gaps; between 1151px and 1240px the nav takes its own row, as it does below 1150px. */
+.app-header nav a{white-space:nowrap}
+@media(min-width:1241px) and (max-width:1400px){.header-inner{gap:32px}.app-header nav{gap:26px}.header-actions{gap:22px}}
+@media(min-width:1151px) and (max-width:1240px){.header-inner{flex-wrap:wrap;height:auto;row-gap:0}.app-header{height:auto}.app-header nav{order:3;width:100%;height:39px;overflow-x:auto;gap:25px}.app-header nav a{height:39px;flex:none}.header-actions{margin-left:auto}}
+.growth-grid.is-pair{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:850px){.growth-grid.is-pair{grid-template-columns:1fr}}

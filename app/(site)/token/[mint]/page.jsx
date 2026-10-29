@@ -4,7 +4,7 @@ import { BuilderAllocation } from '../../../components/builder-allocation'
 import { Suspense, cache } from 'react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { ArrowUpRight, Info } from 'lucide-react'
+import { ArrowUpRight } from 'lucide-react'
 import { AppHeader, Footer, RepoIdentity, RepoStats, GitHubLink, Badge } from '../../../components/ui'
 import { MarketTrading } from '../../../components/market-trading'
 import { ShareMarket } from '../../../components/share-market'
@@ -16,7 +16,7 @@ import { marketQuoteView } from '../../../../src/quote-assets.mjs'
 import { signedPayoutWallet } from '../../../lib/official-launch.mjs'
 import { MoreMarkets, MoreMarketsFallback } from '../../../components/more-markets'
 import { selectMoreMarkets } from '../../../lib/more-markets.mjs'
-import { formatSolDisplay, formatSolRounded, formatUsdEstimate, formatUtcDay } from '../../../lib/format.mjs'
+import { formatSolDisplay, formatUtcDay } from '../../../lib/format.mjs'
 import { displayRepository, refreshDisplayRepository } from '../../../lib/repository-display.mjs'
 import { InviteOwner } from '../../../components/invite-owner'
 import { cachedSolUsdPrice, solUsdPrice } from '../../../lib/sol-usd.mjs'
@@ -34,8 +34,8 @@ import { JsonLd } from '../../../components/json-ld'
 import { XHandle } from '../../../components/x-handle'
 import { tokenJsonLd } from '../../../lib/json-ld.mjs'
 import { timed } from '../../../lib/server-timing.mjs'
-import { builderEarningsHeadline } from '../../../lib/builder-earnings.mjs'
-import { Backers, BackersFallback, BackersPill } from '../../../components/backers'
+import { builderEarningsHeadline, recordedEarningsHeadline } from '../../../lib/builder-earnings.mjs'
+import { Backers, BackersFallback } from '../../../components/backers'
 import { TrustPanel } from '../../../components/trust-panel'
 import { OfficialBadge, ForkOfLabel } from '../../../components/market-signals'
 import { EarlyAccessNote } from '../../../components/early-access-note'
@@ -62,6 +62,7 @@ import { ogCardImageUrl } from '../../../lib/og-card.mjs'
 import { DECLINED_TRADING, declinedSummary } from '../../../lib/declined-display.mjs'
 import { MarketDecision } from '../../../components/market-decision'
 import { MarketFunnel } from '../../../components/market-funnel'
+import './token-page.css'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
@@ -126,7 +127,7 @@ export default async function Token({ params, searchParams }) {
     { id: 'token', label: 'Token', content: <TokenDetails market={market} quote={quote}/> },
     stockPair ? { id: 'earnings', anchor: 'fee-routing', label: 'Fee routing', content: <Suspense fallback={<div className="inner-card" aria-busy="true"><h3>Fee routing</h3><p role="status" className="loading-placeholder">Reading fee routing…</p></div>}>
       <StockFeeRouting market={market}/></Suspense> } :
-    { id: 'earnings', label: 'Earnings', content: <Suspense fallback={<div className="inner-card earnings-card" aria-busy="true"><h3>Total repository earnings</h3><strong className="earnings-amount">Checking…</strong><p role="status" className="loading-placeholder">Verifying builder fees…</p></div>}>
+    { id: 'earnings', label: 'Earnings', content: <Suspense fallback={<div className="inner-card earnings-card" aria-busy="true"><h3>Builder earnings</h3><strong className="earnings-amount"><span className="skeleton-line"/></strong><span className="sr-only" role="status">Loading builder earnings</span></div>}>
       <RepositoryEarnings market={market} declined={decision !== null}/></Suspense> },
     { id: 'backers', anchor: 'backers', label: 'Backers', content: <Suspense fallback={<BackersFallback/>}><Backers market={market}/></Suspense> },
     // Launch quality and transparency (docs/LAUNCH_TRANSPARENCY.md): SOL markets; #transparency opens it.
@@ -152,11 +153,10 @@ export default async function Token({ params, searchParams }) {
       <div className="market-hero-earnings"><Suspense fallback={stockPair ? <StockFeeHeadlineFallback market={market}/> : <EarningsHeadlineFallback/>}>{stockPair ? <StockFeeHeadline market={market} href={activity ? `/token/${mint}#fee-routing` : '#fee-routing'}/> : <EarningsHeadline market={market}/>}</Suspense></div>
       <div className="market-hero-main"><RepoIdentity repo={repo} heading>
           <ForkOfLabel parent={repo.fork?.parent?.fullName ?? market.forkParent}/>
-          <div className="market-hero-ticker"><strong>${market.symbol}</strong><span>Repository market</span>{market.officialLaunch && !decision && <OfficialBadge/>}{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}</div></RepoIdentity><RepoStats repo={repo} detailed/>
+          <div className="market-hero-ticker"><strong>${market.symbol}</strong><span>Repository market</span>{market.officialLaunch && !decision && <OfficialBadge/>}{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}</div></RepoIdentity><RepoStats repo={repo}/>
         <div className="market-hero-pills"><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense>
           {signedPayoutWallet(market) && <Suspense fallback={null}><XHandle wallet={signedPayoutWallet(market)} trust avatar className="maintainer-x"/></Suspense>}
-          {tips && <Suspense fallback={null}><PartsFundBadge market={market}/></Suspense>}
-          <Suspense fallback={null}><BackersPill market={market} href={activity ? `/token/${mint}#backers` : '#backers'}/></Suspense></div>
+          {tips && <Suspense fallback={null}><PartsFundBadge market={market}/></Suspense>}</div>
         {!activity && <DevPulseStrip pulse={pulse}/>}</div>
       <div className="market-hero-actions">
         {tips && <div className="tip-jar-slot"><Suspense fallback={<TipJarPillFallback/>}><TipJarPill market={market}/></Suspense></div>}
@@ -224,49 +224,50 @@ async function MoreMarketsContent({ mint, featured, quote = null }) {
 }
 
 // Fixed-size placeholder: the resolved headline occupies exactly this box, so streaming it in never shifts layout.
-function EarningsHeadlineFallback({ busy = true }) {
-  return <div className="earnings-headline pending" aria-busy={busy || undefined}>
+function EarningsHeadlineFallback() {
+  return <div className="earnings-headline pending" aria-busy="true">
     <span className="earnings-headline-label">Earned by builders</span>
     <strong className="earnings-headline-value"><span className="skeleton-line"/></strong>
-    <span className="earnings-headline-detail" role="status">Verifying builder earnings…</span>
+    <span className="earnings-headline-detail"><span className="sr-only" role="status">Loading builder earnings</span>{'\u00a0'}</span>
     <span className="earnings-headline-action note"><span className="skeleton-line"/></span>
   </div>
 }
 
+// Verified (reconciler MATCH): the amounts and the claim action. Otherwise the recorded figures, never a claim amount.
 async function EarningsHeadline({ market }) {
   const [fees, usdPerSol] = await earningsEvidence(market.repoId)
-  const view = builderEarningsHeadline(market, fees, usdPerSol)
-  if (!view) return <EarningsHeadlineFallback busy={false}/>
+  const view = builderEarningsHeadline(market, fees, usdPerSol) ?? recordedEarningsHeadline(market, fees)
   const { action } = view
   return <div className="earnings-headline">
     <span className="earnings-headline-label">Earned by builders</span>
-    <strong className="earnings-headline-value">{view.value}</strong>
-    <span className="earnings-headline-detail">{view.detail}</span>
+    <strong className="earnings-headline-value">{view.value ?? '\u00a0'}</strong>
+    <span className="earnings-headline-detail">{view.detail ?? '\u00a0'}</span>
     {action.href ? <Link className={`button ${action.kind === 'claim' ? 'primary' : 'outline'} earnings-headline-action ${action.kind}`} href={action.href}>{action.label}<ArrowUpRight size={16}/></Link>
       : <span className="earnings-headline-action note">{action.label}</span>}
   </div>
 }
 
+// Details → Earnings. Earned and paid always show (recorded figures until the reconciler MATCHes); "Claimable now" only
+// with a MATCH. Collections and custody are fine print, folded.
 async function RepositoryEarnings({ market, declined = false }) {
   const [fees, usdPerSol] = await earningsEvidence(market.repoId)
-  const balances = builderEarningsHeadline(market, fees, usdPerSol)?.balances
+  const verified = builderEarningsHeadline(market, fees, usdPerSol)
+  const balances = verified?.balances ?? null
   const claimable = balances?.claimable ?? null
-  const verifiedEarned = balances?.accrued ?? null
-  const usdEstimate = verifiedEarned===null?null:formatUsdEstimate(verifiedEarned, usdPerSol)
+  const { earned, paid } = balances ? { earned: balances.accrued, paid: balances.paid } : recordedEarningsHeadline(market, fees).recorded
   const earningsNote = fees.status === 'PENDING_REVIEW' ? 'A previous claim needs settlement review before another payout can be sent.' :
-    !balances ? 'Accrued fees are unverified while accounting catches up. This does not mean zero fees were earned.' :
-      fees.payoutsEnabled === false ? 'Claims are paused. Accrued fees are not payouts; collection receipts and administrator/wallet authorization must be verified before payment.' :
-      !market.beneficiaryWallet ? 'A GitHub admin can verify and set a payout wallet to claim available fees.' :
-        'USD value is estimated at the current SOL price. Creator fees settle in SOL.'
-  return (<div className="inner-card earnings-card"><h3>Accrued repository fees <Info size={17}/></h3>
-          <strong className="earnings-amount">{verifiedEarned===null?'Checking…':usdEstimate ? `≈ ${usdEstimate}` : `${formatSolDisplay(verifiedEarned)} SOL`}</strong>
-          {usdEstimate && <span className="earnings-sol" title={`${verifiedEarned} lamports accrued in total`}>≈ {formatSolRounded(verifiedEarned)} SOL accrued</span>}
-          <div className="earnings-breakdown"><span>Collected from pools<strong>{balances ? `${formatSolDisplay(balances.collected)} SOL` : '—'}</strong></span><span>Paid to beneficiary<strong>{balances ? `${formatSolDisplay(balances.paid)} SOL` : '—'}</strong></span></div>
-          <div className="earnings-breakdown"><span>Remaining entitlement<strong>{balances ? `${formatSolDisplay(balances.remaining)} SOL` : '—'}</strong></span><span>Claimable now<strong>{claimable === null ? fees.payoutsEnabled === false ? 'Paused' : 'Unverified' : `${formatSolDisplay(claimable)} SOL`}</strong></span></div>
-          {balances && <p>Collections are not beneficiary payments. {formatSolDisplay(balances.custodyHeld)} SOL of collected fees remains held in custody. <Link href="/how-it-works#builder-collections">Collection policy</Link></p>}
+    fees.payoutsEnabled === false ? 'Claims are paused. Earned fees are not payouts until they are verified and sent.' :
+      !market.beneficiaryWallet ? 'A GitHub admin can verify and set a payout wallet to claim these fees.' : null
+  return (<div className="inner-card earnings-card"><h3>Builder earnings</h3>
+          <strong className="earnings-amount">{earned > 0n ? `${formatSolDisplay(earned)} SOL` : 'No fees yet'}</strong>
+          {earned > 0n && <span className="earnings-sol">earned from trading fees</span>}
+          {(paid > 0n || claimable !== null) && <div className="earnings-breakdown">{paid > 0n && <span>Paid out<strong>{formatSolDisplay(paid)} SOL</strong></span>}
+            {claimable !== null && <span>Claimable now<strong>{formatSolDisplay(claimable)} SOL</strong></span>}</div>}
           <div className="earnings-status"><Badge tone={market.beneficiaryWallet ? 'verified' : 'muted'}>{market.beneficiaryWallet ? 'Payout wallet set' : 'Payout wallet needed'}</Badge>{signedPayoutWallet(market) && <XHandle wallet={signedPayoutWallet(market)} trust avatar className="maintainer-x"/>}</div>
-          {fees.lastVerifiedAt && <p>Last verified {fees.lastVerifiedAt}. Checking current accruals.</p>}
-          <p>{earningsNote}</p>{fees.payoutsEnabled !== false && <Link className="button white earnings-claim" href={`/claim/${market.repoId}?src=token`}>{!market.beneficiaryWallet ? 'Verify payout wallet' : 'Claim builder fees'}<ArrowUpRight size={16}/></Link>}
+          {earningsNote && <p>{earningsNote}</p>}
+          {balances && <details className="earnings-fine-print"><summary>Fine print</summary>
+            <p>Collected from pools: {formatSolDisplay(balances.collected)} SOL. Still owed: {formatSolDisplay(balances.remaining)} SOL. {formatSolDisplay(balances.custodyHeld)} SOL of collected fees is held in custody until it is paid. Fees settle in SOL. <Link href="/how-it-works#builder-collections">Collection policy</Link></p></details>}
+          {fees.payoutsEnabled !== false && <Link className="button white earnings-claim" href={`/claim/${market.repoId}?src=token`}>{!market.beneficiaryWallet ? 'Verify payout wallet' : 'Claim builder fees'}<ArrowUpRight size={16}/></Link>}
           {fees.payoutsEnabled !== false && !market.beneficiaryWallet && !declined && <InviteOwner repoId={market.repoId} fullName={market.fullName} available={claimable?.toString() ?? null}/> }
         </div>)
 }
@@ -280,6 +281,6 @@ function RepositoryDetails({ repo, release }) {
   return (<div id="repository" className="inner-card repository-card"><div className="card-heading"><h3>Repository</h3><GitHubLink repo={repo}/></div>
           <RepoIdentity repo={repo} compact/><RepoStats repo={repo}/>
           {release && <a className="repo-release" href={release.url} target="_blank" rel="noreferrer"><span>Latest release</span><strong>{release.tag} ↗</strong><small>{formatUtcDay(release.publishedAt)}</small></a>}
-          <div className="repo-meta-grid"><div>Language<strong>{repo.language || '—'}</strong></div><div>License<strong>{repo.license || '—'}</strong></div><div>Updated<strong>{repo.updatedAt ? formatUtcDay(repo.updatedAt) : '—'}</strong></div></div>
+          {(repo.language || repo.license || repo.updatedAt) && <div className="repo-meta-grid">{repo.language && <div>Language<strong>{repo.language}</strong></div>}{repo.license && <div>License<strong>{repo.license}</strong></div>}{repo.updatedAt && <div>Updated<strong>{formatUtcDay(repo.updatedAt)}</strong></div>}</div>}
         </div>)
 }

@@ -3,13 +3,14 @@ import { shareLabel, splitShare } from '../lib/builder-split.mjs'
 import { TEAM_REPO_OWNERS } from '../../src/protocol-analytics.mjs'
 import '../builder-split.css'
 
-// /stats hero: one builder figure split between outside builders and the repo.ing team's own repositories. The two parts
-// add up to the figure above them.
-export function BuilderSplit({ split }) {
+// /stats: one builder figure split between outside builders and the repo.ing team's own repositories. The two parts add
+// up to the hero figure.
+export function BuilderSplit({ split, label }) {
   if (!split) return null
   const total = BigInt(split.outside) + BigInt(split.team)
   const outside = splitShare(split.outside, total), team = splitShare(split.team, total)
   return <div className="builder-split">
+    {label && <strong className="builder-split-label">{label}</strong>}
     {outside !== null && <span className="builder-split-bar" aria-hidden="true"><span style={{ width: `${outside}%` }}/></span>}
     <dl>
       <div><dt><i className="is-outside" aria-hidden="true"/>Outside builders</dt><dd>{formatSolDisplay(split.outside)} SOL{outside !== null && <small>{shareLabel(outside)}</small>}</dd></div>
@@ -18,7 +19,11 @@ export function BuilderSplit({ split }) {
   </div>
 }
 
-export function BuilderSplitNote() {
-  return <p className="builder-split-note">Team repos are the repo.ing team&apos;s own repositories (GitHub owner {TEAM_REPO_OWNERS.join(', ')}),
-    repo.ing itself included. Their builder fees are paid to the team, so they are counted apart from outside builders. The totals include both.</p>
+// Folded under the hero: who the builder figures went to. The totals above include both sides.
+export function BuilderSplitDetails({ builders }) {
+  if (!builders) return null
+  return <details className="analytics-data builder-split-details"><summary>Outside builders vs. repo.ing team</summary>
+    <div className="builder-split-pair"><BuilderSplit split={builders.paid} label="Paid"/><BuilderSplit split={builders.earned} label="Earned"/></div>
+    <p className="builder-split-note">Team repos are repo.ing&apos;s own repositories (GitHub owner {TEAM_REPO_OWNERS.join(', ')}). Their builder fees go to the team.</p>
+  </details>
 }

@@ -13,9 +13,10 @@ const JUP_LOCK = 'LocpQgucEQHbqNABEYvBvwoxCPsSbG91A1QaQhQQqjn'
 test('percent labels never round a nonzero share to zero', () => {
   assert.equal(sharePercent(pct(2.5), FIXED_SUPPLY_BASE_UNITS), 2.5)
   assert.equal(sharePercent(1n, 0n), null)
-  assert.equal(percentLabel(12.345), '12.3%')
+  assert.equal(percentLabel(12.345), '12%', 'whole percents from 10% up')
   assert.equal(percentLabel(2.5), '2.5%')
-  assert.equal(percentLabel(0.004), '<0.01%')
+  assert.equal(percentLabel(3.16), '3.2%', 'one decimal below 10%')
+  assert.equal(percentLabel(0.004), '<0.1%')
   assert.equal(percentLabel(0), '0%')
   assert.equal(percentLabel(null), '—')
 })
@@ -40,7 +41,7 @@ test('launcher who sold part reports the sold share of what they bought', () => 
   assert.equal(position.state, 'sold-some')
   assert.equal(position.soldPercentOfBought, 25)
   assert.equal(position.heldBaseUnits, (300n * M).toString())
-  assert.deepEqual(launcherLines(position), { title: 'Launcher holds <0.01% of supply', launch: 'No buy at launch', sold: 'Sold 25% of what they bought' })
+  assert.deepEqual(launcherLines(position), { title: 'Launcher holds <0.1% of supply', launch: 'No buy at launch', sold: 'Sold 25% of what they bought' })
 })
 
 test('launcher sells beyond indexed buys (transfers in) cap at 100% and never show a negative holding', () => {
@@ -93,7 +94,7 @@ test('top-10 share excludes the curve, pool and locks and merges accounts of one
 })
 
 test('graduation label reads the public row stats', () => {
-  assert.equal(graduationLabel({ graduated: true }), 'Graduated to the DAMM pool')
+  assert.equal(graduationLabel({ graduated: true }), 'Graduated')
   assert.equal(graduationLabel({ graduated: false, bondingPercent: 42.9 }), 'Bonding curve · 42% to graduation')
   assert.equal(graduationLabel({}), 'On the bonding curve')
 })
@@ -188,8 +189,8 @@ test('locked launcher tokens are shown as locked, not held', async () => {
   const { launcherPosition, launcherLines } = await import('../src/trust-signals.mjs')
   const row = { boughtBaseUnits: String(151_000_000n * 1_000_000n), soldBaseUnits: '0', launchBuyBaseUnits: String(30_000_000n * 1_000_000n) }
   const plain = launcherPosition(row), locked = launcherPosition(row, { locked: 120_111_111n * 1_000_000n })
-  assert.match(launcherLines(plain).title, /^Launcher holds 15\.1% of supply$/)
-  assert.match(launcherLines(locked).title, /^Launcher holds 3\.\d+% of supply · 12(\.0\d?)?% locked$/)
+  assert.equal(launcherLines(plain).title, 'Launcher holds 15% of supply')
+  assert.equal(launcherLines(locked).title, 'Launcher holds 3.1% outside locks', 'locked tokens are not held; the one locked figure is in the holders row')
   assert.equal(launcherPosition(row, { locked: 999_000_000n * 1_000_000n }).heldPercent, 0, 'never negative')
   assert.equal(launcherPosition(row).lockedPercent, 0, 'no lock, no locked figure')
 })

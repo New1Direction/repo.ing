@@ -18,7 +18,7 @@ function RaceTrack({ percent = 0, open = false }) {
 export function GraduationRace({ children }) {
   return <section className="race" aria-labelledby="race-title">
     <div className="section-heading race-heading"><div><h2 id="race-title">Graduation race</h2>
-      <p>Markets closest to their graduation target, from verified on-chain reserves. At graduation, trading moves to a Meteora pool.</p></div>
+      <p>The markets closest to graduating. At graduation, trading moves to a graduated pool.</p></div>
       <p className="race-key" aria-hidden="true"><span className="race-key-tick"/>{ABOUT_TO_GRADUATE_MIN_PERCENT}%+ about to graduate</p></div>
     {children}
   </section>
@@ -36,24 +36,16 @@ function RaceRow({ market, rank }) {
   </MarketLink></li>
 }
 
-const openNote = (racers, unavailable) => unavailable ? 'Graduation progress is temporarily unavailable'
-  : racers ? `Open lane: the next market past ${GRADUATION_RACE_MIN_PERCENT}% of its target appears here`
-    : `No market has passed ${GRADUATION_RACE_MIN_PERCENT}% of its target yet`
-
-// Always `limit` lanes tall: open lanes fill the rest, so streaming the board in never moves the page. Used on /explore
-// (five lanes) and in the $REPOING "Repo markets to watch" card (three). compact (the home page, below the first screen):
-// only the racers and one note row, so a thin race does not show as a column of empty lanes.
-export function GraduationRaceBoard({ markets = [], limit = GRADUATION_RACE_LIMIT, unavailable = null, compact = false }) {
-  const racers = markets.slice(0, limit), open = compact ? Math.min(1, limit - racers.length) : limit - racers.length
+// The racers only: no empty "open lane" slots. With none (or while progress is unavailable) one quiet note row says so;
+// /explore leaves the whole section out instead (app/(site)/explore/page.jsx). Used on /explore (five racers), the home
+// Graduating tab and the $REPOING "Repo markets to watch" card (three).
+export function GraduationRaceBoard({ markets = [], limit = GRADUATION_RACE_LIMIT, unavailable = null }) {
+  const racers = markets.slice(0, limit)
   return <div className="race-board">
-    {racers.length > 0 && <ol className="race-list">{racers.map((market, index) => <RaceRow key={market.mint} market={market} rank={index + 1}/>)}</ol>}
-    {open > 0 && <div className="race-open" aria-hidden={racers.length > 0 || undefined}>
-      {Array.from({ length: open }, (_, index) => <div className="race-row is-open" key={index}>
-        <span className="race-rank" aria-hidden="true">{racers.length + index + 1}</span>
-        <span className="race-open-note">{index === 0 ? openNote(racers.length, unavailable) : ''}</span>
-        <RaceTrack open/>
-      </div>)}
-    </div>}
+    {racers.length > 0 ? <ol className="race-list">{racers.map((market, index) => <RaceRow key={market.mint} market={market} rank={index + 1}/>)}</ol>
+      : <div className="race-open"><div className="race-row is-open">
+        <span className="race-open-note">{unavailable ? 'Graduation progress is temporarily unavailable' : `No market has passed ${GRADUATION_RACE_MIN_PERCENT}% of its target yet`}</span>
+      </div></div>}
     {racers.some(isModelMarket) && <ModelDisclaimer/>}
   </div>
 }

@@ -7,6 +7,10 @@ import { NewRepoLabel, OfficialBadge } from './market-signals'
 import { isModelMarket } from '../lib/hf-model-display.mjs'
 import { ModelCardBadge, ModelDisclaimer, ModelSourceChip } from './hf/model-ui'
 
+// A quiet market's card shows no volume line rather than "0 SOL" (or dust under 0.01 SOL).
+const MIN_SHOWN_LAMPORTS = 10_000_000n
+const shownVolume = lamports => { try { return BigInt(lamports ?? 0) >= MIN_SHOWN_LAMPORTS } catch { return false } }
+
 // Renders nothing when there is no other market, so the token page never shows an empty box. One chip fits a card: New repo
 // (a caution) before Official, before New (launched this week). A Hugging Face model's card carries its source label
 // instead, and a strip with any model in it names both kinds and ends with the full disclaimer. quote: the page's own pair
@@ -19,7 +23,8 @@ export function MoreMarkets({ markets = [], featured = false, quote = null }) {
     <ol className="more-markets-rail">{markets.map(market => <li className="more-markets-card" key={market.mint}>
       <MarketLink mint={market.mint} className="more-markets-repo"><RepoAvatar repo={market}/><span><strong>{market.fullName}</strong><small><span className="more-markets-symbol">${market.symbol}</span>{isModelMarket(market) ? <ModelSourceChip compact/> : market.newRepo ? <NewRepoLabel compact/> : market.officialLaunch ? <OfficialBadge compact/> : market.isNew && <span className="more-markets-new">New</span>}</small></span></MarketLink>
       {isModelMarket(market) && <ModelCardBadge/>}
-      <p className="more-markets-volume"><span>24h vol</span>{market.stock ? stockRowDisplay(market.stock).volume : `${formatSolDisplay(market.volume24hLamports)} SOL`}</p>
+      {market.stock ? <p className="more-markets-volume"><span>24h vol</span>{stockRowDisplay(market.stock).volume}</p>
+        : shownVolume(market.volume24hLamports) && <p className="more-markets-volume"><span>24h vol</span>{`${formatSolDisplay(market.volume24hLamports)} SOL`}</p>}
       <MarketLink mint={market.mint} hash="#trade-panel" className="button primary more-markets-buy" aria-label={`Buy $${market.symbol}`}>Buy</MarketLink>
     </li>)}</ol>
     {models && <ModelDisclaimer/>}

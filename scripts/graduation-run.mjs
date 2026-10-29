@@ -50,6 +50,26 @@ function readCustody() {
 let custodyRecovery
 try { custodyRecovery = readCustody() } catch (error) { report({ status: 'CONFIG_MISSING', code: error.message }); process.exit(1) }
 
+// GRADUATION_PROFILE=1: each pass line also says where the time went (RPC calls by provider and method, database queries,
+// curve reads and reconciliation), for tuning the pass length against the 5 min public-progress window.
+const profiling = env.GRADUATION_PROFILE === '1'
+const profile = { rpc: {}, db: { n: 0, ms: 0 }, readState: { n: 0, ms: 0 }, reconcile: { n: 0, ms: 0 } }
+const tally = (bucket, ms) => { bucket.n += 1; bucket.ms += ms }
+const timed = (bucket, fn) => async (...args) => { const t = Date.now(); try { return await fn(...args) } finally { tally(bucket, Date.now() - t) } }
+const profiled = (name, fetchImpl) => !profiling ? fetchImpl : async (url, options) => {
+  let method = 'batch'; try { method = JSON.parse(options?.body ?? '{}').method ?? 'batch' } catch {}
+  const t = Date.now()
+  try { return await fetchImpl(url, options) } finally { tally(profile.rpc[`${name}.${method}`] ??= { n: 0, ms: 0 }, Date.now() - t) }
+}
+const profileReport = () => {
+  const top = Object.entries(profile.rpc).sort((a, b) => b[1].ms - a[1].ms).slice(0, 8).map(([k, v]) => `${k} ${v.n}x ${Math.round(v.ms / 1000)}s`)
+  const out = { rpc: top, db: `${profile.db.n}x ${Math.round(profile.db.ms / 1000)}s`, readState: `${profile.readState.n}x ${Math.round(profile.readState.ms / 1000)}s`,
+    reconcile: `${profile.reconcile.n}x ${Math.round(profile.reconcile.ms / 1000)}s` }
+  for (const bucket of [profile.db, profile.readState, profile.reconcile]) Object.assign(bucket, { n: 0, ms: 0 })
+  profile.rpc = {}
+  return out
+}
+
 // A provider that answers with an error status is a failed read (the worker's graduationRPC), never a body to parse.
 const strict = fetchImpl => async (url, options) => {
   const response = await fetchImpl(url, options)
@@ -57,8 +77,8 @@ const strict = fetchImpl => async (url, options) => {
   return response
 }
 const rpcConnection = (url, fetchImpl) => new Connection(url, { commitment: 'finalized', disableRetryOnRateLimit: true, fetch: strict(fetchImpl) })
-const connection = rpcConnection(rpcUrl, fetch)
-const verification = rpcConnection(verificationUrls[0], createFailoverFetch(verificationUrls.map(url => ({ url, fetch }))))
+const connection = rpcConnection(rpcUrl, profiled('primary', fetch))
+const verification = rpcConnection(verificationUrls[0], profiled('verify', createFailoverFetch(verificationUrls.map(url => ({ url, fetch })))))
 
 // Dry run: each statement's tables are noted; writes are skipped (answered with no rows) and a read the role may not make is
 // noted and answered with no rows, so one run lists everything the pass needs.
@@ -93,11 +113,15 @@ function recorder(pool) {
 const PASS_GAP_MS = 5_000, MARKET_PAUSE_MS = 250
 const once = dryRun || process.argv.includes('--once')
 const pool = createDatabasePool({ connectionString: databaseUrl, max: 3, statement_timeout: 15_000 })
+if (profiling) { const query = pool.query.bind(pool); pool.query = timed(profile.db, query) }
 const recording = dryRun ? recorder(pool) : null
+function profiledReconciler(reconciler) {
+  return profiling ? { ...reconciler, reconcile: timed(profile.reconcile, reconciler.reconcile.bind(reconciler)) } : reconciler
+}
 const db = recording?.db ?? pool, earlyAccess = tradingEarlyAccessConfig(env)
 const graduation = createGraduationMonitor({ pool: db, connection, verification, config, env, earlyAccess, pauseMs: MARKET_PAUSE_MS,
-  reconciler: createReconciler({ pool: db, connection, config, earlyAccess, earlyAccessGraduated: true, custodyRecovery }),
-  readState: args => readGraduationState({ ...args, custodyRecovery }) })
+  reconciler: profiledReconciler(createReconciler({ pool: db, connection, config, earlyAccess, earlyAccessGraduated: true, custodyRecovery })),
+  readState: (profiling ? fn => timed(profile.readState, fn) : fn => fn)(args => readGraduationState({ ...args, custodyRecovery })) })
 const tables = () => recording ? { tables: recording.tables() } : {}
 
 // One pass, reported as one line; true when it verified every market.
@@ -108,7 +132,7 @@ async function pass() {
     const counts = results.reduce((all, r) => ({ ...all, [r.status]: (all[r.status] ?? 0) + 1 }), {})
     const review = results.filter(r => r.status === 'REVIEW').map(r => ({ repoId: r.repoId, code: r.code ?? null }))
     const alerts = results.flatMap(r => r.alerts ?? []).map(a => a?.kind).filter(Boolean)
-    report({ status: dryRun ? 'DRY_RUN_COMPLETED' : 'COMPLETED', ms: Date.now() - started, counts, review, alerts, ...tables() })
+    report({ status: dryRun ? 'DRY_RUN_COMPLETED' : 'COMPLETED', ms: Date.now() - started, counts, review, alerts, ...tables(), ...(profiling ? { profile: profileReport() } : {}) })
     return !review.length
   } catch (error) {
     // Never print the raw error: it can carry an RPC URL with its key.

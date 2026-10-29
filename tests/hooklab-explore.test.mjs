@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { exploreHookCoins, hookCoinRow } from '../app/lib/hooklab-explore.mjs'
+import { exploreHookCoins, hiddenHookCoinMints, hookCoinRow, INTERNAL_TEST_COIN_MINTS } from '../app/lib/hooklab-explore.mjs'
 import { hookCoinView, orderHookCoins } from '../app/lib/hooklab-explore-order.mjs'
+import { appModule, h, html } from './fixtures/render-jsx.mjs'
 
 const env = { HOOK_OPEN_LAUNCHES: 'true', HOOK_LAUNCH_ADMIN_ADDRESS: 'admin' }
 const coin = (mint, stats = null) => ({ mint, name: mint, symbol: mint.toUpperCase(), stats })
@@ -40,6 +41,14 @@ test('a failed trade read keeps the list without figures; a failed listing read 
   assert.deepEqual(none, [])
 })
 
+test("repo.ing's own smoke-test coins never list publicly; HOOK_COINS_HIDDEN_MINTS adds more", async () => {
+  const [smoke, burnSmoke] = INTERNAL_TEST_COIN_MINTS
+  const coins = await exploreHookCoins({ env: { ...env, HOOK_COINS_HIDDEN_MINTS: ' m3 ,' }, configuration: () => ({}), now: later, database: fakeDatabase,
+    store: listing([coin(smoke), coin('m1'), coin(burnSmoke), coin('m3')]), trades: () => ({ overview: async mints => { assert.deepEqual(mints, ['m1']); return new Map() } }) })
+  assert.deepEqual(coins.map(c => c.mint), ['m1'])
+  assert.deepEqual([...hiddenHookCoinMints({})], INTERNAL_TEST_COIN_MINTS)
+})
+
 test('nothing is read while site launches are off', async () => {
   assert.deepEqual(await exploreHookCoins({ env: {}, database: () => assert.fail('no database read') }), [])
 })
@@ -50,4 +59,15 @@ test('a row names the coin, its image only when it has a profile, and its rules 
     rules: 'Max 2% per wallet · 5% total fee (2% creator + 3% burn)', stats: null, capBps: 200, creatorFeeBps: 200, burnBps: 300, holderBps: 0 })
   assert.match(hookCoinRow({ ...base, profile: {} }).image, /r1\/image\?w=128$/)
   assert.equal(hookCoinRow({ ...base, burnBps: 0, profile: null }).rules, 'Max 2% per wallet · 2% creator fee')
+})
+
+test('the Explore strip lists only coins that traded in the last 24 hours, with their market cap, and is absent otherwise', async () => {
+  const { HookCoinStrip } = await appModule('app/components/hooks-explore.jsx')
+  const quiet = [coin('a'), coin('b', stats('0', 1e-7, 4)), coin('c', stats('5000', 1e-7))]
+  assert.equal(html(h(HookCoinStrip, { coins: quiet, usdPerSol: 100 })), '')
+  const markup = html(h(HookCoinStrip, { coins: [...quiet, coin('d', stats('2500000000', 3e-8))], usdPerSol: 100 }))
+  assert.match(markup, /\$D<\/strong>/)
+  assert.doesNotMatch(markup, /\$[ABC]<\/strong>/)
+  assert.match(markup, /<span class="table-mcap"[^>]*>\$3k<\/span><small>2\.5 SOL 24h<\/small>/, 'cap = last price × 1B supply')
+  assert.match(markup, /See all 4/)
 })

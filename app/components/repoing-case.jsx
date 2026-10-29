@@ -42,6 +42,5 @@ function RepoingCaseFrame({ children, busy = false }) {
     </div>
     <dl className="repoing-case-facts">{children}</dl>
     {busy && <p className="sr-only" role="status">Loading {symbol} figures…</p>}
-    <p className="repoing-case-foot">From repo.ing&apos;s ledger and on-chain receipts. Facts, not advice.</p>
   </section>
 }

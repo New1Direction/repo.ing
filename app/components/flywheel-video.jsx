@@ -2,6 +2,7 @@ import { LazyPosterVideo } from './lazy-poster-video'
 
 // Silent 42-second explainer. preload="none" keeps the video off the critical path, and the poster loads only when the
 // player nears the viewport.
+// One plain line under the video; the fee split, graduation targets and launch fee are folded under "Fee details".
 // launchFee: launchFeeTerms() of the config new launches use, or null when its fee is a flat 1.75%.
 export function FlywheelVideo({ id = 'flywheel-video', launchFee = null }) {
   return <section className="flywheel-video" aria-labelledby={`${id}-title`}>
@@ -9,6 +10,7 @@ export function FlywheelVideo({ id = 'flywheel-video', launchFee = null }) {
     <LazyPosterVideo controls muted playsInline preload="none" poster="/video/repoing-flywheel-poster.jpg" width="1280" height="720" aria-describedby={`${id}-description`}>
       <source src="/video/repoing-flywheel.mp4" type="video/mp4"/>
     </LazyPosterVideo>
-    <p id={`${id}-description`}>Discover a public repo and launch its market. Every trade pays a 1.75% fee: 0.994% to the repo's builders, who claim it in SOL. New markets graduate at 85 SOL, older ones at about 30 SOL (each market page shows its target), and platform revenue buys back $REPOING.{launchFee && ` New markets also charge a launch fee in their first ${launchFee.durationLabel}: it starts at ${launchFee.startPercent} and falls to ${launchFee.endPercent}.`}</p>
+    <p id={`${id}-description`}>Launch a market for any public repo. About 1% of every trade goes to the repo's builders, who claim it in SOL.</p>
+    <details><summary>Fee details</summary><p>Every trade pays a 1.75% fee: 0.994% to the repo's builders. New markets graduate at 85 SOL, older ones at about 30 SOL (each market page shows its target). Platform revenue buys back $REPOING.{launchFee && ` New markets also charge a launch fee in their first ${launchFee.durationLabel}: it starts at ${launchFee.startPercent} and falls to ${launchFee.endPercent}.`}</p></details>
   </section>
 }

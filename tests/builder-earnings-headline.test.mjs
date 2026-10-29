@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { builderEarningsHeadline } from '../app/lib/builder-earnings.mjs'
+import { builderEarningsHeadline, recordedEarningsHeadline } from '../app/lib/builder-earnings.mjs'
 
 const market = { repoId: '42', earned: '12500000000', claimed: '2000000000', beneficiaryWallet: null }
 const match = fee => ({ status: 'MATCH', onchainCreatorFee: fee })
@@ -55,4 +55,30 @@ test('collected includes legacy direct payouts, without counting custody payouts
   const held = { ...fees, platformCollected: 0n, custodyCollected: 200n, custodyHeld: 100n, onchainCreatorFee: 700n }
   assert.equal(builderEarningsHeadline(market, held, null).balances.collected, 400n,
     '200 direct payouts + 200 collected into custody; the 100 custody payout is already part of paid')
+})
+
+test('before a MATCH the recorded figures show as plain SOL earned and paid, never a claim amount or claim action', () => {
+  for (const fees of [{ status: 'UNAVAILABLE', onchainCreatorFee: null }, { status: 'MISMATCH', onchainCreatorFee: 5000000000n }, null]) {
+    const view = recordedEarningsHeadline({ ...market, beneficiaryWallet: 'W' }, fees)
+    assert.equal(view.value, '12.5 SOL')
+    assert.equal(view.detail, '2 SOL paid')
+    assert.deepEqual(view.action, { kind: 'note', label: 'Paid to the verified maintainer' })
+    assert.equal(view.balances, undefined, 'no claimable balance without a MATCH')
+    assert.doesNotMatch(JSON.stringify(view, (key, value) => typeof value === 'bigint' ? String(value) : value), /[Cc]laim/)
+  }
+})
+
+test('recorded figures prefer the reconciler ledger and leave out a zero payout', () => {
+  const view = recordedEarningsHeadline({ ...market, claimed: '0' }, { status: 'MISMATCH', recordedEarned: 53860000000n, recordedClaimed: 0n })
+  assert.equal(view.value, '53.86 SOL')
+  assert.equal(view.detail, null)
+  assert.deepEqual(view.recorded, { earned: 53860000000n, paid: 0n })
+  assert.equal(view.action.label, 'Builders earn from every trade')
+})
+
+test('nothing recorded yet: no zero figure, only the builders-earn note', () => {
+  const view = recordedEarningsHeadline({ ...market, earned: '0', claimed: '0' }, { status: 'UNAVAILABLE' })
+  assert.equal(view.value, null)
+  assert.equal(view.detail, null)
+  assert.equal(view.action.label, 'Builders earn from every trade')
 })
