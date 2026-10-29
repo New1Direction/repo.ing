@@ -9,6 +9,7 @@ import { walletPrincipalStore } from '../../src/hooklab-wallet-principal.mjs'
 import { hookAddress } from '../../src/hooklab-execution-contract.mjs'
 import { executionGenesis } from '../../src/hooklab-local-acceptance.mjs'
 import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
+import { assertNeuronEdge, verifyNeuronBot } from './neuron-bot-protection.mjs'
 const BINDING = '__Host-hook-wallet-binding', SESSION = '__Host-hook-wallet-session'
 const sha = value => createHash('sha256').update(value).digest('hex')
 const headers = { 'Cache-Control': 'private, no-store', Vary: 'Cookie', 'X-Content-Type-Options': 'nosniff' }
@@ -56,12 +57,13 @@ export async function walletIdentityQuota(pool, scopes) {
 }
 export function createWalletIdentityHandler({ env = process.env, configuration = walletIdentityConfiguration,
   database = createHookLabDatabasePool,
-  store = walletPrincipalStore, quota = walletIdentityQuota } = {}) {
+  store = walletPrincipalStore, quota = walletIdentityQuota, fetcher = fetch } = {}) {
   return async request => {
     if (env.HOOK_WALLET_IDENTITY_ENABLED !== 'true') return reply({ status: 'disabled' }, 404)
     let pool
     try {
       const config = configuration(env)
+      const bot = assertNeuronEdge(request, env)
       if (!servedFromConfiguredOrigin(request, config.origin) || request.headers.get('sec-fetch-site') === 'cross-site') return reply({ error: 'Open the launcher on its configured origin.' }, 403)
       if (!['GET', 'POST'].includes(request.method)) return reply({ error: 'Method not allowed.' }, 405)
       if (request.method === 'POST') {
@@ -69,7 +71,7 @@ export function createWalletIdentityHandler({ env = process.env, configuration =
         if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') return reply({ error: 'JSON required.' }, 415)
       }
       const saved = cookies(request)
-      if (request.method === 'GET' && !saved[SESSION]) return reply({ signedIn: false })
+      if (request.method === 'GET' && !saved[SESSION]) return reply({ signedIn: false, botSiteKey: bot?.siteKey ?? null })
       let body
       if (request.method === 'POST') {
         try { body = bodySchema.parse(JSON.parse((await readLimitedBody(request, 2048)).toString('utf8'))) }
@@ -79,15 +81,15 @@ export function createWalletIdentityHandler({ env = process.env, configuration =
       const principal = store(pool, { enabled: true, origin: config.origin, audience: config.audience, genesisHash: config.genesisHash })
       const client = clientAddress(request)
       // Forwarded address is a rate-limit hint, never identity; unknown addresses share a bounded bucket.
-      const scopes = [[`wallet-identity:ip:${sha(client ?? 'unknown')}`, 60]]
+      const scopes = [['wallet-identity:global', 300], [`wallet-identity:ip:${sha(client ?? 'unknown')}`, 60]]
       if (body?.wallet) scopes.push([`wallet-identity:wallet:${body.wallet}`, 20])
       if (body?.nonce) scopes.push([`wallet-identity:nonce:${body.nonce}`, 10])
       if (!await quota(pool, scopes)) return reply({ error: 'Too many identity requests. Try again later.' }, 429)
       if (request.method === 'GET') {
-        try { return reply({ signedIn: true, principal: await principal.resolve(saved[SESSION]) }) }
+        try { return reply({ signedIn: true, principal: await principal.resolve(saved[SESSION]), botSiteKey: bot?.siteKey ?? null }) }
         catch (error) {
           if (error.status !== 401) throw error
-          const response = reply({ signedIn: false }); setCookie(response, SESSION, '', 0); return response
+          const response = reply({ signedIn: false, botSiteKey: bot?.siteKey ?? null }); setCookie(response, SESSION, '', 0); return response
         }
       }
       if (body.action === 'logout') {
@@ -95,6 +97,7 @@ export function createWalletIdentityHandler({ env = process.env, configuration =
         const response = reply({ signedIn: false }); setCookie(response, SESSION, '', 0); setCookie(response, BINDING, '', 0); return response
       }
       if (body.action === 'challenge') {
+        await verifyNeuronBot(request, bot, 'neuron-signin', fetcher)
         const binding = randomBytes(32).toString('base64url'), challenge = await principal.challenge(body.wallet, binding)
         const response = reply({ challenge }); setCookie(response, BINDING, binding, 300); return response
       }
@@ -106,7 +109,9 @@ export function createWalletIdentityHandler({ env = process.env, configuration =
       return response
     } catch (error) {
       // Never leak database URLs, tokens, signatures, SQL or lower-layer errors.
-      return reply({ error: error.status === 401 ? 'Identity proof unavailable, expired or changed.' : 'Wallet identity is unavailable. Try again later.' }, error.status === 401 ? 401 : 503)
+      const status = error.status === 401 ? 401 : error.status === 403 ? 403 : 503
+      return reply({ error: status === 401 ? 'Identity proof unavailable, expired or changed.'
+        : status === 403 ? 'Security check failed. Use the protected site and try again.' : 'Wallet identity is unavailable. Try again later.' }, status)
     } finally { if (pool) await pool.end().catch(() => {}) }
   }
 }

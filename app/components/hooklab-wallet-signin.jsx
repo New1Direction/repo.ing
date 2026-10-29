@@ -4,10 +4,11 @@ import { CheckCircle2 } from 'lucide-react'
 import { useWallet } from './wallet'
 import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
 import { validateWalletIdentityChallenge, walletIdentitySessionState } from '../lib/hooklab-wallet-identity-client.mjs'
+import { NeuronBotCheck } from './neuron-bot-check'
 const endpoint = '/api/hook-lab/wallet-identity'
-async function call(body) {
+async function call(body, botToken) {
   const response = await fetch(endpoint, { cache: 'no-store', credentials: 'same-origin',
-    ...(body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) })
+    ...(body ? { method: 'POST', headers: { 'Content-Type': 'application/json', ...(botToken ? { 'x-neuron-bot-token': botToken } : {}) }, body: JSON.stringify(body) } : {}) })
   const value = await response.json()
   if (!response.ok) throw Error(value.error || 'Wallet sign-in is unavailable.')
   return value
@@ -20,13 +21,14 @@ export function useHookWalletSession(genesisHash, { enabled = true } = {}) {
   const { wallet, connect, provider } = useWallet()
   const walletRef = useRef(wallet); walletRef.current = wallet
   const busyRef = useRef(false), sessionEpoch = useRef(0)
+  const botCheckRef = useRef(null), [botSiteKey, setBotSiteKey] = useState(null)
   const [busy, setBusy] = useState(false), [identity, setIdentity] = useState(null), [error, setError] = useState('')
   const [checked, setChecked] = useState(!enabled)
   useEffect(() => {
     if (!enabled) return
     let active = true
     const epoch = sessionEpoch.current
-    call().then(value => { if (active && sessionEpoch.current === epoch) setIdentity(walletIdentitySessionState(value)) })
+    call().then(value => { if (active && sessionEpoch.current === epoch) { setIdentity(walletIdentitySessionState(value)); setBotSiteKey(value.botSiteKey ?? null) } })
       // A failed background check just reads as signed out: signing in reports its own errors.
       .catch(() => { if (active && sessionEpoch.current === epoch) setIdentity(null) })
       .finally(() => { if (active) setChecked(true) })
@@ -51,7 +53,9 @@ export function useHookWalletSession(genesisHash, { enabled = true } = {}) {
   const signIn = () => run(async () => {
     const address = walletRef.current || await connect()
     const changed = () => walletRef.current && walletRef.current !== address
-    const value = await call({ action: 'challenge', wallet: address })
+    if (botSiteKey && !botCheckRef.current) throw Error('Security check is loading. Please try again.')
+    const botToken = botSiteKey ? await botCheckRef.current() : null
+    const value = await call({ action: 'challenge', wallet: address }, botToken)
     if (changed()) throw Error('Connected wallet changed. Start again.')
     const reviewed = validateWalletIdentityChallenge(value.challenge, { wallet: address, origin: window.location.origin, genesisHash })
     const adapter = provider()
@@ -65,7 +69,7 @@ export function useHookWalletSession(genesisHash, { enabled = true } = {}) {
   const signOut = () => run(async () => { await call({ action: 'logout' }); setIdentity(null) })
   const mismatch = !!(identity && wallet && identity.wallet !== wallet)
   const connectWallet = () => run(async () => { await connect() })
-  return { identity, wallet, busy, error, checked, mismatch, signedIn: !!identity && !mismatch, signIn, signOut, connectWallet }
+  return { identity, wallet, busy, error, checked, mismatch, signedIn: !!identity && !mismatch, signIn, signOut, connectWallet, botSiteKey, botCheckRef }
 }
 
 // Sign-in card. session: an existing useHookWalletSession result to show instead of starting another.
@@ -82,5 +86,6 @@ export function HookWalletSignIn({ genesisHash, onIdentity, session: shared = nu
         <button type="button" className="button primary" disabled={busy || !checked} onClick={signIn}>{busy ? 'Check your wallet…' : wallet ? 'Sign in with wallet' : 'Connect wallet and sign in'}</button></>}
     {error && <p className="inline-error" role="alert">{error}</p>}
     {mismatch && <p className="inline-error" role="alert">This session belongs to {shortAddress(identity.wallet)}. Sign out, then sign in with the wallet you have connected.</p>}
+    {session.botSiteKey && <NeuronBotCheck siteKey={session.botSiteKey} action="neuron-signin" checkRef={session.botCheckRef}/>}
   </section>
 }

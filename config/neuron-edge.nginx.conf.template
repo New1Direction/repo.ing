@@ -1,0 +1,42 @@
+# Candidate config ONLY; not installed or deployed. Terminate HTTPS at an approved
+# ingress and keep this listener + repoing:3001 on a private network. If another
+# proxy sits in front, configure set_real_ip_from for its exact trusted networks;
+# never trust incoming X-Forwarded-For from arbitrary clients.
+# Render ONLY ${NEURONS_EDGE_SECRET} with envsubst; leave nginx's $variables intact.
+worker_processes auto;
+pid /tmp/neuron-edge.pid;
+events { worker_connections 1024; }
+http {
+  access_log off;
+  error_log stderr warn;
+  limit_req_zone $binary_remote_addr zone=neuron_ip:10m rate=2r/s;
+  limit_req_zone $server_name zone=neuron_global:1m rate=20r/s;
+  limit_conn_zone $binary_remote_addr zone=neuron_connections:10m;
+  limit_conn_zone $server_name zone=neuron_global_connections:1m;
+  upstream neuron_app { server repoing:3001; }
+  server {
+    listen 8080;
+    server_name repo.ing;
+    limit_req_status 429;
+    limit_conn_status 429;
+    # Always overwrite client-supplied identity/proxy authentication headers.
+    proxy_set_header Host repo.ing;
+    proxy_set_header X-Forwarded-Host repo.ing;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header CF-Connecting-IP "";
+    proxy_set_header X-Neuron-Edge-Secret "${NEURONS_EDGE_SECRET}";
+    location ~ ^/(neurons(/|$)|api/neuron-characters(/|$)|api/hook-lab/wallet-identity(/|$)) {
+      limit_req zone=neuron_ip burst=10 nodelay;
+      limit_req zone=neuron_global burst=30 nodelay;
+      limit_conn neuron_connections 8;
+      limit_conn neuron_global_connections 32;
+      client_max_body_size 8k;
+      client_body_timeout 5s;
+      proxy_connect_timeout 3s;
+      proxy_read_timeout 15s;
+      proxy_pass http://neuron_app;
+    }
+    location / { proxy_pass http://neuron_app; }
+  }
+}

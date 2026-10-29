@@ -45,6 +45,41 @@ jobs:
       - name: Run quick tests (no database or validator)
         run: node scripts/ci/run-quick-tests.mjs
 
+  neuron-publishing:
+    name: neuron publishing release gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: repoing_neurons_release_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Require publishing database, security and compatibility checks
+        run: npm run test:neurons:release
+        env:
+          NEURONS_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:55432/repoing_neurons_release_test
+          NEURONS_PUBLISHING_ENABLED: 'false'
+          HOOK_WALLET_IDENTITY_ENABLED: 'false'
+      - name: Audit production and development dependencies
+        run: npm audit
+
   integration:
     name: integration (${{ matrix.shard }})
     runs-on: ubuntu-latest

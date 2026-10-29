@@ -27,6 +27,7 @@
     "test:github-verification": "node --test tests/github-verification.test.mjs",
     "github:verify-live": "node scripts/github-live-callback.mjs",
     "test:wallet-binding": "node --test tests/wallet-binding.test.mjs",
+    "test:neurons:release": "NEURONS_RELEASE_REQUIRED=true node --test tests/dependency-security.test.mjs tests/neuron-bot-protection.test.mjs tests/neurons-publishing.test.mjs tests/neurons-preview.test.mjs tests/hooklab-wallet-identity-http.test.mjs tests/hooklab-wallet-identity-client.test.mjs tests/rpc-failover.test.mjs tests/wallet-token-2022.test.mjs tests/solana-wallet.test.mjs tests/mcp-readonly.test.mjs",
     "test:claim": "node --test tests/claim.test.mjs",
     "test:discovery": "node --test tests/discovery-rules.test.mjs tests/discovery-claims.test.mjs",
     "test:reconcile": "node --test tests/reconcile.test.mjs",
@@ -37,7 +38,7 @@
     "@metamask/connect-solana": "^2.1.1",
     "@meteora-ag/cp-amm-sdk": "1.4.10",
     "@meteora-ag/dynamic-bonding-curve-sdk": "1.5.13",
-    "@modelcontextprotocol/server": "2.1.0",
+    "@modelcontextprotocol/server": "2.4.0",
     "@raydium-io/raydium-sdk-v2": "0.2.74-alpha",
     "@repo-ing/hooklab-guarded-candidate": "file:vendor/hooklab-guarded-candidate",
     "@repo-ing/hooklab-hardened-candidate": "file:vendor/hooklab-hardened-candidate",
@@ -46,25 +47,48 @@
     "@solana/spl-token": "0.4.13",
     "@solana/web3.js": "1.98.4",
     "@wallet-standard/app": "^1.1.1",
-    "bn.js": "5.2.2",
+    "bn.js": "5.2.5",
     "bs58": "^6.0.0",
     "drizzle-orm": "^0.45.3",
     "lightweight-charts": "5.2.1",
     "lucide-react": "^1.48.0",
-    "next": "^16.3.6",
+    "next": "16.4.3",
     "pg": "^8.23.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "sharp": "0.35.4",
+    "sharp": "0.35.5",
     "uqr": "0.1.3",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@e2e-dev/web": "0.15.2",
-    "@modelcontextprotocol/client": "2.1.0",
+    "@modelcontextprotocol/client": "2.4.0",
     "drizzle-kit": "^0.31.11",
     "e2e": "0.21.2",
     "esbuild": "0.25.12",
     "jsdom": "26.1.0"
+  },
+  "overrides": {
+    "@anchor-lang/core": {
+      "toml": "5.0.1"
+    },
+    "@coral-xyz/anchor": {
+      "toml": "5.0.1"
+    },
+    "@solana/web3.js": {
+      "jayson": "5.0.0"
+    },
+    "@metamask/utils": {
+      "uuid": "11.1.1"
+    },
+    "@solana/buffer-layout-utils": {
+      "bigint-buffer": "npm:bigint-buffer-browser@1.0.0"
+    },
+    "e2e": {
+      "zod": "$zod"
+    },
+    "@esbuild-kit/core-utils@3.3.2": {
+      "esbuild": "0.25.12"
+    }
   }
 }
