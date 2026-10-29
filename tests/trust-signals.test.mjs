@@ -183,3 +183,13 @@ test('holder snapshot is cached per mint, deduplicated in flight, and never thro
   try { assert.equal(await holderSnapshot(failing, { connection: broken, now: () => clock }), null) }
   finally { console.error = originalError }
 })
+
+test('locked launcher tokens are shown as locked, not held', async () => {
+  const { launcherPosition, launcherLines } = await import('../src/trust-signals.mjs')
+  const row = { boughtBaseUnits: String(151_000_000n * 1_000_000n), soldBaseUnits: '0', launchBuyBaseUnits: String(30_000_000n * 1_000_000n) }
+  const plain = launcherPosition(row), locked = launcherPosition(row, { locked: 120_111_111n * 1_000_000n })
+  assert.match(launcherLines(plain).title, /^Launcher holds 15\.1% of supply$/)
+  assert.match(launcherLines(locked).title, /^Launcher holds 3\.\d+% of supply · 12(\.0\d?)?% locked$/)
+  assert.equal(launcherPosition(row, { locked: 999_000_000n * 1_000_000n }).heldPercent, 0, 'never negative')
+  assert.equal(launcherPosition(row).lockedPercent, 0, 'no lock, no locked figure')
+})

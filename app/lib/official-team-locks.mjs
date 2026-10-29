@@ -148,6 +148,24 @@ export const OFFICIAL_TEAM_LOCKS = [
       { at: '2026-11-08T07:06:33Z', amount: '10,111,111' },
     ],
   },
+  {
+    // Fourth team-wallet lock of bought-back REPOING, 2026-10-29 (owner: "I locked the team tokens"). Decoded from the
+    // finalized escrow account: canonical mint, creator and recipient the team wallet, cancel_mode=0,
+    // update_recipient_mode=0, nothing claimed. Cliff 3,000,000 then two periods of 11,500,000 every 2,628,000 s.
+    // Tx 4g1V8ZE6D5fkSzMLsizf7Mn7JnWtGtapBcnyHcjbT7HRsGbEeHeoe7A1EegKENVTUkhqNYHeLSBxEjKgKDoEC3Va.
+    name: 'Team bought-back REPOING 4',
+    ...team,
+    boughtBack: true,
+    verifiedAt: '2026-10-29',
+    escrow: 'FoKA1YUSfn1YPqqfEeN3rioFYnY9nDJkx2Ktpu96Dt7n',
+    deposited: '26,000,000',
+    supplyPercent: '2.6%',
+    releases: [
+      { at: '2026-12-01T03:05:04Z', amount: '3,000,000' },
+      { at: '2026-12-31T13:05:04Z', amount: '11,500,000' },
+      { at: '2027-01-30T23:05:04Z', amount: '11,500,000' },
+    ],
+  },
 ]
 
 const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
@@ -169,4 +187,20 @@ export function lockNote(locks = OFFICIAL_TEAM_LOCKS) {
   ].filter(Boolean)
   if (!parts.length) return ''
   return `${capitalized(parts.join('; '))}. All are existing-supply tokens, separate from the 1% builder allocation after graduation and from other wallet holdings.`
+}
+
+// '5,666,666.666666' (whole tokens) -> base units. $REPOING has 6 decimals (mint_facts; app/lib/buyback-summary.mjs).
+const TOKEN_DECIMALS = 6
+const baseUnits = amount => {
+  const [whole, fraction = ''] = amount.replaceAll(',', '').split('.')
+  return BigInt(whole) * 10n ** BigInt(TOKEN_DECIMALS) + BigInt(fraction.padEnd(TOKEN_DECIMALS, '0').slice(0, TOKEN_DECIMALS))
+}
+// $REPOING `wallet` deposited into these locks and cannot move yet: each deposit less the releases already due (released
+// tokens are claimable, so they count as held again). The launcher row subtracts this so locked tokens never read as held.
+export function lockedBaseUnits(wallet, now = Date.now(), locks = OFFICIAL_TEAM_LOCKS) {
+  return locks.filter(lock => lock.wallet.address === wallet).reduce((sum, lock) => {
+    const released = lock.releases.filter(r => Date.parse(r.at) <= now).reduce((s, r) => s + baseUnits(r.amount), 0n)
+    const left = baseUnits(lock.deposited) - released
+    return sum + (left > 0n ? left : 0n)
+  }, 0n)
 }

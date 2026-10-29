@@ -4,6 +4,8 @@ import { deriveDbcTokenVaultAddress } from '@meteora-ag/dynamic-bonding-curve-sd
 import { holderConcentration, mintFacts, parseMintAccount, parseTokenAccount, readLauncherTrades, launcherPosition } from '../../src/trust-signals.mjs'
 import { backerLabels } from './backers.mjs'
 import { signedPayoutWallet } from './official-launch.mjs'
+import { OFFICIAL_TOKEN } from './official-token.mjs'
+import { lockedBaseUnits } from './official-team-locks.mjs'
 import { chain, database } from './server.mjs'
 
 // On-chain holder snapshot per mint: three batched RPC reads (largest token accounts; the mint plus those accounts;
@@ -76,7 +78,9 @@ export const launcherSummary = cache(async (mint, launcherWallet, beneficiaryWal
   if (!db || !launcherWallet) return null
   try {
     const row = await readLauncherTrades(db, mint)
-    const position = launcherPosition(row ?? { boughtBaseUnits: '0', soldBaseUnits: '0', launchBuyBaseUnits: '0' })
+    // The official token's launcher locked part of what it bought (Jupiter Lock): those tokens are shown as locked, not held.
+    const locked = mint === OFFICIAL_TOKEN.mint ? lockedBaseUnits(launcherWallet) : 0n
+    const position = launcherPosition(row ?? { boughtBaseUnits: '0', soldBaseUnits: '0', launchBuyBaseUnits: '0' }, { locked })
     const label = backerLabels({ beneficiaryWallet, pool }).get(launcherWallet) ?? null
     return { wallet: launcherWallet, label, position }
   } catch (error) {

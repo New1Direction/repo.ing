@@ -14,11 +14,11 @@ test('each lock names its on-chain creator and recipient wallet', () => {
     assert.match(lock.verifiedAt, /^\d{4}-\d{2}-\d{2}$/, lock.name)
   }
   const bySource = source => OFFICIAL_TEAM_LOCKS.filter(lock => lock.source === source).map(lock => lock.name)
-  assert.deepEqual(bySource('team'), ['repo.ing team', 'Repo.ing team 2', 'Team bought-back REPOING', 'Team bought-back REPOING 2', 'Team bought-back REPOING 3'])
+  assert.deepEqual(bySource('team'), ['repo.ing team', 'Repo.ing team 2', 'Team bought-back REPOING', 'Team bought-back REPOING 2', 'Team bought-back REPOING 3', 'Team bought-back REPOING 4'])
   assert.deepEqual(bySource('buyback'), ['Bought-back REPOING', 'Bought-back REPOING 2', 'Bought-back REPOING 3', 'Bought-back REPOING 4'])
 })
 
-test('release amounts sum exactly to each deposit and the total is 150,111,111 (15.01%)', () => {
+test('release amounts sum exactly to each deposit and the total is 176,111,111 (17.61%)', () => {
   let total = 0n
   for (const lock of OFFICIAL_TEAM_LOCKS) {
     const released = lock.releases.reduce((sum, release) => sum + baseUnits(release.amount), 0n)
@@ -26,11 +26,11 @@ test('release amounts sum exactly to each deposit and the total is 150,111,111 (
     assert.equal(lock.supplyPercent, `${+(Number(lock.deposited.replaceAll(',', '')) / 1e7).toFixed(2)}%`, lock.name)
     total += baseUnits(lock.deposited)
   }
-  assert.equal(total, 150_111_111n * 1_000_000n)
+  assert.equal(total, 176_111_111n * 1_000_000n)
 })
 
 test('the provenance note counts locks by source instead of hard-coding them', () => {
-  assert.equal(lockNote(), 'Two locks are original team deposits from the team wallet; seven locks hold bought-back $REPOING, four deposited by the buyback wallet and three by the team wallet. All are existing-supply tokens, separate from the 1% builder allocation after graduation and from other wallet holdings.')
+  assert.equal(lockNote(), 'Two locks are original team deposits from the team wallet; eight locks hold bought-back $REPOING, four deposited by the buyback wallet and four by the team wallet. All are existing-supply tokens, separate from the 1% builder allocation after graduation and from other wallet holdings.')
   const teamBoughtBack = OFFICIAL_TEAM_LOCKS.find(lock => lock.source === 'team' && lock.boughtBack)
   assert.match(lockNote([teamBoughtBack]), /^One lock holds bought-back \$REPOING deposited by the team wallet\. /)
   const [teamLock] = OFFICIAL_TEAM_LOCKS

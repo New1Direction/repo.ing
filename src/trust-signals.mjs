@@ -42,11 +42,13 @@ export function maintainerStatus(market = {}) {
 }
 
 // Launcher row from per-launcher sums of indexed swaps (readLauncherTrades). label: { kind, label } when the launcher
-// is a known platform or builder wallet. Tokens moved by transfer are not visible here, so "held" is net bought.
-export function launcherPosition(row, { supply = FIXED_SUPPLY_BASE_UNITS } = {}) {
+// is a known platform or builder wallet. Tokens moved by transfer are not visible here, so "held" is net bought, less
+// `locked`: tokens the launcher put in verified locks that have not released yet (official-team-locks.mjs), which cannot
+// move and so are shown apart instead of as holdings.
+export function launcherPosition(row, { supply = FIXED_SUPPLY_BASE_UNITS, locked = 0n } = {}) {
   const bought = big(row?.boughtBaseUnits), sold = big(row?.soldBaseUnits), launchBuy = big(row?.launchBuyBaseUnits)
   if (bought === null || sold === null || launchBuy === null || bought < 0n || sold < 0n) return null
-  const net = bought - sold
+  const net = bought - sold - (typeof locked === 'bigint' && locked > 0n ? locked : 0n)
   const held = net > 0n ? net : 0n
   const state = bought === 0n ? (sold > 0n ? 'sold-unbought' : 'no-trades')
     : sold === 0n ? 'holding' : sold >= bought ? 'sold-all' : 'sold-some'
@@ -54,6 +56,7 @@ export function launcherPosition(row, { supply = FIXED_SUPPLY_BASE_UNITS } = {})
     boughtBaseUnits: bought.toString(), soldBaseUnits: sold.toString(), launchBuyBaseUnits: launchBuy.toString(),
     heldBaseUnits: held.toString(),
     heldPercent: sharePercent(held, supply),
+    lockedPercent: typeof locked === 'bigint' && locked > 0n ? sharePercent(locked, supply) : 0,
     launchBuyPercent: sharePercent(launchBuy, supply),
     // Of what the launcher bought here, how much they sold (capped at 100: transfers in can make sells exceed buys).
     soldPercentOfBought: bought > 0n ? Math.min(100, sharePercent(sold, bought)) : null,
@@ -65,7 +68,7 @@ export function launcherPosition(row, { supply = FIXED_SUPPLY_BASE_UNITS } = {})
 export function launcherLines(position) {
   if (!position) return null
   const title = position.state === 'no-trades' ? 'Launcher has no trades on repo.ing'
-    : `Launcher holds ${percentLabel(position.heldPercent)} of supply`
+    : `Launcher holds ${percentLabel(position.heldPercent)} of supply${position.lockedPercent ? ` · ${percentLabel(position.lockedPercent)} locked` : ''}`
   const launch = position.launchBuyPercent ? `Bought ${percentLabel(position.launchBuyPercent)} at launch` : 'No buy at launch'
   const sold = {
     'no-trades': 'No sells',
