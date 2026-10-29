@@ -1,0 +1,37 @@
+/*
+ * Repo Taste reference aliases (opt-in).
+ * NOT imported anywhere by the running app.
+ * The actual, authoritative theme tokens live in app/globals.css and app/theme.css.
+ * Copy only the aliases needed by a new design component; do not introduce
+ * a second competing global token palette.
+ */
+:root {
+  --rt-bg: var(--bg, #101213);
+  --rt-surface: var(--surface, #17191b);
+  --rt-surface-raised: var(--surface2, #1c1f21);
+  --rt-rule: var(--border, #32373a);
+  --rt-rule-strong: var(--border-strong, #464d52);
+  --rt-ink: var(--text, #f4f6fa);
+  --rt-muted: var(--muted, #aeb6c1);
+  --rt-dim: var(--dim, #7f8892);
+  --rt-action: var(--green, #81e6ad);
+  --rt-action-strong: var(--green-dark, #63d997);
+  --rt-danger: var(--red, #f28485);
+
+  --rt-space-1: 4px;
+  --rt-space-2: 8px;
+  --rt-space-3: 12px;
+  --rt-space-4: 16px;
+  --rt-space-6: 24px;
+  --rt-space-8: 32px;
+  --rt-radius-control: 8px;
+  --rt-radius-panel: 12px;
+  --rt-radius-tactile: 16px;
+  --rt-touch-target: 44px;
+  --rt-ease-out: cubic-bezier(.16, 1, .3, 1);
+  --rt-duration-fast: 150ms;
+  --rt-duration-standard: 240ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Motion in a consuming component must also have a static fallback. */
+}
